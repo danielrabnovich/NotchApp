@@ -11,8 +11,12 @@ struct TaskItem: Identifiable, Codable, Equatable {
     var linkKind: LinkKind?
     var createdAt = Date()
     var completedAt: Date?
+    var due: Date?
+    /// When a "due soon" nudge was last shown, so we don't repeat it.
+    var nudgedAt: Date?
 
     var isDone: Bool { completedAt != nil }
+    var isOverdue: Bool { !isDone && (due.map { $0 < Date() } ?? false) }
 
     var linkIcon: String? {
         switch linkKind {
@@ -40,7 +44,12 @@ final class TaskStore: ObservableObject {
     /// The most recently added task, briefly highlighted in the list.
     @Published var justAddedID: UUID?
 
-    var open: [TaskItem] { tasks.filter { !$0.isDone } }
+    /// Open tasks: dated ones first (soonest due on top), then the rest in the order added.
+    var open: [TaskItem] {
+        let open = tasks.filter { !$0.isDone }
+        let dated = open.filter { $0.due != nil }.sorted { $0.due! < $1.due! }
+        return dated + open.filter { $0.due == nil }
+    }
     var doneToday: [TaskItem] {
         tasks.filter { $0.isDone }.sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
     }
@@ -83,7 +92,23 @@ final class TaskStore: ObservableObject {
     func add(title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        add(TaskItem(title: trimmed))
+        let (clean, due) = DueDateParser.extract(from: trimmed)
+        add(TaskItem(title: clean, due: due))
+    }
+
+    func setDue(_ id: UUID, _ due: Date?) {
+        guard let i = tasks.firstIndex(where: { $0.id == id }) else { return }
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            tasks[i].due = due
+            tasks[i].nudgedAt = nil
+        }
+        save()
+    }
+
+    func markNudged(_ id: UUID) {
+        guard let i = tasks.firstIndex(where: { $0.id == id }) else { return }
+        tasks[i].nudgedAt = Date()
+        save()
     }
 
     func setDone(_ id: UUID, _ done: Bool) {
@@ -163,8 +188,10 @@ final class TaskStore: ObservableObject {
         if let text = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
             let lines = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
             var title = lines.first { !$0.isEmpty } ?? text
+            let (clean, due) = DueDateParser.extract(from: title)
+            title = clean
             if title.count > 140 { title = String(title.prefix(137)) + "…" }
-            return [TaskItem(title: title, note: lines.count > 1 ? text : nil)]
+            return [TaskItem(title: title, note: lines.count > 1 ? text : nil, due: due)]
         }
         return []
     }

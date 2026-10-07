@@ -7,6 +7,7 @@ struct NotchRootView: View {
     @EnvironmentObject private var media: MediaController
     @EnvironmentObject private var activity: ActivityCenter
     @EnvironmentObject private var tasks: TaskStore // collapsed width depends on the open count
+    @EnvironmentObject private var assistant: AssistantStore // …and on running searches
 
     var body: some View {
         let vm = viewModel
@@ -47,6 +48,7 @@ struct NotchRootView: View {
         }
         .animation(vm.isOpen ? settings.openAnimation : settings.closeAnimation, value: vm.isOpen)
         .animation(.spring(response: 0.36, dampingFraction: 0.78), value: vm.collapsedSize)
+        .animation(.spring(response: 0.45, dampingFraction: 0.84), value: vm.openSize)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
     }

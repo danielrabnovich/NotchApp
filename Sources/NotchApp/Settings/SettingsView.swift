@@ -34,6 +34,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case battery = "Battery"
     case shelf = "Shelf"
     case tasks = "Tasks"
+    case assistant = "Assistant"
     case calendar = "Calendar"
     case about = "About"
 
@@ -48,6 +49,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .battery: "battery.100.bolt"
         case .shelf: "tray.full.fill"
         case .tasks: "checklist"
+        case .assistant: "sparkle.magnifyingglass"
         case .calendar: "calendar"
         case .about: "info.circle.fill"
         }
@@ -62,6 +64,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .battery: .green
         case .shelf: .orange
         case .tasks: .teal
+        case .assistant: .cyan
         case .calendar: .red
         case .about: .indigo
         }
@@ -81,7 +84,7 @@ struct SettingsView: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 22, height: 22)
-                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(p.tint.gradient))
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(p.tint))
                 }
                 .tag(p)
             }
@@ -97,6 +100,7 @@ struct SettingsView: View {
                 case .battery: BatteryPane()
                 case .shelf: ShelfPane()
                 case .tasks: TasksPane()
+                case .assistant: AssistantPane()
                 case .calendar: CalendarPane()
                 case .about: AboutPane()
                 }
@@ -277,7 +281,86 @@ private struct TasksPane: View {
                 Text("Drag text, links, emails or files onto the notch and drop them on “Add to Tasks”. Click a task's circle to complete it, or click-and-drag a row right to complete, left to delete. Swipe with two fingers to move between tabs.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section {
+                Toggle("Morning brief", isOn: $s.morningBrief)
+                Picker("Show after", selection: $s.briefHour) {
+                    ForEach(Array(4...12), id: \.self) { h in Text(hourLabel(h)).tag(h) }
+                }
+                .disabled(!s.morningBrief)
+                Toggle("Nudge me before tasks are due", isOn: $s.dueNudges)
+                Picker("Nudge", selection: $s.nudgeLeadMinutes) {
+                    Text("30 minutes before").tag(30)
+                    Text("1 hour before").tag(60)
+                    Text("2 hours before").tag(120)
+                    Text("4 hours before").tag(240)
+                    Text("1 day before").tag(1440)
+                }
+                .disabled(!s.dueNudges)
+                Button("Show Brief Now") { BriefingService.shared.maybeShowBrief(force: true) }
+            } header: {
+                Text("Reminders")
+            } footer: {
+                Text("The brief drops down the first time you unlock your Mac each day. Type due dates naturally: “send deck by Friday 3pm”.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
+    }
+}
+
+private func hourLabel(_ h: Int) -> String {
+    let date = Calendar.current.date(bySettingHour: h, minute: 0, second: 0, of: Date())!
+    return date.formatted(date: .omitted, time: .shortened)
+}
+
+private struct AssistantPane: View {
+    @EnvironmentObject private var s: AppSettings
+    @ObservedObject private var assistant = AssistantStore.shared
+    @State private var models: [String] = []
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Ask tab (find files & search the web)", isOn: $s.assistantEnabled)
+                Toggle("macOS notification when a search finishes", isOn: $s.systemNotifications)
+            } footer: {
+                Text("Everything runs on a local model through Ollama. Web searches send only your query to DuckDuckGo and fetch the result pages.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Ollama") {
+                LabeledContent("Status") {
+                    switch assistant.status {
+                    case .ready: Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    case .notRunning: Button("Start Ollama") { assistant.startServer() }
+                    case .modelMissing(let m):
+                        if let p = assistant.pullProgress {
+                            ProgressView(value: p).frame(width: 140)
+                        } else {
+                            Button("Download \(m)") { assistant.pullModel() }
+                        }
+                    case .unknown: ProgressView().controlSize(.small)
+                    }
+                }
+                if models.isEmpty {
+                    TextField("Model", text: $s.ollamaModel)
+                } else {
+                    Picker("Model", selection: $s.ollamaModel) {
+                        ForEach(Array(Set(models + [s.ollamaModel])).sorted(), id: \.self) { Text($0).tag($0) }
+                    }
+                }
+                TextField("Server", text: $s.ollamaURL)
+            }
+            Section {
+                TextField("Home city", text: $s.homeCity, prompt: Text("e.g. Chapel Hill, NC"))
+            } footer: {
+                Text("Used for weather when you don't name a place.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .task {
+            assistant.refreshStatus()
+            models = (try? await OllamaClient.installedModels()) ?? []
+        }
+        .onChange(of: s.ollamaModel) { _, _ in assistant.refreshStatus() }
     }
 }
 

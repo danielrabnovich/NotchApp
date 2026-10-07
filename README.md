@@ -19,7 +19,23 @@ No Xcode needed — Command Line Tools are enough.
 - **Battery**: charging animation and percentage when you plug in
 - **Shelf**: drag files onto the notch, drag them back out, AirDrop drop zone, automatic screenshot catching
 - **Calendar**: today's events plus a heads-up a few minutes before each meeting
+- **Search (default tab)**: one search bar that routes automatically: finds files on your Mac from vague descriptions, answers questions from the web (with sources), or shows the weather. Runs in the background and drops down when done
+- **Tasks**: drag text, links, emails or files onto the notch to add tasks, natural due dates ("by Friday 3pm"), count badge beside the notch, swipe between tabs
+- **Morning brief & nudges**: a short AI-written brief on the first unlock of the day, and "due soon" reminders with Start / Snooze / Done
 - **Settings**: per-feature toggles, accent colour, animation style, launch at login
+
+## Local AI (Ollama)
+
+Search, briefs and nudges use a local model through [Ollama](https://ollama.com); nothing is sent to a cloud model.
+
+```bash
+brew install ollama
+brew services start ollama
+ollama pull qwen3:8b
+```
+
+Web search sends only the query to Brave Search (falling back to DuckDuckGo, then Bing) and fetches the top pages.
+Weather comes from Open-Meteo.
 
 ## How "Now Playing" works on macOS 15.4+
 

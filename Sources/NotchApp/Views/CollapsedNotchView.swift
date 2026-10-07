@@ -8,6 +8,7 @@ struct CollapsedNotchView: View {
     @EnvironmentObject private var activity: ActivityCenter
     @EnvironmentObject private var battery: BatteryMonitor
     @EnvironmentObject private var tasks: TaskStore
+    @EnvironmentObject private var assistant: AssistantStore
 
     var body: some View {
         let h = viewModel.notchSize.height
@@ -40,6 +41,12 @@ struct CollapsedNotchView: View {
         case .music:
             AlbumArtView(image: media.artwork, size: viewModel.notchSize.height - 10, cornerRadius: 5)
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
+        case .working:
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .symbolEffect(.pulse, options: .repeating)
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .tasks:
             Image(systemName: "checklist")
                 .font(.system(size: 12, weight: .semibold))
@@ -54,6 +61,11 @@ struct CollapsedNotchView: View {
         switch viewModel.activity {
         case .none:
             Color.clear
+        case .working:
+            ProgressView()
+                .controlSize(.mini)
+                .tint(.white)
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .tasks:
             TaskCountBadge(count: viewModel.taskBadgeCount ?? 0)
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
@@ -112,6 +124,10 @@ struct CollapsedNotchView: View {
             Image(systemName: "camera.viewfinder")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
+        case let .assistant(_, _, isWeb):
+            Image(systemName: isWeb ? "globe" : "doc.text.magnifyingglass")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
         }
     }
 
@@ -144,6 +160,11 @@ struct CollapsedNotchView: View {
             Image(systemName: "tray.and.arrow.down.fill")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
+        case let .assistant(title, _, _):
+            Image(systemName: title.hasPrefix("No") || title.hasSuffix("failed") ? "questionmark.circle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(title.hasPrefix("No") || title.hasSuffix("failed") ? Color.orange : Color.green)
+                .symbolEffect(.bounce, value: title)
         }
     }
 
@@ -154,6 +175,14 @@ struct CollapsedNotchView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.9))
                 .lineLimit(1)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+        case let .assistant(title, detail, _):
+            (Text(title).fontWeight(.semibold) + Text(" · " + detail).foregroundColor(.white.opacity(0.7)))
+                .font(.system(size: 12))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 6)
         case let .screenshot(count):

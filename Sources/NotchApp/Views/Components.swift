@@ -12,7 +12,7 @@ struct AlbumArtView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
             } else {
-                LinearGradient(colors: [Color(white: 0.22), Color(white: 0.12)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                Color(white: 0.16)
                 Image(systemName: "music.note")
                     .font(.system(size: size * 0.38, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.45))

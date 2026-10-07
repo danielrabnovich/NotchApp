@@ -182,6 +182,10 @@ private struct TaskRow: View {
 
             Spacer(minLength: 4)
 
+            if let due = task.due, !checked {
+                DueChip(due: due)
+            }
+
             if let icon = task.linkIcon {
                 Button { store.openLink(of: task) } label: {
                     Image(systemName: icon)
@@ -229,6 +233,16 @@ private struct TaskRow: View {
         .contextMenu {
             Button(checked ? "Mark as Not Done" : "Mark as Done") { toggle() }
             Button("Rename") { beginEdit() }
+            Menu("Due") {
+                Button("Today, 5 PM") { store.setDue(task.id, Self.at(17, daysFromNow: 0)) }
+                Button("Tomorrow, 9 AM") { store.setDue(task.id, Self.at(9, daysFromNow: 1)) }
+                Button("Tomorrow, 5 PM") { store.setDue(task.id, Self.at(17, daysFromNow: 1)) }
+                Button("Next Week") { store.setDue(task.id, Self.at(9, daysFromNow: 7)) }
+                if task.due != nil {
+                    Divider()
+                    Button("Remove Due Date") { store.setDue(task.id, nil) }
+                }
+            }
             if task.link != nil { Button("Open Link") { store.openLink(of: task) } }
             Divider()
             Button("Delete") { store.delete(task.id) }
@@ -258,6 +272,12 @@ private struct TaskRow: View {
         .background((dragX > 0 ? accent : Color.red).opacity(dragX == 0 ? 0 : 0.15 + 0.5 * progress))
     }
 
+    static func at(_ hour: Int, daysFromNow days: Int) -> Date {
+        let cal = Calendar.current
+        let day = cal.date(byAdding: .day, value: days, to: Date())!
+        return cal.date(bySettingHour: hour, minute: 0, second: 0, of: day)!
+    }
+
     private func toggle() {
         let done = !checked
         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { checked = done }
@@ -283,6 +303,45 @@ private struct TaskRow: View {
         store.rename(task.id, to: editText)
         editing = false
         viewModel.isEditing = false
+    }
+}
+
+// MARK: - Due chip
+
+/// "3 PM", "Tomorrow", "Fri" – orange when due within a day, red when overdue.
+private struct DueChip: View {
+    let due: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let remaining = due.timeIntervalSince(context.date)
+            let color: Color = remaining < 0 ? .red : remaining < 86_400 ? .orange : .white.opacity(0.55)
+            HStack(spacing: 3) {
+                Image(systemName: remaining < 0 ? "exclamationmark.circle.fill" : "clock")
+                    .font(.system(size: 8.5, weight: .bold))
+                Text(label(now: context.date))
+                    .font(.system(size: 10, weight: .semibold).monospacedDigit())
+            }
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .frame(height: 18)
+            .background(Capsule().fill(color.opacity(0.14)))
+        }
+        .help(due.formatted(date: .complete, time: .shortened))
+    }
+
+    private func label(now: Date) -> String {
+        let cal = Calendar.current
+        let time = due.formatted(date: .omitted, time: .shortened)
+        let isFivePM = cal.component(.hour, from: due) == 17 && cal.component(.minute, from: due) == 0
+        if due < now { return "Overdue" }
+        if cal.isDateInToday(due) { return time }
+        if cal.isDateInTomorrow(due) { return isFivePM ? "Tomorrow" : "Tmrw \(time)" }
+        if due.timeIntervalSince(now) < 6 * 86_400 {
+            let day = due.formatted(.dateTime.weekday(.abbreviated))
+            return isFivePM ? day : "\(day) \(time)"
+        }
+        return due.formatted(.dateTime.month(.abbreviated).day())
     }
 }
 

@@ -23,8 +23,8 @@ final class NotchWindowController {
         let vm = NotchViewModel(notchSize: screen.notchSize, hasPhysicalNotch: screen.hasNotch)
         viewModel = vm
 
-        let width = vm.openSize.width + 2 * 30 + 2 * Self.shadowPadding
-        let height = vm.openSize.height + Self.shadowPadding
+        let width = vm.maxOpenSize.width + 2 * 30 + 2 * Self.shadowPadding
+        let height = vm.maxOpenSize.height + Self.shadowPadding
         let frame = NSRect(x: screen.notchCenterX - width / 2,
                            y: screen.frame.maxY - height,
                            width: width,
@@ -39,6 +39,7 @@ final class NotchWindowController {
             .environmentObject(CalendarManager.shared)
             .environmentObject(ShelfStore.shared)
             .environmentObject(TaskStore.shared)
+            .environmentObject(AssistantStore.shared)
             .environmentObject(AudioOutputManager.shared)
         let host = FirstMouseHostingView(rootView: AnyView(root))
         host.sizingOptions = []
@@ -149,6 +150,9 @@ final class NotchWindowController {
             guard viewModel.isOpen else { return }
             if kind == .down {
                 viewModel.close()
+            } else if viewModel.overlay != nil {
+                // Briefs and nudges stay put until acted on or clicked away.
+                return
             } else if dragging && viewModel.isDragActive {
                 // Dragged past the notch without dropping: tuck it away again.
                 scheduleClose(after: 0.3)
@@ -182,7 +186,7 @@ final class NotchWindowController {
     }
 
     private func handleScroll(_ e: NSEvent) -> NSEvent? {
-        guard e.window === panel, viewModel.isOpen, !viewModel.isDragActive else { return e }
+        guard e.window === panel, viewModel.isOpen, !viewModel.isDragActive, viewModel.overlay == nil else { return e }
 
         // Momentum after our own swipe would otherwise scroll lists underneath.
         if e.momentumPhase != [] {

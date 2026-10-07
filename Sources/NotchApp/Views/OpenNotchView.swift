@@ -10,15 +10,20 @@ struct OpenNotchView: View {
             header
                 .frame(height: viewModel.notchSize.height)
             ZStack {
+                if let overlay = viewModel.overlay {
+                    OverlayView(overlay: overlay)
+                        .transition(.scale(scale: 0.97).combined(with: .opacity))
+                } else {
                 PagedTabsView(viewModel: viewModel)
                     .opacity(viewModel.isDragActive ? 0 : 1)
                     .scaleEffect(viewModel.isDragActive ? 0.96 : 1)
-                    .blur(radius: viewModel.isDragActive ? 6 : 0)
                 if viewModel.isDragActive {
                     DropZonesView(viewModel: viewModel)
                         .transition(.scale(scale: 1.04).combined(with: .opacity))
                 }
+                }
             }
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: viewModel.overlay)
             .animation(.spring(response: 0.35, dampingFraction: 0.82), value: viewModel.isDragActive)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 18)
@@ -65,6 +70,7 @@ private struct TabIndicator: View {
     @ObservedObject var viewModel: NotchViewModel
     @EnvironmentObject private var shelf: ShelfStore
     @EnvironmentObject private var tasks: TaskStore
+    @EnvironmentObject private var assistant: AssistantStore
 
     private let buttonWidth: CGFloat = 40
     private let spacing: CGFloat = 4
@@ -98,7 +104,7 @@ private struct TabIndicator: View {
     }
 
     @ViewBuilder private func badge(for tab: NotchTab) -> some View {
-        let count = tab == .tasks ? tasks.openCount : tab == .shelf ? shelf.items.count : 0
+        let count = tab == .tasks ? tasks.openCount : tab == .shelf ? shelf.items.count : tab == .ask ? assistant.runningCount : 0
         if count > 0 {
             Text("\(count)")
                 .font(.system(size: 8, weight: .bold).monospacedDigit())
@@ -132,7 +138,6 @@ private struct PagedTabsView: View {
                         .frame(width: w, height: geo.size.height)
                         .scaleEffect(1 - 0.06 * distance)
                         .opacity(Double(1 - 0.65 * distance))
-                        .blur(radius: 4 * distance)
                 }
             }
             .offset(x: -index * w + viewModel.pageOffset)
@@ -148,6 +153,7 @@ private struct PagedTabsView: View {
         case .home: HomeView()
         case .shelf: ShelfView(viewModel: viewModel)
         case .tasks: TasksView(viewModel: viewModel)
+        case .ask: AskView(viewModel: viewModel)
         }
     }
 }

@@ -73,6 +73,19 @@ final class AppSettings: ObservableObject {
     @Published var tasksEnabled: Bool { didSet { defaults.set(tasksEnabled, forKey: "tasksEnabled") } }
     @Published var showTaskCount: Bool { didSet { defaults.set(showTaskCount, forKey: "showTaskCount") } }
 
+    // Assistant (Ollama)
+    @Published var assistantEnabled: Bool { didSet { defaults.set(assistantEnabled, forKey: "assistantEnabled") } }
+    @Published var ollamaURL: String { didSet { defaults.set(ollamaURL, forKey: "ollamaURL") } }
+    @Published var ollamaModel: String { didSet { defaults.set(ollamaModel, forKey: "ollamaModel") } }
+    @Published var systemNotifications: Bool { didSet { defaults.set(systemNotifications, forKey: "systemNotifications") } }
+    @Published var homeCity: String { didSet { defaults.set(homeCity, forKey: "homeCity") } }
+
+    // Brief & nudges
+    @Published var morningBrief: Bool { didSet { defaults.set(morningBrief, forKey: "morningBrief") } }
+    @Published var briefHour: Int { didSet { defaults.set(briefHour, forKey: "briefHour") } }
+    @Published var dueNudges: Bool { didSet { defaults.set(dueNudges, forKey: "dueNudges") } }
+    @Published var nudgeLeadMinutes: Int { didSet { defaults.set(nudgeLeadMinutes, forKey: "nudgeLeadMinutes") } }
+
     // Calendar
     @Published var calendarEnabled: Bool { didSet { defaults.set(calendarEnabled, forKey: "calendarEnabled") } }
     @Published var meetingAlerts: Bool { didSet { defaults.set(meetingAlerts, forKey: "meetingAlerts") } }
@@ -100,6 +113,15 @@ final class AppSettings: ObservableObject {
             "airDropZone": true,
             "tasksEnabled": true,
             "showTaskCount": true,
+            "assistantEnabled": true,
+            "ollamaURL": "http://localhost:11434",
+            "ollamaModel": "qwen3:8b",
+            "systemNotifications": true,
+            "homeCity": "",
+            "morningBrief": true,
+            "briefHour": 6,
+            "dueNudges": true,
+            "nudgeLeadMinutes": 120,
             "calendarEnabled": true,
             "meetingAlerts": true,
             "meetingAlertMinutes": 5,
@@ -125,6 +147,15 @@ final class AppSettings: ObservableObject {
         airDropZone = defaults.bool(forKey: "airDropZone")
         tasksEnabled = defaults.bool(forKey: "tasksEnabled")
         showTaskCount = defaults.bool(forKey: "showTaskCount")
+        assistantEnabled = defaults.bool(forKey: "assistantEnabled")
+        ollamaURL = defaults.string(forKey: "ollamaURL") ?? "http://localhost:11434"
+        ollamaModel = defaults.string(forKey: "ollamaModel") ?? "qwen3:8b"
+        systemNotifications = defaults.bool(forKey: "systemNotifications")
+        homeCity = defaults.string(forKey: "homeCity") ?? ""
+        morningBrief = defaults.bool(forKey: "morningBrief")
+        briefHour = defaults.integer(forKey: "briefHour")
+        dueNudges = defaults.bool(forKey: "dueNudges")
+        nudgeLeadMinutes = defaults.integer(forKey: "nudgeLeadMinutes")
         calendarEnabled = defaults.bool(forKey: "calendarEnabled")
         meetingAlerts = defaults.bool(forKey: "meetingAlerts")
         meetingAlertMinutes = defaults.integer(forKey: "meetingAlertMinutes")

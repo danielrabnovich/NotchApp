@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TaskStore.shared.load()
         ScreenshotWatcher.shared.start()
         CalendarManager.shared.start()
+        AssistantStore.shared.refreshStatus()
+        BriefingService.shared.start()
 
         rebuildWindows()
 
@@ -64,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildWindows() {
         controllers.forEach { $0.close() }
         controllers = targetScreens().map { NotchWindowController(screen: $0) }
+        NotchPresenter.shared.primary = controllers.first?.viewModel
     }
 
     private func targetScreens() -> [NSScreen] {

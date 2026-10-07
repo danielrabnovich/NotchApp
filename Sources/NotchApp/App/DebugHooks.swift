@@ -9,6 +9,15 @@ enum DebugHooks {
     /// While pinned, the mouse tracker won't close the notch.
     static var pinned = false
 
+    /// Appends a line to /tmp/notchapp-debug.log when debug hooks are enabled.
+    nonisolated static func log(_ line: String) {
+        guard UserDefaults.standard.bool(forKey: "debugHooks") else { return }
+        let url = URL(fileURLWithPath: "/tmp/notchapp-debug.log")
+        let data = Data((line + "\n").utf8)
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(data); try? h.close() }
+        else { try? data.write(to: url) }
+    }
+
     static func install(controllers: @escaping () -> [NotchWindowController]) {
         guard UserDefaults.standard.bool(forKey: "debugHooks") else { return }
         DistributedNotificationCenter.default().addObserver(forName: name, object: nil, queue: .main) { note in
@@ -29,6 +38,11 @@ enum DebugHooks {
         case "drag":
             c.viewModel.dragPreview = DragPreview(taskTitle: "Reply to Sarah about the Q3 budget", hasFiles: false, icon: "envelope.fill")
             c.viewModel.isDragActive = parts[safe: 1] != "0"
+        case "duesoon":
+            TaskStore.shared.add(TaskItem(title: "Send updated deck to Sarah", due: Date().addingTimeInterval(95 * 60)))
+        case "brief": BriefingService.shared.maybeShowBrief(force: true)
+        case "clear": AssistantStore.shared.clear()
+        case "ask": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "))
         case "fakeplay": MediaController.shared.debugSetPlaying(parts[safe: 1] != "0")
         case "close": c.viewModel.close()
         case "hover": c.viewModel.isHovering = parts.count > 1 ? parts[1] == "1" : true
