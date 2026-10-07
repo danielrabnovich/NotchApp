@@ -1,0 +1,357 @@
+import SwiftUI
+
+struct TasksView: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @EnvironmentObject private var store: TaskStore
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var media: MediaController
+
+    @State private var draft = ""
+    @State private var showDone = false
+    @FocusState private var addFocused: Bool
+
+    var body: some View {
+        let accent = settings.accentMode == .custom ? settings.customAccent : Color.green
+
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            if store.tasks.isEmpty {
+                emptyState
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(store.open) { task in
+                            TaskRow(task: task, accent: accent, viewModel: viewModel)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .top).combined(with: .opacity),
+                                    removal: .move(edge: .trailing).combined(with: .opacity)))
+                        }
+                        if !store.doneToday.isEmpty {
+                            doneHeader
+                            if showDone {
+                                ForEach(store.doneToday) { task in
+                                    TaskRow(task: task, accent: accent, viewModel: viewModel)
+                                        .transition(.opacity)
+                                }
+                            }
+                        }
+                    }
+                    .animation(.spring(response: 0.4, dampingFraction: 0.82), value: store.tasks)
+                }
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text("Today")
+                .font(.system(size: 13, weight: .semibold))
+            Text(store.openCount == 0 ? "all clear" : "\(store.openCount) open")
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.45))
+                .contentTransition(.numericText())
+                .animation(.spring(response: 0.3), value: store.openCount)
+            Spacer(minLength: 12)
+            addField
+                .frame(maxWidth: 260)
+        }
+    }
+
+    private var addField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "plus")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white.opacity(addFocused ? 0.9 : 0.45))
+            TextField("", text: $draft, prompt: Text("Add a task").foregroundStyle(.white.opacity(0.35)))
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .focused($addFocused)
+                .onSubmit {
+                    store.add(title: draft)
+                    draft = ""
+                    addFocused = true
+                }
+                .onExitCommand {
+                    draft = ""
+                    addFocused = false
+                }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .background(Capsule().fill(.white.opacity(addFocused ? 0.14 : 0.07)))
+        .overlay(Capsule().strokeBorder(.white.opacity(addFocused ? 0.25 : 0), lineWidth: 1))
+        .animation(.easeOut(duration: 0.15), value: addFocused)
+        .onChange(of: addFocused) { _, focused in viewModel.isEditing = focused }
+    }
+
+    private var doneHeader: some View {
+        Button {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { showDone.toggle() }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(showDone ? 90 : 0))
+                Text("Done today · \(store.doneToday.count)")
+                    .font(.system(size: 10, weight: .semibold))
+                Spacer()
+                if showDone {
+                    Text("Clear")
+                        .font(.system(size: 10, weight: .medium))
+                        .onTapGesture { store.clearCompleted() }
+                }
+            }
+            .foregroundStyle(.white.opacity(0.4))
+            .padding(.horizontal, 6)
+            .padding(.top, 6)
+            .padding(.bottom, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "checkmark.seal")
+                .font(.system(size: 22, weight: .medium))
+            Text("Nothing on your plate")
+                .font(.system(size: 12, weight: .medium))
+            Text("Drag text, links, emails or files onto the notch to add them here")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.4))
+        }
+        .foregroundStyle(.white.opacity(0.6))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Row
+
+private struct TaskRow: View {
+    let task: TaskItem
+    let accent: Color
+    @ObservedObject var viewModel: NotchViewModel
+    @EnvironmentObject private var store: TaskStore
+
+    @State private var checked = false
+    @State private var dragX: CGFloat = 0
+    @State private var hovering = false
+    @State private var editing = false
+    @State private var editText = ""
+    @FocusState private var editFocused: Bool
+
+    private let threshold: CGFloat = 70
+
+    var body: some View {
+        ZStack {
+            swipeBackground
+            content
+                .offset(x: dragX)
+        }
+        .frame(height: 30)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .onAppear { checked = task.isDone }
+        .onChange(of: task.isDone) { _, done in checked = done }
+    }
+
+    private var content: some View {
+        HStack(spacing: 9) {
+            CheckCircle(checked: checked, color: accent) { toggle() }
+
+            if editing {
+                TextField("", text: $editText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .focused($editFocused)
+                    .onSubmit { commitEdit() }
+                    .onExitCommand { editing = false }
+                    .onChange(of: editFocused) { _, f in
+                        viewModel.isEditing = f
+                        if !f { commitEdit() }
+                    }
+            } else {
+                Text(task.title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .lineLimit(1)
+                    .strikethrough(checked, color: .white.opacity(0.5))
+                    .foregroundStyle(.white.opacity(checked ? 0.4 : 0.92))
+                    .animation(.easeOut(duration: 0.25), value: checked)
+                    .onTapGesture(count: 2) { beginEdit() }
+                    .help(task.note ?? task.title)
+            }
+
+            Spacer(minLength: 4)
+
+            if let icon = task.linkIcon {
+                Button { store.openLink(of: task) } label: {
+                    Image(systemName: icon)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 22))
+                .help(task.link?.isFileURL == true ? task.link!.lastPathComponent : task.link?.absoluteString ?? "")
+            }
+
+            if hovering && !editing {
+                Button { store.delete(task.id) } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 20))
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 6)
+        .frame(maxHeight: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(store.justAddedID == task.id ? accent.opacity(0.22) : .white.opacity(hovering ? 0.07 : 0))
+        )
+        .background(Color.black.opacity(dragX == 0 ? 0 : 1))
+        .contentShape(Rectangle())
+        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
+        .gesture(
+            DragGesture(minimumDistance: 8)
+                .onChanged { v in
+                    guard abs(v.translation.width) > abs(v.translation.height), !editing else { return }
+                    let x = v.translation.width
+                    // Resist a little past the threshold.
+                    dragX = abs(x) < threshold ? x : (x < 0 ? -1 : 1) * (threshold + (abs(x) - threshold) * 0.35)
+                }
+                .onEnded { _ in
+                    let x = dragX
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { dragX = 0 }
+                    if x >= threshold { toggle() }
+                    else if x <= -threshold { store.delete(task.id) }
+                }
+        )
+        .contextMenu {
+            Button(checked ? "Mark as Not Done" : "Mark as Done") { toggle() }
+            Button("Rename") { beginEdit() }
+            if task.link != nil { Button("Open Link") { store.openLink(of: task) } }
+            Divider()
+            Button("Delete") { store.delete(task.id) }
+        }
+    }
+
+    /// Green "done" reveal on the left, red "delete" on the right.
+    private var swipeBackground: some View {
+        let progress = min(1, abs(dragX) / threshold)
+        return HStack {
+            if dragX > 0 {
+                Image(systemName: checked ? "arrow.uturn.backward" : "checkmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .scaleEffect(0.6 + 0.4 * progress)
+                    .padding(.leading, 12)
+                Spacer()
+            } else if dragX < 0 {
+                Spacer()
+                Image(systemName: "trash.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .scaleEffect(0.6 + 0.4 * progress)
+                    .padding(.trailing, 12)
+            }
+        }
+        .foregroundStyle(.white.opacity(0.4 + 0.6 * progress))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background((dragX > 0 ? accent : Color.red).opacity(dragX == 0 ? 0 : 0.15 + 0.5 * progress))
+    }
+
+    private func toggle() {
+        let done = !checked
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { checked = done }
+        if done {
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            // Let the check animation play before the row slides into "Done".
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { store.setDone(task.id, true) }
+            }
+        } else {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { store.setDone(task.id, false) }
+        }
+    }
+
+    private func beginEdit() {
+        editText = task.title
+        editing = true
+        DispatchQueue.main.async { editFocused = true }
+    }
+
+    private func commitEdit() {
+        guard editing else { return }
+        store.rename(task.id, to: editText)
+        editing = false
+        viewModel.isEditing = false
+    }
+}
+
+// MARK: - Checkbox
+
+/// Circle that fills, draws a checkmark and throws a little burst of sparks.
+struct CheckCircle: View {
+    let checked: Bool
+    let color: Color
+    let action: () -> Void
+
+    @State private var burst = false
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .strokeBorder(.white.opacity(checked ? 0 : (hovering ? 0.7 : 0.35)), lineWidth: 1.5)
+                Circle()
+                    .fill(color)
+                    .scaleEffect(checked ? 1 : 0.2)
+                    .opacity(checked ? 1 : 0)
+                CheckmarkShape()
+                    .trim(from: 0, to: checked ? 1 : 0)
+                    .stroke(.black, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                    .padding(4.5)
+                    .animation(.easeOut(duration: 0.22).delay(checked ? 0.08 : 0), value: checked)
+
+                // Sparks
+                ForEach(0..<8, id: \.self) { i in
+                    Circle()
+                        .fill(color)
+                        .frame(width: 3, height: 3)
+                        .offset(y: burst ? -15 : -6)
+                        .rotationEffect(.degrees(Double(i) * 45))
+                        .opacity(burst ? 0 : (checked ? 1 : 0))
+                        .scaleEffect(burst ? 0.4 : 1)
+                }
+                .allowsHitTesting(false)
+            }
+            .frame(width: 17, height: 17)
+            .scaleEffect(checked ? 1 : (hovering ? 1.08 : 1))
+            .contentShape(Circle().inset(by: -4))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .onChange(of: checked) { _, now in
+            guard now else { burst = false; return }
+            burst = false
+            withAnimation(.easeOut(duration: 0.5)) { burst = true }
+        }
+        .keyframeAnimator(initialValue: 1.0, trigger: checked) { content, scale in
+            content.scaleEffect(scale)
+        } keyframes: { _ in
+            KeyframeTrack {
+                SpringKeyframe(1.28, duration: 0.14)
+                SpringKeyframe(1.0, duration: 0.3, spring: .bouncy)
+            }
+        }
+    }
+}
+
+struct CheckmarkShape: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.midY + r.height * 0.05))
+        p.addLine(to: CGPoint(x: r.minX + r.width * 0.38, y: r.maxY - r.height * 0.08))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.minY + r.height * 0.12))
+        return p
+    }
+}

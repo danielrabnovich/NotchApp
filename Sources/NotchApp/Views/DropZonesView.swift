@@ -1,0 +1,112 @@
+import SwiftUI
+import UniformTypeIdentifiers
+
+/// Shown while something is dragged over the notch: pick where it goes.
+struct DropZonesView: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        let preview = viewModel.dragPreview
+        HStack(spacing: 10) {
+            if settings.tasksEnabled {
+                DropBin(icon: "checklist", title: "Add to Tasks",
+                        detail: preview?.taskTitle.map { "“\($0)”" } ?? "Make it a task",
+                        detailIcon: preview?.icon,
+                        tint: .green,
+                        enabled: preview?.taskTitle != nil) {
+                    let new = TaskStore.tasks(from: NSPasteboard(name: .drag))
+                    guard !new.isEmpty else { return false }
+                    new.forEach { TaskStore.shared.add($0) }
+                    finish(on: .tasks)
+                    return true
+                }
+            }
+            if settings.shelfEnabled {
+                DropBin(icon: "tray.and.arrow.down.fill", title: "Shelf",
+                        detail: preview?.hasFiles == true ? "Keep it handy" : "Files only",
+                        detailIcon: nil, tint: .orange,
+                        enabled: preview?.hasFiles == true) {
+                    let urls = NSPasteboard(name: .drag)
+                        .readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+                    guard !urls.isEmpty else { return false }
+                    ShelfStore.shared.add(urls)
+                    finish(on: .shelf)
+                    return true
+                }
+                if settings.airDropZone {
+                    DropBin(icon: "dot.radiowaves.left.and.right", title: "AirDrop",
+                            detail: preview?.hasFiles == true ? "Send nearby" : "Files only",
+                            detailIcon: nil, tint: .blue,
+                            enabled: preview?.hasFiles == true) {
+                        let urls = NSPasteboard(name: .drag)
+                            .readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+                        guard !urls.isEmpty else { return false }
+                        DispatchQueue.main.async { ShelfStore.airDrop(urls) }
+                        viewModel.isDragActive = false
+                        return true
+                    }
+                    .frame(width: 120)
+                }
+            }
+        }
+    }
+
+    private func finish(on tab: NotchTab) {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
+            viewModel.isDragActive = false
+            viewModel.tab = tab
+            viewModel.pageOffset = 0
+        }
+        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+    }
+}
+
+private struct DropBin: View {
+    let icon: String
+    let title: String
+    let detail: String
+    let detailIcon: String?
+    let tint: Color
+    let enabled: Bool
+    let onDrop: () -> Bool
+
+    @State private var targeted = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(targeted ? tint.opacity(0.28) : .white.opacity(enabled ? 0.06 : 0.03))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(targeted ? tint : .white.opacity(enabled ? 0.18 : 0.08),
+                                  style: StrokeStyle(lineWidth: targeted ? 2 : 1, dash: targeted ? [] : [6, 5]))
+            )
+            .overlay {
+                VStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(targeted ? tint : .white.opacity(enabled ? 0.85 : 0.3))
+                        .symbolEffect(.bounce, value: targeted)
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(enabled ? 1 : 0.35))
+                    HStack(spacing: 4) {
+                        if let detailIcon, enabled {
+                            Image(systemName: detailIcon).font(.system(size: 9))
+                        }
+                        Text(detail)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(enabled ? 0.55 : 0.25))
+                    .padding(.horizontal, 12)
+                }
+            }
+            .scaleEffect(targeted ? 1.03 : 1)
+            .animation(.spring(response: 0.28, dampingFraction: 0.7), value: targeted)
+            .onDrop(of: [UTType.item], isTargeted: Binding(get: { targeted }, set: { targeted = $0 && enabled })) { _ in
+                enabled ? onDrop() : false
+            }
+    }
+}

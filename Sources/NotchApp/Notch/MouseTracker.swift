@@ -1,0 +1,74 @@
+import AppKit
+
+enum MouseEventKind {
+    case moved, dragged, down, up, tick
+}
+
+/// Watches the mouse globally so the notch can react to hovering and drags
+/// while its window ignores mouse events (letting clicks reach the menu bar).
+@MainActor
+final class MouseTracker {
+    private var monitors: [Any] = []
+    private var timer: Timer?
+    private var dragChangeCount = 0
+    private var dragStartedInNotch = false
+
+    /// True while the user drags something (text, links, files, emails) from another app.
+    private(set) static var isExternalDrag = false
+    /// Bumped whenever a new external drag begins, so views can refresh their preview.
+    private(set) static var dragGeneration = 0
+
+    func start(_ handler: @escaping (MouseEventKind) -> Void) {
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .leftMouseDown, .leftMouseUp]
+
+        let process: (NSEvent) -> Void = { [weak self] event in
+            guard let self else { return }
+            let kind: MouseEventKind
+            switch event.type {
+            case .leftMouseDown:
+                self.dragChangeCount = NSPasteboard(name: .drag).changeCount
+                // Local events carry our window; drags out of the shelf shouldn't reopen drop bins.
+                self.dragStartedInNotch = event.window is NotchPanel
+                Self.isExternalDrag = false
+                kind = .down
+            case .leftMouseUp:
+                Self.isExternalDrag = false
+                kind = .up
+            case .leftMouseDragged:
+                if !Self.isExternalDrag, !self.dragStartedInNotch {
+                    let pb = NSPasteboard(name: .drag)
+                    if pb.changeCount != self.dragChangeCount, !(pb.types ?? []).isEmpty {
+                        Self.isExternalDrag = true
+                        Self.dragGeneration += 1
+                    }
+                }
+                kind = .dragged
+            default:
+                kind = .moved
+            }
+            handler(kind)
+        }
+
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { event in
+            MainActor.assumeIsolated { process(event) }
+        }) {
+            monitors.append(global)
+        }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { event in
+            MainActor.assumeIsolated { process(event) }
+            return event
+        }) {
+            monitors.append(local)
+        }
+
+        // Safety net for edge cases (screen edges, missed exit events).
+        let t = Timer(timeInterval: 0.25, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                if NSEvent.pressedMouseButtons == 0 { Self.isExternalDrag = false }
+                handler(.tick)
+            }
+        }
+        RunLoop.main.add(t, forMode: .default) // paused during menu tracking on purpose
+        timer = t
+    }
+}
