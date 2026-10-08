@@ -50,6 +50,20 @@ final class NotchWindowController {
             .environmentObject(KeepAwake.shared)
             .environmentObject(UpdateChecker.shared)
             .environmentObject(AudioMixer.shared)
+            .environmentObject(NetworkMonitor.shared)
+            .environmentObject(SpeedTest.shared)
+            .environmentObject(Cleaner.shared)
+            .environmentObject(AppUninstaller.shared)
+            .environmentObject(DeviceBatteries.shared)
+            .environmentObject(PrivacyMonitor.shared)
+            .environmentObject(ClipboardHistory.shared)
+            .environmentObject(SystemTweaks.shared)
+            .environmentObject(ControlTiles.shared)
+            .environmentObject(PortScanner.shared)
+            .environmentObject(AgentMonitor.shared)
+            .environmentObject(VideoDownloader.shared)
+            .environmentObject(VPNMonitor.shared)
+            .environmentObject(MediaConverter.shared)
         let host = FirstMouseHostingView(rootView: AnyView(root))
         host.sizingOptions = []
         host.frame = NSRect(origin: .zero, size: frame.size)
@@ -246,6 +260,7 @@ final class NotchWindowController {
                 let horizontal = swipe.accumulated.width > swipe.accumulated.height * 1.2
                 if horizontal, !isInHorizontalScrollRegion(e) {
                     swipe.axis = .horizontal
+                    viewModel.ensureNeighbors()
                     viewModel.isSwiping = true
                 } else {
                     swipe.axis = .vertical
@@ -278,6 +293,7 @@ final class NotchWindowController {
         FrameProbe.mark("drag")
         swipe = SwipeState()
         swipe.axis = .horizontal
+        viewModel.ensureNeighbors()
         viewModel.isSwiping = true
         rawOffset = 0
         var step = 0

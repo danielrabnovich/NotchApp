@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import EventKit
 import SwiftUI
 
@@ -21,14 +22,64 @@ final class SettingsWindowController {
             w.titlebarAppearsTransparent = true
             w.toolbarStyle = .unified
             w.isReleasedWhenClosed = false
-            w.setContentSize(NSSize(width: 780, height: 580))
-            w.contentMinSize = NSSize(width: 700, height: 480)
+            w.setContentSize(NSSize(width: 900, height: 640))
+            w.contentMinSize = NSSize(width: 800, height: 520)
             w.center()
             w.setFrameAutosaveName("NotchAppSettings")
             window = w
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Debug: the Settings window as a PNG, made tall enough that a whole pane fits.
+    // MARK: Debug: drive the window with synthesized events (debug hooks only)
+
+    /// Sets the content size, so event coordinates line up with snapshots.
+    func debugResize(width: CGFloat, height: CGFloat) {
+        window?.setContentSize(NSSize(width: width, height: height))
+    }
+
+    /// Captures the window at its current size.
+    func debugSnapshot(to url: URL) {
+        guard let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        if let png = rep.representation(using: .png, properties: [:]) { try? png.write(to: url) }
+    }
+
+    /// Posts a mouse event at a point in the content view (top-left origin, points) through the
+    /// app's event queue, so local monitors, tracking areas and gestures all see it.
+    func debugMouse(_ type: NSEvent.EventType, x: CGFloat, y: CGFloat, clicks: Int = 1) {
+        guard let window, let view = window.contentView else { return }
+        let point = NSPoint(x: x, y: view.bounds.height - y)
+        guard let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                             clickCount: clicks, pressure: type == .leftMouseUp ? 0 : 1) else { return }
+        NSApp.postEvent(event, atStart: false)
+    }
+
+    /// Posts a key press to whichever window has the keyboard (Settings, or the notch).
+    func debugKey(code: UInt16, characters: String, modifiers: NSEvent.ModifierFlags) {
+        guard let window = NSApp.keyWindow ?? window else { return }
+        for type in [NSEvent.EventType.keyDown, .keyUp] {
+            guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: window.windowNumber, context: nil, characters: characters,
+                                               charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code) else { continue }
+            NSApp.postEvent(event, atStart: false)
+        }
+    }
+
+    func snapshot(to url: URL) {
+        guard let window, let view = window.contentView else { return }
+        let old = window.frame
+        window.setContentSize(NSSize(width: 900, height: 1500))
+        view.layoutSubtreeIfNeeded()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            if let png = rep.representation(using: .png, properties: [:]) { try? png.write(to: url) }
+            window.setFrame(old, display: true)
+        }
     }
 }
 
@@ -43,6 +94,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case general = "General"
     case addOns = "Add-ons"
     case appearance = "Appearance"
+    case live = "Live Activities"
     case assistant = "Assistant"
     case media = "Media"
     case hud = "HUD"
@@ -51,6 +103,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case tasks = "Tasks"
     case timer = "Timer"
     case stats = "Stats"
+    case tools = "Tools"
+    case agents = "Agents"
     case calendar = "Calendar"
     case controls = "Controls"
     case mouse = "Mouse"
@@ -64,7 +118,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var group: Group {
         switch self {
-        case .general, .addOns, .appearance, .shortcuts: .app
+        case .general, .addOns, .appearance, .live, .shortcuts: .app
         case .about: .info
         default: .features
         }
@@ -87,6 +141,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: "How and where the notch opens."
         case .appearance: "Accent color and motion."
+        case .live: "Keep music, a timer, stats and more beside the notch, always."
         case .assistant: "Find files, search the web and check the weather, with optional local AI."
         case .media: "Now playing, the visualizer and per-app volume."
         case .hud: "Show volume and brightness changes in the notch."
@@ -95,9 +150,11 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .tasks: "Your list, reminders and a scratchpad."
         case .timer: "Countdowns, Pomodoro and a stopwatch."
         case .stats: "CPU, GPU, memory, temperatures and power."
+        case .tools: "Network and speed test, a cleaner, an app uninstaller and Bluetooth batteries."
+        case .agents: "Claude Code, Codex, OpenCode and ZCode sessions, and today's token usage."
         case .addOns: "Search, Shelf and Tasks are always there. Turn on anything else you want."
         case .calendar: "Today's events and heads-ups before meetings."
-        case .controls: "Quick toggles, sliders, Keep Awake and a camera mirror."
+        case .controls: "Pick your quick actions, plus Keep Awake and a camera mirror."
         case .mouse: "Scroll direction and middle click."
         case .updates: "Homebrew and app updates, checked for you."
         case .shortcuts: "Jump straight to any tab from anywhere."
@@ -109,6 +166,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape.fill"
         case .appearance: "paintpalette.fill"
+        case .live: "capsule.inset.filled"
         case .assistant: "sparkle.magnifyingglass"
         case .media: "music.note"
         case .hud: "speaker.wave.2.fill"
@@ -117,6 +175,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .tasks: "checklist"
         case .timer: "timer"
         case .stats: "gauge.with.dots.needle.50percent"
+        case .tools: "wrench.and.screwdriver.fill"
+        case .agents: "sparkles.rectangle.stack.fill"
         case .addOns: "puzzlepiece.extension.fill"
         case .calendar: "calendar"
         case .controls: "switch.2"
@@ -131,6 +191,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: .gray
         case .appearance: .purple
+        case .live: Color(red: 1, green: 0.42, blue: 0.4)
         case .assistant: .indigo
         case .media: .pink
         case .hud: .blue
@@ -139,6 +200,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .tasks: .teal
         case .timer: Color(red: 1, green: 0.55, blue: 0.15)
         case .stats: .cyan
+        case .tools: Color(red: 0.95, green: 0.45, blue: 0.55)
+        case .agents: .purple
         case .addOns: .indigo
         case .calendar: .red
         case .controls: Color(red: 0.35, green: 0.35, blue: 0.4)
@@ -154,32 +217,24 @@ struct SettingsView: View {
     @ObservedObject private var router = SettingsRouter.shared
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: $router.pane) {
-                ForEach(SettingsPane.Group.allCases, id: \.self) { group in
-                    Section {
-                        ForEach(SettingsPane.allCases.filter { $0.group == group }) { p in
-                            Label {
-                                Text(p.title)
-                            } icon: {
-                                SettingsIcon(pane: p, size: 22)
-                            }
-                            .padding(.vertical, 1)
-                            .tag(p)
-                        }
-                    } header: {
-                        if !group.rawValue.isEmpty { Text(group.rawValue) }
-                    }
-                }
-            }
-            .frame(minWidth: 215)
-            .navigationSplitViewColumnWidth(215)
-            .toolbar(removing: .sidebarToggle)
-        } detail: {
+        HStack(spacing: 0) {
+            SettingsSidebar()
+                .frame(width: 236)
+            Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.6)).frame(width: 1)
+            detail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor))
+        }
+        .ignoresSafeArea()
+        .frame(minWidth: 800, minHeight: 520)
+    }
+
+    private var detail: some View {
             Group {
                 switch router.pane {
                 case .general: GeneralPane()
                 case .appearance: AppearancePane()
+                case .live: LiveActivitiesPane()
                 case .assistant: AssistantPane()
                 case .media: MediaPane()
                 case .hud: HUDPane()
@@ -188,6 +243,8 @@ struct SettingsView: View {
                 case .tasks: TasksSettingsPane()
                 case .timer: TimerPane()
                 case .stats: StatsPane()
+                case .tools: ToolsSettingsPane()
+                case .agents: AgentsSettingsPane()
                 case .addOns: AddOnsPane()
                 case .calendar: CalendarPane()
                 case .controls: ControlsPane()
@@ -197,10 +254,10 @@ struct SettingsView: View {
                 case .about: AboutPane()
                 }
             }
-            .navigationTitle("")
-            .animation(.easeInOut(duration: 0.18), value: router.pane)
-        }
-        .frame(minWidth: 700, minHeight: 480)
+            // Switch instantly, like System Settings: a crossfade briefly lays the old and new
+            // pages over each other, which reads as the layout shifting.
+            .id(router.pane)
+            .transaction { $0.animation = nil }
     }
 }
 
@@ -218,8 +275,13 @@ private struct AddOnsPane: View {
                           isOn: $s.calendarEnabled)
                 ToggleRow("Timer", subtitle: "Countdowns, Pomodoro and a stopwatch. “timer 10m” in Search works either way.", isOn: $s.timerEnabled)
                 ToggleRow("Mixer", subtitle: "Per-app volume.", isOn: $s.mixerEnabled)
-                ToggleRow("Controls", subtitle: "Quick toggles: Wi-Fi, dark mode, mic, keep awake.", isOn: $s.controlsEnabled)
+                ToggleRow("Controls", subtitle: "Quick actions you pick: toggles, a port viewer, speed test, copy text from the screen…",
+                          isOn: $s.controlsEnabled)
                 ToggleRow("Stats", subtitle: "CPU, GPU, memory, temperatures and power.", isOn: $s.statsEnabled)
+                ToggleRow("Tools", subtitle: "Network and speed test, a cleaner, an app uninstaller and Bluetooth batteries.",
+                          isOn: $s.toolsEnabled)
+                ToggleRow("Agents", subtitle: "Claude Code, Codex, OpenCode and ZCode sessions at a glance, with today's token usage.",
+                          isOn: $s.agentsEnabled)
             }
             Section("Extras") {
                 ToggleRow("Camera mirror", subtitle: "A quick look at yourself from the notch.", isOn: $s.cameraMirrorEnabled)
@@ -227,6 +289,8 @@ private struct AddOnsPane: View {
                           isOn: Binding(get: { s.volumeHUD || s.brightnessHUD }, set: { s.volumeHUD = $0; s.brightnessHUD = $0 }))
                 ToggleRow("Charging animation", subtitle: "When you plug in.", isOn: $s.chargingAnimation)
                 ToggleRow("Morning brief", subtitle: "Your day at a glance on the first unlock of the morning.", isOn: $s.morningBrief)
+                ToggleRow("Clipboard history", subtitle: "Recent copies on the Shelf, and “clip …” in Search. Password managers are skipped.",
+                          isOn: $s.clipboardHistory)
             }
         }
     }
@@ -323,7 +387,14 @@ private struct MediaPane: View {
                 if s.musicEnabled {
                     ToggleRow("Live activity while playing", subtitle: "Artwork and a visualizer beside the closed notch.",
                               isOn: $s.musicLiveActivity)
-                    ToggleRow("Audio visualizer", isOn: $s.showVisualizer)
+                    ToggleRow("Audio visualizer", subtitle: "Moves with what's actually playing, bass to treble.", isOn: $s.showVisualizer)
+                    if s.showVisualizer {
+                        PermissionRow(title: "System audio recording",
+                                      subtitle: "Lets the visualizer hear the music. It only listens while it's on screen; nothing is recorded or changed. Without it, the bars just animate.",
+                                      state: mixer.permission == .granted ? .granted : mixer.permission == .denied ? .denied : .unknown,
+                                      request: { mixer.requestPermission() },
+                                      openSettings: { AudioCapturePermission.openSettings() })
+                    }
                 }
             } header: {
                 Text("Now playing")
@@ -357,8 +428,7 @@ private struct HUDPane: View {
             } header: {
                 Text("Show in the notch")
             } footer: {
-                Text("Hold Shift + Option while pressing a volume or brightness key for finer steps.")
-                    .font(.caption).foregroundStyle(.secondary)
+                FooterText("Hold Shift + Option while pressing a volume or brightness key for finer steps.")
             }
             Section("Permission") {
                 PermissionRow(title: "Accessibility",
@@ -417,6 +487,53 @@ private struct ShelfSettingsPane: View {
                     }
                 } header: {
                     Text("Taildrop")
+                }
+                Section {
+                    ToggleRow("Clipboard history", subtitle: "Text, links, images and files you copy, next to the shelf. Click one to copy it again.",
+                              isOn: $s.clipboardHistory)
+
+                } header: {
+                    Text("Clipboard")
+                } footer: {
+                    FooterText("Kept on this Mac only. Copies from password managers, or marked private by the app they came from, are never saved.")
+                }
+                Section {
+                    if VideoDownloader.isAvailable {
+                        LabeledContent {
+                            Button("Update yt-dlp") { VideoDownloader.shared.upgrade() }
+                        } label: {
+                            RowLabel(title: "yt-dlp found", subtitle: (VideoDownloader.binary?.path ?? "") + (VideoDownloader.ffmpeg == nil ? " · install ffmpeg for best quality" : " · with ffmpeg"))
+                        }
+                        Picker(selection: $s.videoQuality) {
+                            Text("Best available").tag(0)
+                            Text("4K").tag(2160)
+                            Text("1440p").tag(1440)
+                            Text("1080p").tag(1080)
+                            Text("720p").tag(720)
+                            Text("480p").tag(480)
+                        } label: {
+                            RowLabel(title: "Default quality", subtitle: "For drops and quick downloads; Search and the Save Video menu list every size. Above 1080p is usually AV1 or VP9 (IINA plays both).")
+                        }
+                        ToggleRow("Put finished videos on the shelf", isOn: $s.videoDownloadsToShelf)
+                        ToggleRow("Show progress beside the notch", subtitle: "A ring and percentage while a download runs.",
+                                  isOn: $s.downloadLiveActivity)
+                    } else {
+                        RowLabel(title: "yt-dlp isn't installed", subtitle: "Run “brew install yt-dlp ffmpeg” in Terminal, then reopen Settings.")
+                    }
+                } header: {
+                    Text("Video downloads")
+                } footer: {
+                    FooterText("Paste a link into Search, drag one onto the notch (hold ⌥ for audio only), or right-click a copied link on the Clipboard shelf. Files go to Downloads.")
+                }
+                Section {
+                    ToggleRow("Put converted files on the shelf", subtitle: "Conversions are saved next to the original either way.",
+                              isOn: $s.convertToShelf)
+                } header: {
+                    Text("Convert")
+                } footer: {
+                    FooterText(VideoDownloader.ffmpeg == nil
+                         ? "Images convert with macOS's own tools. Install ffmpeg (brew install ffmpeg) to convert video and audio."
+                         : "Drop files on the Convert bin, or right-click a shelf item. Video and audio use ffmpeg from Homebrew.")
                 }
                 Section("Downloads") {
                     ToggleRow("Recent downloads", subtitle: "Your latest finished downloads, next to the shelf.", isOn: $s.downloadsEnabled)
@@ -479,10 +596,56 @@ private func hourLabel(_ h: Int) -> String {
     return date.formatted(date: .omitted, time: .shortened)
 }
 
+/// The optional MobileCLIP download: describe a picture in your own words.
+private struct VisualSearchRow: View {
+    @ObservedObject private var visual = VisualSearch.shared
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Understand descriptions")
+                Text(subtitle)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if case .downloading(let fraction) = visual.state {
+                    ProgressView(value: fraction).controlSize(.small)
+                }
+            }
+            Spacer()
+            switch visual.state {
+            case .notInstalled, .failed:
+                Button("Download") { visual.install() }
+            case .downloading:
+                Button("Cancel") { visual.cancel() }
+            case .preparing:
+                ProgressView().controlSize(.small)
+            case .ready:
+                Button("Remove") { visual.remove() }
+            }
+        }
+    }
+
+    private var subtitle: String {
+        switch visual.state {
+        case .notInstalled:
+            return "Describe a picture in your own words: “lighthouse at dusk”, “whiteboard with a diagram”. Downloads Apple's MobileCLIP (110 MB); it runs on this Mac."
+        case .downloading(let fraction):
+            return "Downloading MobileCLIP… \(Int(fraction * 100))%"
+        case .preparing:
+            return "Getting MobileCLIP ready…"
+        case .ready:
+            return "Pictures are matched against what you describe, on this Mac."
+        case .failed(let message):
+            return "Download failed: \(message)"
+        }
+    }
+}
+
 private struct AssistantPane: View {
     @EnvironmentObject private var s: AppSettings
     @ObservedObject private var assistant = AssistantStore.shared
     @ObservedObject private var folders = FolderAccess.shared
+    @ObservedObject private var images = ImageIndex.shared
     @State private var customModel = ""
 
     private var folderState: PermissionRow.State {
@@ -497,6 +660,14 @@ private struct AssistantPane: View {
         return "Can't see \(folders.missing.map(\.name).joined(separator: ", ")). Turn it on under Files & Folders."
     }
 
+    /// What the picture index is up to, under its toggle.
+    private var imageSubtitle: String {
+        let what = "Find photos and screenshots by what's in them, or the text they contain. Your Mac's built-in Vision looks at each one, on this Mac."
+        guard s.imageIndexing else { return what }
+        if images.isIndexing { return "Looking at your pictures in the background. Search finds the ones done so far." }
+        return images.indexed > 0 ? "\(what) \(images.indexed.formatted()) pictures so far." : what
+    }
+
     var body: some View {
         SettingsPage(pane: .assistant) {
             Section {
@@ -505,15 +676,25 @@ private struct AssistantPane: View {
                 ToggleRow("Notify when a search finishes", subtitle: "A macOS notification if the notch is closed.",
                           isOn: $s.systemNotifications)
             } footer: {
-                Text("With a local model through Ollama, search understands what you mean, picks the right file and writes answers. Everything stays on your Mac except web searches.")
-                    .font(.caption).foregroundStyle(.secondary)
+                FooterText("With a local model through Ollama, search understands what you mean, picks the right file and writes answers. Everything stays on your Mac except web searches.")
             }
             Section("Files & folders") {
-                PermissionRow(title: "Desktop, Documents, Downloads & iCloud",
+                PermissionRow(title: "Desktop, Documents, Downloads & cloud folders",
                               subtitle: folderSubtitle,
                               state: folderState,
                               request: { Task { await folders.recheck() } },
                               openSettings: { FolderAccess.openPrivacySettings() })
+                ToggleRow("Search inside pictures", subtitle: imageSubtitle, isOn: $s.imageIndexing)
+                ToggleRow("Search the text in screenshots", subtitle: "Screenshots are read on this Mac (newest first) so Search finds them by what they say.",
+                          isOn: $s.screenshotSearch)
+                if s.imageIndexing, images.isIndexing {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ProgressView(value: images.fraction)
+                        Text("\(images.passDone.formatted()) of \(images.passTotal.formatted()) pictures\(images.timeLeft.map { " · \($0)" } ?? "")")
+                            .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    }
+                }
+                if s.imageIndexing { VisualSearchRow() }
             }
             if assistant.pullingModel != nil || assistant.pullError != nil || assistant.justPulled != nil {
                 Section { DownloadActivity() }
@@ -816,8 +997,7 @@ private struct CalendarPane: View {
             } header: {
                 Text("Search bar")
             } footer: {
-                Text("Type things like “lunch with Sam friday at 1”, “push my 3pm to 4” or “am I free tomorrow afternoon”. Google, Outlook and other calendars work once they're added in System Settings → Internet Accounts.")
-                    .font(.caption).foregroundStyle(.secondary)
+                FooterText("Type things like “lunch with Sam friday at 1”, “push my 3pm to 4” or “am I free tomorrow afternoon”. Google, Outlook and other calendars work once they're added in System Settings → Internet Accounts.")
             }
             Section("Permission") {
                 PermissionRow(title: "Calendar", state: calendar.hasAccess ? .granted : .unknown) { calendar.requestAccess() }
@@ -826,18 +1006,167 @@ private struct CalendarPane: View {
     }
 }
 
+private struct ToolsSettingsPane: View {
+    @EnvironmentObject private var s: AppSettings
+    @ObservedObject private var speed = SpeedTest.shared
+
+    var body: some View {
+        SettingsPage(pane: .tools) {
+            Section {
+                ToggleRow("Tools tab", subtitle: "Network, Cleaner and Devices, one swipe away.", isOn: $s.toolsEnabled)
+            }
+            Section("Network") {
+                ToggleRow("Connection alerts", subtitle: "When you go offline or come back, a VPN connects or drops, or your public IP changes.",
+                          isOn: $s.connectionAlerts)
+                ToggleRow("Dev server alerts", subtitle: "When a local server starts (npm run dev, rails s…), with a button to open it.",
+                          isOn: $s.devServerAlerts)
+                ToggleRow("Show speed tests beside the notch", subtitle: "The live speed while a test runs.", isOn: $s.speedTestLiveActivity)
+                LabeledContent {
+                    Button("Clear History") { speed.clearHistory() }.disabled(speed.history.isEmpty)
+                } label: {
+                    RowLabel(title: "Speed test history", subtitle: speed.history.isEmpty ? "No tests yet."
+                             : "\(speed.history.count) result\(speed.history.count == 1 ? "" : "s"). Last: ↓ \(formatMbps(speed.history[0].download)) ↑ \(formatMbps(speed.history[0].upload)) Mbps.")
+                }
+            }
+            Section {
+                ToggleRow("Low disk space alert", subtitle: "A heads-up once a day when less than 10 GB is free.", isOn: $s.lowDiskAlerts)
+            } header: {
+                Text("Cleaner")
+            } footer: {
+                FooterText("Everything the cleaner removes goes to the Trash, so you can put it back. To include the Trash's own size, give NotchApp Full Disk Access in Privacy & Security.")
+            }
+            Section("Devices") {
+                ToggleRow("Low battery alerts", subtitle: "When AirPods, a mouse or a keyboard drops to 20%.", isOn: $s.deviceBatteryAlerts)
+                ToggleRow("Microphone and camera alerts", subtitle: "A heads-up when an app starts using them, and which app has the microphone.",
+                          isOn: $s.privacyAlerts)
+            }
+        }
+    }
+}
+
+private struct AgentsSettingsPane: View {
+    @EnvironmentObject private var s: AppSettings
+    @ObservedObject private var agents = AgentMonitor.shared
+
+    var body: some View {
+        SettingsPage(pane: .agents) {
+            Section {
+                ToggleRow("Agents tab", subtitle: "Sessions that are working, waiting for you or recently idle, plus today's tokens per tool.",
+                          isOn: $s.agentsEnabled)
+                if s.agentsEnabled {
+                    ToggleRow("Alerts", subtitle: "A heads-up when an agent finishes, or stops to ask you something.", isOn: $s.agentAlerts)
+                    ToggleRow("Keep the Mac awake while agents work", subtitle: "Turns on Keep Awake while any session is working, and off two minutes after the last one stops.",
+                              isOn: $s.agentsKeepAwake)
+                }
+            } footer: {
+                FooterText("Pin “Agents” in Live Activities to keep a working count beside the notch. Click a session to jump to its terminal.")
+            }
+            Section {
+                // One form row holding all four: as separate rows, the form drew the last one
+                // (with its menu) outside the section's card.
+                VStack(spacing: 0) {
+                    ForEach(Array(AgentMonitor.Tool.allCases.enumerated()), id: \.element) { i, tool in
+                        if i > 0 { Divider().padding(.vertical, 8) }
+                        AgentPlanRow(tool: tool, installed: agents.installed.contains(tool), note: planNote(tool))
+                    }
+                }
+                .padding(.vertical, 2)
+            } header: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Plans")
+                    // Here rather than in a footer: a long footer pulls the last picker row out of the card.
+                    Text("Read from each agent's own settings where they record one (Claude Code, Codex). ZCode only says a coding plan is connected, so pick your tier. Usage compares the API value of what you used with what the plan costs.")
+                        .font(.caption).fontWeight(.regular).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Section {
+                LabeledContent {
+                    Button("Clear History") { AgentUsageStore.shared.clearHistory() }
+                } label: {
+                    RowLabel(title: "Usage history",
+                             subtitle: "Kept on this Mac by the hour, so it outlives the agents' own logs. API values use published per-token prices as of \(AgentPricing.updated); local models aren't priced.")
+                }
+            } header: {
+                Text("History")
+            }
+            Section {
+                ForEach(AgentMonitor.Tool.allCases) { tool in
+                    HStack(spacing: 10) {
+                        AgentGlyph(tool: tool, size: 22)
+                        RowLabel(title: tool.name, subtitle: source(tool))
+                        Spacer()
+                        Text(agents.installed.contains(tool) ? "Found" : "Not found")
+                            .font(.caption).foregroundStyle(agents.installed.contains(tool) ? Color.green : Color.secondary)
+                    }
+                }
+            } header: {
+                Text("Sources")
+            } footer: {
+                FooterText("Read-only, from files these tools already keep on your Mac. Nothing is sent anywhere.")
+            }
+        }
+        .onAppear { agents.refreshSessions() }
+    }
+
+    private func planNote(_ tool: AgentMonitor.Tool) -> String {
+        guard let plan = AgentUsageStore.shared.plan(for: tool) else { return "No plan recorded: pick one to compare value" }
+        let price = plan.monthly.map { " · $\(Int($0))/mo" } ?? ""
+        return plan.name + price + (plan.detected ? " · detected" : "")
+    }
+
+    private func source(_ tool: AgentMonitor.Tool) -> String {
+        switch tool {
+        case .claude: "~/.claude: live session status and transcript usage"
+        case .codex: "~/.codex/sessions: rollouts and token counts"
+        case .opencode: "~/.local/share/opencode/opencode.db"
+        case .zcode: "~/.zcode/cli/db: turns and per-model usage"
+        }
+    }
+}
+
+private struct AgentPlanRow: View {
+    let tool: AgentMonitor.Tool
+    let installed: Bool
+    let note: String
+    @EnvironmentObject private var s: AppSettings
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AgentGlyph(tool: tool, size: 22)
+            RowLabel(title: tool.name, subtitle: installed ? note : "Not found on this Mac")
+            Spacer(minLength: 8)
+            Picker("", selection: Binding(
+                get: { s.agentPlans[tool.rawValue] ?? "" },
+                set: { s.agentPlans[tool.rawValue] = $0.isEmpty ? nil : $0 })) {
+                Text("Automatic").tag("")
+                Divider()
+                ForEach(AgentPlan.choices(for: tool)) { plan in
+                    Text(plan.monthly.map { "\(plan.name) · $\(Int($0))/mo" } ?? plan.name).tag(plan.id)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+    }
+}
+
+/// Settings › Controls › Quick actions: the Controls grid as it appears in the notch. Drag tiles
+/// to reorder them, drag new ones in from the palette, drag them back out (or ⌫) to remove.
 private struct ControlsPane: View {
     @EnvironmentObject private var s: AppSettings
+    @StateObject private var editor = QuickActionsEditor()
+    @State private var origin: CGPoint = .zero
 
     var body: some View {
         SettingsPage(pane: .controls) {
             Section {
-                ToggleRow("Controls tab", subtitle: "Volume and brightness sliders, Wi-Fi, Keep Awake, Dark Mode, mic mute, screenshot, color picker, lock screen and Empty Trash.",
+                ToggleRow("Controls tab", subtitle: "Volume and brightness sliders, and the quick actions you pick below.",
                           isOn: $s.controlsEnabled)
             } footer: {
-                Text("Dark Mode and Empty Trash ask once for permission to control System Events and Finder.")
-                    .font(.caption).foregroundStyle(.secondary)
+                FooterText("Dark Mode and Empty Trash ask once for permission to control System Events and Finder.")
             }
+            QuickActionsSection(editor: editor)
             Section("Keep Awake") {
                 ToggleRow("Keep the display on", subtitle: "Off lets the screen sleep while the Mac itself stays awake (downloads, renders).",
                           isOn: $s.keepAwakeDisplay)
@@ -854,6 +1183,15 @@ private struct ControlsPane: View {
             Section("Camera") {
                 ToggleRow("Camera mirror button", subtitle: "A camera button in the notch shows a mirrored preview. The camera only runs while it's open.",
                           isOn: $s.cameraMirrorEnabled)
+            }
+        }
+        .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { origin = $0 }
+        // A gallery tile being dragged floats above everything, following the pointer.
+        .overlay(alignment: .topLeading) {
+            if let action = editor.incoming {
+                QuickActionDragTile(action: action, landing: editor.incomingTarget != nil)
+                    .position(x: editor.location.x - origin.x, y: editor.location.y - origin.y)
+                    .allowsHitTesting(false)
             }
         }
     }
@@ -923,6 +1261,20 @@ private struct UpdatesPane: View {
 
 private struct ShortcutsPane: View {
     @EnvironmentObject private var s: AppSettings
+    @ObservedObject private var hotKeys = HotKeys.shared
+    @State private var recording: HotKeys.Action?
+    @State private var filter = ""
+    /// Said after a recording took keys from another action, which got this one's old keys.
+    @State private var notice: String?
+
+    private var shown: [HotKeys.Action] {
+        let q = filter.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return HotKeys.Action.allCases }
+        return HotKeys.Action.allCases.filter { action in
+            action.title.lowercased().contains(q)
+                || (HotKeys.combo(for: action).map { $0.display.lowercased().contains(q) || $0.key.lowercased() == q } ?? false)
+        }
+    }
 
     var body: some View {
         SettingsPage(pane: .shortcuts) {
@@ -932,25 +1284,237 @@ private struct ShortcutsPane: View {
                     Picker(selection: $s.hotKeyModifiers) {
                         ForEach(HotKeys.Modifiers.allCases) { Text($0.title).tag($0) }
                     } label: {
-                        RowLabel(title: "Modifier keys", subtitle: "⌥⌘ matches other notch apps but overrides some app shortcuts (⌥⌘D hides the Dock). "
+                        RowLabel(title: "Default modifier keys", subtitle: "For every shortcut you haven't changed. ⌥⌘ matches other notch apps but overrides some app shortcuts (⌥⌘D hides the Dock). "
                                  + "✦ Hyper is ⌃⌥⇧⌘ together, for a Caps Lock remapped with Karabiner or Raycast.")
                     }
                     .pickerStyle(.segmented)
                 }
             }
             if s.hotKeysEnabled {
-                Section("Shortcuts") {
-                    ForEach(HotKeys.Action.allCases) { action in
-                        LabeledContent(action.title) {
-                            Text("\(s.hotKeyModifiers.symbol) \(action.key)")
-                                .font(.system(.callout, design: .rounded).weight(.medium).monospaced())
-                                .padding(.horizontal, 8).padding(.vertical, 3)
-                                .background(RoundedRectangle(cornerRadius: 5).fill(.quaternary))
+                Section {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
+                        TextField("Filter by name or key", text: $filter)
+                            .textFieldStyle(.plain)
+                        if !filter.isEmpty {
+                            Button { filter = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                                .buttonStyle(.borderless)
                         }
                     }
+                    if shown.isEmpty {
+                        Text("No shortcuts match “\(filter)”")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                    }
+                    ForEach(shown) { action in
+                        LabeledContent {
+                            HStack(spacing: 6) {
+                                if let problem = problem(for: action) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.yellow)
+                                        .help(problem)
+                                }
+                                ShortcutRecorder(action: action, recording: $recording) { notice = $0 }
+                                Button {
+                                    s.hotKeyOverrides[action.rawValue] = nil
+                                } label: {
+                                    Image(systemName: "arrow.uturn.backward.circle.fill")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Reset to \(action.defaultCombo(s.hotKeyModifiers).display)")
+                                .opacity(s.hotKeyOverrides[action.rawValue] == nil ? 0 : 1)
+                                .disabled(s.hotKeyOverrides[action.rawValue] == nil)
+                            }
+                        } label: {
+                            Text(action.title)
+                                .foregroundStyle(HotKeys.combo(for: action) == nil ? .secondary : .primary)
+                        }
+                        .contextMenu {
+                            Button("Record New Shortcut") { recording = action }
+                            Button("Turn Off") { s.hotKeyOverrides[action.rawValue] = HotKeys.Combo.off }
+                                .disabled(HotKeys.combo(for: action) == nil)
+                            Button("Restore Default (\(action.defaultCombo(s.hotKeyModifiers).display))") {
+                                s.hotKeyOverrides[action.rawValue] = nil
+                            }
+                            .disabled(s.hotKeyOverrides[action.rawValue] == nil)
+                        }
+                    }
+                } header: {
+                    HStack {
+                        Text("Shortcuts")
+                        Spacer()
+                        // Turning everything off, then picking the few you want, keeps stray presses harmless.
+                        if HotKeys.Action.allCases.contains(where: { HotKeys.combo(for: $0) != nil }) {
+                            Button("Turn Off All") {
+                                s.hotKeyOverrides = Dictionary(uniqueKeysWithValues: HotKeys.Action.allCases.map { ($0.rawValue, HotKeys.Combo.off) })
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                        }
+                        if !s.hotKeyOverrides.isEmpty {
+                            Button("Restore Defaults") { s.hotKeyOverrides = [:] }
+                                .buttonStyle(.borderless)
+                                .font(.caption)
+                        }
+                    }
+                } footer: {
+                    FooterText(notice ?? "Click a shortcut and press new keys, or ⎋ to cancel. Click ✕ (or press ⌫ while recording) to turn one off. Keys another shortcut uses are swapped with it.")
                 }
             }
         }
+        .onDisappear { recording = nil }
+        .onChange(of: notice) { _, text in
+            guard let text else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { if notice == text { notice = nil } }
+        }
+    }
+
+    /// Why a shortcut won't work, if it won't: another action has it, or another app does.
+    private func problem(for action: HotKeys.Action) -> String? {
+        guard let combo = HotKeys.combo(for: action) else { return nil }
+        if let other = HotKeys.Action.allCases.first(where: { $0 != action && HotKeys.combo(for: $0) == combo }) {
+            return "\(combo.display) is also used for “\(other.title)”."
+        }
+        if hotKeys.failed.contains(action) { return "\(combo.display) is in use by another app or macOS." }
+        return nil
+    }
+}
+
+/// A shortcut field: shows the keys, and records new ones when clicked (like System Settings' fields).
+private struct ShortcutRecorder: View {
+    let action: HotKeys.Action
+    @Binding var recording: HotKeys.Action?
+    /// Called with a message when recording swapped keys with another action.
+    var swapped: (String) -> Void = { _ in }
+    @EnvironmentObject private var s: AppSettings
+    @State private var monitor: Any?
+    @State private var held: String = ""
+    @State private var hovering = false
+
+    private var isRecording: Bool { recording == action }
+
+    var body: some View {
+        // The field and its turn-off ✕ are sibling buttons (a button nested in another never gets
+        // the click). Plain tap gestures don't work here: Form rows don't pass them clicks.
+        ZStack {
+            Button {
+                recording = isRecording ? nil : action
+            } label: {
+                Group {
+                    if isRecording {
+                        Text(held.isEmpty ? "Type Shortcut" : held)
+                            .foregroundStyle(held.isEmpty ? .secondary : .primary)
+                    } else if let combo = HotKeys.combo(for: action) {
+                        Text(combo.display)
+                    } else {
+                        Text("None").foregroundStyle(.tertiary)
+                    }
+                }
+                .font(.system(size: 12, weight: .medium, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .padding(.horizontal, 22)
+                .frame(width: 124, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isRecording ? Color.accentColor.opacity(0.14) : Color.primary.opacity(hovering ? 0.09 : 0.055))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(isRecording ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: isRecording ? 1.5 : 0.5)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Shortcut for \(action.title)")
+            HStack {
+                Spacer()
+                if hovering, !isRecording, HotKeys.combo(for: action) != nil {
+                    Button {
+                        s.hotKeyOverrides[action.rawValue] = HotKeys.Combo.off
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Turn off this shortcut")
+                    .accessibilityLabel("Turn off shortcut for \(action.title)")
+                    .transition(.opacity)
+                }
+            }
+            .padding(.trailing, 2)
+        }
+        .frame(width: 124, height: 22)
+
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .help(isRecording ? "Press keys, ⌫ to turn off, ⎋ to cancel" : "Click to change")
+        .onChange(of: isRecording) { _, on in on ? start() : stop() }
+        .onDisappear { stop() }
+    }
+
+    private func start() {
+        held = ""
+        HotKeys.shared.suspended = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged, .leftMouseDown]) { event in
+            switch event.type {
+            case .leftMouseDown:
+                // Clicking anywhere else ends recording; the click still goes through.
+                DispatchQueue.main.async { if recording == action { recording = nil } }
+                return event
+            case .flagsChanged:
+                held = (HotKeys.Combo(keyCode: 0, modifiers: carbon(event.modifierFlags), key: "x").modifierSymbols)
+                return nil
+            default:
+                let bare = event.modifierFlags.intersection([.control, .option, .command, .shift]).isEmpty
+                if event.keyCode == UInt16(kVK_Escape), bare {
+                    recording = nil
+                } else if [UInt16(kVK_Delete), UInt16(kVK_ForwardDelete)].contains(event.keyCode), bare {
+                    set(.off)
+                } else if let combo = HotKeys.Combo(event: event) {
+                    set(combo)
+                } else {
+                    NSSound.beep()
+                }
+                return nil
+            }
+        }
+    }
+
+    private func set(_ combo: HotKeys.Combo) {
+        let old = HotKeys.combo(for: action)
+        var overrides = s.hotKeyOverrides
+        // Keys another action has: it takes this one's old keys (or none), so nothing clashes.
+        if !combo.isNone, combo != old,
+           let other = HotKeys.Action.allCases.first(where: { $0 != action && HotKeys.combo(for: $0) == combo }) {
+            let given = old ?? HotKeys.Combo.off
+            overrides[other.rawValue] = given == other.defaultCombo(s.hotKeyModifiers) ? nil : given
+            swapped(old.map { "Swapped with “\(other.title)”, which is now \($0.display)." } ?? "“\(other.title)” had \(combo.display), so it's now off.")
+        }
+        // Back to the default? Then it's not an override any more, and follows the default modifiers.
+        overrides[action.rawValue] = combo == action.defaultCombo(s.hotKeyModifiers) ? nil : combo
+        s.hotKeyOverrides = overrides
+        recording = nil
+    }
+
+    private func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        held = ""
+        if recording == nil { HotKeys.shared.suspended = false }
+    }
+
+    private func carbon(_ flags: NSEvent.ModifierFlags) -> UInt32 {
+        var out: UInt32 = 0
+        if flags.contains(.control) { out |= UInt32(controlKey) }
+        if flags.contains(.option) { out |= UInt32(optionKey) }
+        if flags.contains(.shift) { out |= UInt32(shiftKey) }
+        if flags.contains(.command) { out |= UInt32(cmdKey) }
+        return out
     }
 }
 

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 enum NotchTab: String, CaseIterable, Identifiable {
-    case ask, home, shelf, tasks, timer, mixer, controls, stats
+    case ask, home, shelf, tasks, timer, mixer, controls, stats, tools, agents
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -14,6 +14,8 @@ enum NotchTab: String, CaseIterable, Identifiable {
         case .stats: "gauge.with.dots.needle.50percent"
         case .ask: "sparkle.magnifyingglass"
         case .controls: "switch.2"
+        case .tools: "wrench.and.screwdriver.fill"
+        case .agents: "sparkles.rectangle.stack.fill"
         }
     }
 }
@@ -25,6 +27,12 @@ enum CollapsedActivity: Equatable {
     case tasks
     case timer
     case working
+    /// A speed test is running: a gauge and the live speed.
+    case speedTest
+    /// A yt-dlp download: a progress ring and percent.
+    case videoDownload
+    /// The live activities pinned in Settings.
+    case live
     case peek(SneakPeek.Kind)
 }
 
@@ -114,6 +122,8 @@ final class NotchViewModel: ObservableObject {
         if s.mixerEnabled { t.append(.mixer) }
         if s.controlsEnabled { t.append(.controls) }
         if s.statsEnabled { t.append(.stats) }
+        if s.toolsEnabled { t.append(.tools) }
+        if s.agentsEnabled { t.append(.agents) }
         return t
     }
 
@@ -130,6 +140,10 @@ final class NotchViewModel: ObservableObject {
         if let peek = ActivityCenter.shared.peek { return .peek(peek.kind) }
         let s = AppSettings.shared
         let media = MediaController.shared
+        // The pinned layout holds; a running timer joins it rather than replacing it.
+        if s.speedTestLiveActivity, SpeedTest.shared.phase.isRunning { return .speedTest }
+        if s.downloadLiveActivity, VideoDownloader.shared.current != nil { return .videoDownload }
+        if !LiveActivities.shared.isEmpty { return .live }
         if s.timerEnabled, s.timerLiveActivity, TimerStore.shared.isActive { return .timer }
         if s.assistantEnabled, AssistantStore.shared.runningCount > 0 { return .working }
         if s.musicEnabled, s.musicLiveActivity, media.hasTrack, media.isPlaying { return .music }
@@ -145,6 +159,9 @@ final class NotchViewModel: ObservableObject {
         case .tasks: notchSize.height
         case .timer: 54
         case .working: notchSize.height + 4
+        case .speedTest: 62
+        case .videoDownload: 54
+        case .live: LiveActivities.shared.sideWidth(notchHeight: notchSize.height)
         case .peek(let kind): kind.sideWidth(notchHeight: notchSize.height)
         }
     }
@@ -176,6 +193,7 @@ final class NotchViewModel: ObservableObject {
         let target = tab ?? (tabs.contains(.ask) ? .ask : nil)
         if let target, tabs.contains(target) { self.tab = target }
         guard !isOpen else { return }
+        if overlay == nil, let prompt = NotchPresenter.shared.takePendingPrompt() { overlay = .prompt(prompt) }
         // Take the keyboard as the open begins (before the content is built), so typing can start
         // straight away; doing it after the animation re-rendered the whole panel and dropped frames.
         if wantsKeyboard { takeKeyFocus() }
@@ -192,7 +210,7 @@ final class NotchViewModel: ObservableObject {
         guard isOpen else { return }
         isSettled = false
         wantsKeyboard = false
-        pager.neighborsReady = false
+        pager.builtCenter = nil
         withAnimation(AppSettings.shared.closeAnimation) {
             isOpen = false
             isDragActive = false
@@ -233,13 +251,21 @@ final class NotchViewModel: ObservableObject {
         }
     }
 
+    /// Builds the pages either side of the current one once nothing is moving. The previous
+    /// neighbours stay up until then: tearing them down as a slide settled and building the next
+    /// ones as the following slide began were the two hitches in every swipe.
     private func prepareNeighbors() {
-        pager.neighborsReady = false
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self, self.isOpen, !self.isSettling, !self.isSwiping else { return }
+            guard self.pager.builtCenter != self.tabIndex else { return }
             FrameProbe.mark("neighbors")
-            self.pager.neighborsReady = true
+            self.pager.builtCenter = self.tabIndex
         }
+    }
+
+    /// A swipe needs the next page drawn; if the neighbours aren't up yet, build them now.
+    func ensureNeighbors() {
+        if pager.builtCenter == nil { pager.builtCenter = tabIndex }
     }
 }
 
@@ -250,8 +276,8 @@ final class PagerState: ObservableObject {
     @Published var isSettling = false
     /// The tab a change started from, kept rendered until the slide settles.
     var fromIndex: Int?
-    /// Neighbouring tabs are built while nothing is moving, so a swipe never has to build them
-    /// on its first frame (a visible hitch); building them mid-animation slowed the opening.
-    @Published var neighborsReady = false
+    /// The page whose neighbours are built. It only moves while nothing is sliding, so a swipe
+    /// never builds or tears down a page mid-motion (a visible hitch); nil until the notch settles.
+    @Published var builtCenter: Int?
     var width: CGFloat = 600
 }

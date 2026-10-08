@@ -24,10 +24,20 @@ final class FolderAccess: ObservableObject {
                     Folder(name: "Downloads", path: "\(home)/Downloads")]
         let iCloud = "\(home)/Library/Mobile Documents/com~apple~CloudDocs"
         if FileManager.default.fileExists(atPath: iCloud) { list.append(Folder(name: "iCloud Drive", path: iCloud)) }
+        // Nextcloud, Dropbox, Google Drive, OneDrive…: Spotlight also leaves these out of an app's
+        // results until the app has opened them once.
+        let cloud = "\(home)/Library/CloudStorage"
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: cloud))?.sorted() ?? [] where !name.hasPrefix(".") {
+            // "Nextcloud-nextcloud.example.com-Phil" → "Nextcloud"
+            list.append(Folder(name: String(name.split(separator: "-").first ?? Substring(name)), path: "\(cloud)/\(name)"))
+        }
         return list
     }()
 
     var missing: [Folder] { folders.filter { access[$0.path] == false } }
+
+    /// macOS has asked about these folders before, so reading them won't put up a prompt.
+    var decided: Bool { UserDefaults.standard.bool(forKey: "folderAccessAsked") }
 
     /// Asks once per launch (macOS only shows each prompt the first time).
     func ensure() async {
@@ -45,6 +55,7 @@ final class FolderAccess: ObservableObject {
             return out
         }.value
         access = result
+        UserDefaults.standard.set(true, forKey: "folderAccessAsked")
     }
 
     static func openPrivacySettings() {

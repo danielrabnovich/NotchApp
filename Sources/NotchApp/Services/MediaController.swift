@@ -16,6 +16,8 @@ final class MediaController: ObservableObject {
     @Published private(set) var duration: Double = 0
     @Published private(set) var isPlaying = false
     @Published private(set) var artwork: NSImage?
+    /// The last cover received, by the adapter's artwork id, to restore when it comes back unchanged.
+    private var lastArtwork: (id: String, image: NSImage)?
     @Published private(set) var accentColor: NSColor = .white
     @Published private(set) var bundleID: String?
     @Published private(set) var appName: String?
@@ -111,6 +113,7 @@ final class MediaController: ObservableObject {
             return
         }
 
+        let sameTrack = newTitle == title
         title = newTitle
         artist = info["artist"] as? String ?? ""
         album = info["album"] as? String ?? ""
@@ -128,10 +131,18 @@ final class MediaController: ObservableObject {
         }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { isPlaying = playing }
 
+        let artworkID = info["artworkId"] as? String
         if let b64 = info["artwork"] as? String, let data = Data(base64Encoded: b64), let image = NSImage(data: data) {
             artwork = image
             accentColor = image.vibrantAverageColor ?? .white
-        } else if info["artworkId"] == nil {
+            lastArtwork = artworkID.map { ($0, image) }
+        } else if let artworkID, artwork == nil, let last = lastArtwork, last.id == artworkID {
+            // The adapter only sends an image when it changes; this one was shown before.
+            artwork = last.image
+            accentColor = last.image.vibrantAverageColor ?? .white
+        } else if artworkID == nil, !sameTrack {
+            // A new track without artwork. The same track briefly losing its artwork (players do
+            // this while paused) keeps the cover it had.
             artwork = nil
             accentColor = .white
         }

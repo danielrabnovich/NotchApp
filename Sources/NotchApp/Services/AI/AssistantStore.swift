@@ -7,7 +7,7 @@ import SwiftUI
 final class AssistantStore: ObservableObject {
     static let shared = AssistantStore()
 
-    enum Route: String { case files, web, weather, actions, calendar }
+    enum Route: String { case files, web, weather, actions, calendar, notes }
 
     enum State: Equatable {
         case running(stage: String)
@@ -22,10 +22,13 @@ final class AssistantStore: ObservableObject {
         var state: State = .running(stage: "Thinking")
         var files: [FileHit] = []
         var confident = true
+        /// More files are being looked for while these are browsed.
+        var findingMore = false
         var answer: String?
         var sources: [WebSource] = []
         var weather: WeatherReport?
         var calendar: CalendarAnswer?
+        var notes: NotesAnswer?
         /// Proposed commands for the user to review (the actions route).
         var plan: CommandPlanner.Plan?
         let startedAt = Date()
@@ -223,6 +226,7 @@ final class AssistantStore: ObservableObject {
             let progress: @Sendable (String) async -> Void = { stage in
                 await MainActor.run { AssistantStore.shared.update(id) { $0.state = .running(stage: stage) } }
             }
+            var pendingMore: FileFinder.More?
             do {
                 let useAI = self.aiAvailable
                 var understanding = Router.understandWithoutAI(trimmed)
@@ -232,9 +236,10 @@ final class AssistantStore: ObservableObject {
                 update(id) { $0.route = route }
                 switch route {
                 case .files:
-                    let (hits, confident) = try await FileFinder.find(trimmed, plan: understanding.plan, useAI: useAI, progress: progress)
+                    let (hits, confident, more) = try await FileFinder.find(trimmed, plan: understanding.plan, useAI: useAI, progress: progress)
                     try Task.checkCancellation()
-                    update(id) { $0.files = hits; $0.confident = confident; $0.state = .done }
+                    update(id) { $0.files = hits; $0.confident = confident; $0.state = .done; $0.findingMore = more != nil }
+                    pendingMore = more
                 case .web:
                     let (answer, sources) = try await WebSearcher.answer(trimmed, searchQuery: understanding.webQuery, useAI: useAI,
                                                                          progress: progress) { soFar, sources in
@@ -261,6 +266,11 @@ final class AssistantStore: ObservableObject {
                     let answer = try await CalendarQuery.answer(trimmed, useAI: useAI)
                     try Task.checkCancellation()
                     update(id) { $0.calendar = answer; $0.state = .done }
+                case .notes:
+                    await progress("Reading your notes")
+                    let answer = await NotesQuery.answer(trimmed, useAI: useAI)
+                    try Task.checkCancellation()
+                    update(id) { $0.notes = answer; $0.state = .done }
                 case .weather:
                     await progress("Checking the forecast")
                     let report = try await WeatherService.report(location: understanding.location, dayOffset: understanding.dayOffset)
@@ -275,6 +285,19 @@ final class AssistantStore: ObservableObject {
             guard let finished = current, finished.id == id else { return }
             DebugHooks.log("JOB [\(finished.route?.rawValue ?? "?")] \(finished.query) → \(finished.state) \(Int(Date().timeIntervalSince(finished.startedAt)))s | files: \(finished.files.map { $0.url.lastPathComponent + " (" + ($0.reason ?? "") + ")" }) | answer: \(finished.answer ?? "")")
             announce(finished)
+
+            // The first results are up; find the rest while they're being looked through. New ones go
+            // at the end, so the selection never jumps.
+            if let more = pendingMore {
+                let extra = await FileFinder.more(more)
+                guard !Task.isCancelled else { return }
+                update(id) { job in
+                    let have = Set(job.files.map(\.url))
+                    job.files += extra.filter { !have.contains($0.url) }
+                    job.findingMore = false
+                }
+                DebugHooks.log("JOB more → \(current?.files.map(\.url.lastPathComponent) ?? [])")
+            }
         }
     }
 
@@ -319,6 +342,8 @@ final class AssistantStore: ObservableObject {
             title = "Forecast"; detail = job.weather?.summary ?? job.query
         case (_, .calendar?):
             title = job.calendar?.headline ?? "Calendar"; detail = job.calendar?.detail ?? job.query
+        case (_, .notes?):
+            title = "From your notes"; detail = job.notes?.headline ?? job.query
         default:
             title = "Answer ready"; detail = job.query
         }
@@ -344,7 +369,8 @@ enum Router {
         route:
         - "files": they're looking for something saved on this Mac. Anything that names or describes a specific \
         document is a file, even without the word "file": "my resume", "the lego case study for marketing", \
-        "slides from chapter 8", "screenshot of the receipt", "the pdf Sarah sent", "my notes on pricing".
+        "slides from chapter 8", "screenshot of the receipt", "the pdf Sarah sent", "my notes on pricing". \
+        A description of what a picture shows is a file too: "a person at a desk with a card game", "the lighthouse at sunset".
         - "weather": weather, forecast, temperature or rain questions.
         - "actions": they want this app to DO something for them rather than find something: add tasks or a to-do \
         list, plan or break down a project into steps, remind them to do things, jot down or remember a note, start \
@@ -352,19 +378,24 @@ enum Router {
         dark mode/Wi-Fi/mic, lock the screen, take a screenshot, open or quit an app, tick off a task. "plan my move next month", "remind me to \
         call mom and buy eggs", "jot down the door code is 4471", "lunch with sam friday at 1", "push my 3pm to 4", \
         "add dentist appointment tuesday 10am", "cancel tomorrow's standup", "skip this song".
-        - "calendar": questions about their own schedule: "what's on today", "my schedule tomorrow", "am I free \
-        friday at 3", "when is my dentist appointment", "next meeting", "what do I have this week".
+        - "calendar": questions about their own schedule or day, which covers their tasks too: "what's on today", \
+        "what do I have to do today", "my agenda", "my schedule tomorrow", "am I free friday at 3", \
+        "when is my dentist appointment", "next meeting", "what do I have this week".
+        - "notes": questions about what they wrote down in this app's notes or to-do list: "what's in my notes", \
+        "what did I note about the palette", "what's the door code I saved", "my tasks about the launch". \
+        Not documents on the Mac ("my notes from biology class" is files).
         - "web": questions and information from the internet: facts, news, sports, prices, places, hours, how-to, \
         definitions, recommendations.
         Reply with JSON only:
-        {"route": "files" or "web" or "weather" or "actions" or "calendar",
+        {"route": "files" or "web" or "weather" or "actions" or "calendar" or "notes",
          "web_query": "concise search-engine query; keep time words like latest/last/this as written, don't add years",
          "location": "city for weather, or null if none given",
          "day_offset": 0 for today, 1 for tomorrow, etc. (weather only),
          "keywords": [up to 6 words likely in the file NAME or TEXT; most distinctive first; add synonyms and common abbreviations (marketing→mktg, chapter→ch, assignment→hw)],
          "kinds": [ONLY if the user names a type: pdf, word, excel, powerpoint, image, screenshot, video, audio, text, code, folder, archive],
          "days_ago_max": integer ONLY if the user mentions when (yesterday→3, last week→14, last month→45), otherwise null,
-         "people": [names of people mentioned]}
+         "people": [names of people mentioned],
+         "picture": true if they describe what an image shows (people, objects, a scene) rather than a document's name or contents, else false}
         """
         let obj = try await OllamaClient.chatJSON(system: system, user: query)
         let strings: (String) -> [String] = { key in
@@ -378,6 +409,7 @@ enum Router {
         plan.kinds = strings("kinds").map { $0.lowercased() }
         plan.daysAgoMax = (obj["days_ago_max"] as? NSNumber)?.intValue
         plan.people = strings("people")
+        plan.visual = (obj["picture"] as? Bool) ?? false
         let route = AssistantStore.Route(rawValue: (obj["route"] as? String ?? "").lowercased()) ?? .web
         let webQuery = (obj["web_query"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? query
         let location = (obj["location"] as? String).flatMap { $0.isEmpty || $0.lowercased() == "null" ? nil : $0 }
@@ -414,8 +446,15 @@ extension Router {
             return Understanding(route: .weather, webQuery: query, plan: .init(), location: location, dayOffset: day)
         }
 
+        let notesPhrases = ["my notes", "in my notes", "my scratchpad", "my tasks", "my to-do", "my todo", "my to do list",
+                            "did i note", "did i write down", "did i jot"]
+        if notesPhrases.contains(where: { lower.contains($0) }), !lower.contains(" from "), !lower.contains(" class") {
+            return Understanding(route: .notes, webQuery: query, plan: .init(), location: nil, dayOffset: 0)
+        }
+
         let calendarPhrases = ["my calendar", "my schedule", "what's on", "whats on", "what do i have", "am i free", "am i busy",
-                               "next meeting", "next event", "when am i free", "my day", "my week", "my agenda", "agenda"]
+                               "next meeting", "next event", "when am i free", "my day", "my week", "my agenda", "agenda",
+                               "have to do today", "to do today", "need to do today"]
         if calendarPhrases.contains(where: { lower.contains($0) }) {
             return Understanding(route: .calendar, webQuery: query, plan: .init(), location: nil, dayOffset: 0)
         }

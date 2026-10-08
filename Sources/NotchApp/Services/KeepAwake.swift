@@ -29,6 +29,8 @@ final class KeepAwake: ObservableObject {
     @Published private(set) var endsAt: Date?
     /// Ticks every 30 s while a timed session runs, for the remaining-time label.
     @Published private(set) var now = Date()
+    /// The session was started for coding agents (and ends when they're done).
+    @Published private(set) var forAgents = false
 
     private var assertion: IOPMAssertionID = 0
     private var timer: Timer?
@@ -39,19 +41,21 @@ final class KeepAwake: ObservableObject {
         return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
     }
 
-    func start(_ length: Length) {
+    func start(_ length: Length, forAgents: Bool = false) {
         stop(announce: false)
         let type = AppSettings.shared.keepAwakeDisplay ? kIOPMAssertionTypePreventUserIdleDisplaySleep
                                                        : kIOPMAssertionTypePreventUserIdleSystemSleep
         guard IOPMAssertionCreateWithName(type as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
                                           "NotchApp: Keep Awake" as CFString, &assertion) == kIOReturnSuccess else { return }
         isActive = true
+        self.forAgents = forAgents
         if case .minutes(let m) = length { endsAt = Date().addingTimeInterval(Double(m) * 60) } else { endsAt = nil }
         now = Date()
         let t = Timer(timeInterval: 30, repeats: true) { _ in MainActor.assumeIsolated { KeepAwake.shared.tick() } }
         RunLoop.main.add(t, forMode: .common)
         timer = t
-        ActivityCenter.shared.show(.notice(title: "Keeping your Mac awake", detail: length == .indefinitely ? "until you turn it off" : "for \(length.label)",
+        ActivityCenter.shared.show(.notice(title: "Keeping your Mac awake",
+                                           detail: forAgents ? "while your agents work" : length == .indefinitely ? "until you turn it off" : "for \(length.label)",
                                            icon: "cup.and.saucer.fill"), for: 2.5)
     }
 
@@ -60,11 +64,12 @@ final class KeepAwake: ObservableObject {
         IOPMAssertionRelease(assertion)
         assertion = 0
         isActive = false
+        forAgents = false
         endsAt = nil
         timer?.invalidate()
         timer = nil
         if announce {
-            ActivityCenter.shared.show(.notice(title: "Keep Awake off", detail: "Your Mac can sleep normally", icon: "moon.zzz.fill"), for: 2.5)
+            ActivityCenter.shared.show(.notice(title: "Keep Awake off", detail: "Your Mac can sleep normally", icon: "moon.zzz.fill", tone: .info), for: 2.5)
         }
     }
 
@@ -74,7 +79,7 @@ final class KeepAwake: ObservableObject {
         let floor = AppSettings.shared.keepAwakeBatteryFloor
         if floor > 0, let level = Self.batteryLevelOnBattery, level <= floor {
             stop(announce: false)
-            ActivityCenter.shared.show(.notice(title: "Keep Awake off", detail: "Battery at \(level)%", icon: "battery.25percent"), for: 4)
+            ActivityCenter.shared.show(.notice(title: "Keep Awake off", detail: "Battery at \(level)%", icon: "battery.25percent", tone: .warning), for: 4)
         }
     }
 

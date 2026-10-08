@@ -9,6 +9,7 @@ struct CollapsedNotchView: View {
     @EnvironmentObject private var battery: BatteryMonitor
     @EnvironmentObject private var tasks: TaskStore
     @EnvironmentObject private var assistant: AssistantStore
+    @ObservedObject private var live = LiveActivities.shared
 
     var body: some View {
         let h = viewModel.notchSize.height
@@ -41,6 +42,15 @@ struct CollapsedNotchView: View {
         case .music:
             AlbumArtView(image: media.artwork, size: viewModel.notchSize.height - 10, cornerRadius: 5)
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
+        case .videoDownload:
+            VideoDownloadRing()
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
+        case .speedTest:
+            Image(systemName: "speedometer")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(SpeedTest.shared.phase == .upload ? ToolsPalette.up : ToolsPalette.down)
+                .symbolEffect(.pulse, options: .repeating)
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .working:
             Image(systemName: "sparkle.magnifyingglass")
                 .font(.system(size: 12, weight: .semibold))
@@ -55,6 +65,9 @@ struct CollapsedNotchView: View {
         case .timer:
             TimerRing(clock: TimerStore.shared.clock)
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
+        case .live:
+            LiveSide(items: live.left, side: .left, notchHeight: viewModel.notchSize.height)
+                .transition(.opacity)
         case .peek:
             if let peek = activity.peek { peekLeading(peek).transition(.opacity) }
         }
@@ -64,6 +77,12 @@ struct CollapsedNotchView: View {
         switch viewModel.activity {
         case .none:
             Color.clear
+        case .videoDownload:
+            VideoDownloadPercent()
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
+        case .speedTest:
+            LiveSpeedReadout()
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .working:
             ProgressView()
                 .controlSize(.mini)
@@ -90,6 +109,9 @@ struct CollapsedNotchView: View {
                 }
             }
             .transition(.scale(scale: 0.4).combined(with: .opacity))
+        case .live:
+            LiveSide(items: live.right, side: .right, notchHeight: viewModel.notchSize.height)
+                .transition(.opacity)
         case .peek:
             if let peek = activity.peek { peekTrailing(peek).transition(.opacity) }
         }
@@ -139,10 +161,10 @@ struct CollapsedNotchView: View {
             Image(systemName: "arrow.down.circle.fill")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.blue)
-        case let .notice(_, _, icon):
+        case let .notice(_, _, icon, tone):
             Image(systemName: icon)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(tone == .warning || icon == "mic.fill" ? Color.orange : icon == "video.fill" ? .green : .white)
         case .taildrop:
             if let icon = SystemIcons.tailscale {
                 Image(nsImage: icon).resizable().frame(width: 18, height: 18)
@@ -195,10 +217,25 @@ struct CollapsedNotchView: View {
             Image(systemName: "checkmark")
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.white.opacity(0.85))
-        case .notice:
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.green)
+        case let .notice(_, _, _, tone):
+            switch tone {
+            case .success:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.green)
+            case .warning:
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.orange)
+            case .info:
+                Circle().fill(.white.opacity(0.75)).frame(width: 6, height: 6)
+            case .action:
+                // Open the notch for the buttons.
+                Image(systemName: "chevron.down.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .symbolEffect(.bounce, options: .repeat(2))
+            }
         case let .taildrop(title, _, _):
             Image(systemName: title.hasPrefix("Couldn't") ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
                 .font(.system(size: 13, weight: .semibold))
@@ -214,13 +251,13 @@ struct CollapsedNotchView: View {
     @ViewBuilder private func subtitle(for peek: SneakPeek) -> some View {
         switch peek {
         case let .meeting(title, minutes, _):
-            Text("\(title) · in \(minutes) min")
+            Text("\(title) · in \(minutes) min" + (NotchPresenter.shared.hasPendingPrompt(titled: title) ? " · open to join" : ""))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.9))
                 .lineLimit(1)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 6)
-        case let .notice(title, detail, _):
+        case let .notice(title, detail, _, _):
             (Text(title).fontWeight(.semibold) + Text(" · " + detail).foregroundColor(.white.opacity(0.7)))
                 .font(.system(size: 12))
                 .foregroundStyle(.white)
@@ -292,7 +329,7 @@ struct CollapsedNotchView: View {
 }
 
 /// Phase icon inside a ring that fills as the countdown runs (beside the notch).
-private struct TimerRing: View {
+struct TimerRing: View {
     @ObservedObject var clock: TimerClock
     @EnvironmentObject private var store: TimerStore
 
@@ -316,7 +353,7 @@ private struct TimerRing: View {
     }
 }
 
-private struct TimerReadout: View {
+struct TimerReadout: View {
     @ObservedObject var clock: TimerClock
     @EnvironmentObject private var store: TimerStore
 
@@ -325,6 +362,53 @@ private struct TimerReadout: View {
             .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
             .foregroundStyle(store.state == .paused ? .white.opacity(0.5) : TimerPalette.color(for: store))
             .lineLimit(1)
+            .fixedSize()
+    }
+}
+
+/// The live speed beside the notch during a speed test (its own view, so only it redraws each second).
+private struct LiveSpeedReadout: View {
+    @ObservedObject private var network = NetworkMonitor.shared
+    @ObservedObject private var speed = SpeedTest.shared
+
+    var body: some View {
+        Text(speed.phase == .connecting ? "…" : formatMbps(speed.liveSpeed))
+            .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+            .foregroundStyle(.white.opacity(0.92))
+            .lineLimit(1)
+            .fixedSize()
+    }
+}
+
+/// The download in progress as a ring with the video glyph inside.
+private struct VideoDownloadRing: View {
+    @ObservedObject private var videos = VideoDownloader.shared
+
+    var body: some View {
+        let job = videos.current
+        ZStack {
+            Circle().stroke(.white.opacity(0.15), lineWidth: 2.2)
+            Circle()
+                .trim(from: 0, to: max(0.02, job?.progress ?? 0))
+                .stroke(Color.red, style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Image(systemName: job?.format == .audio ? "music.note" : "play.fill")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(.white.opacity(0.9))
+        }
+        .frame(width: 17, height: 17)
+        .help(job?.displayTitle ?? "")
+    }
+}
+
+private struct VideoDownloadPercent: View {
+    @ObservedObject private var videos = VideoDownloader.shared
+
+    var body: some View {
+        let job = videos.current
+        Text(job?.state == .processing ? "…" : job.map { "\(Int(($0.progress * 100).rounded()))%" } ?? "")
+            .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+            .foregroundStyle(.white.opacity(0.92))
             .fixedSize()
     }
 }

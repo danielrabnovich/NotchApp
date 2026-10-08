@@ -33,6 +33,7 @@ final class SearchSuggestions: ObservableObject {
     @Published var selected = 0
     private var fileTask: Task<Void, Never>?
     private var query = ""
+    var currentQuery: String { query }
 
     func update(_ raw: String) {
         let q = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -70,8 +71,18 @@ final class SearchSuggestions: ObservableObject {
             await FolderAccess.shared.ensure()
             let files = await Task.detached { FileFinder.quickMatches(q, limit: 3) }.value
             guard !Task.isCancelled, let self, self.query == q else { return }
-            self.set(Array((head + files.map { .file($0) }).prefix(6)))
+            // Screenshots whose text matches, read on this Mac.
+            let shots = AppSettings.shared.screenshotSearch ? ScreenshotText.shared.search(q, limit: 2).filter { !files.contains($0) } : []
+            self.set(Array((head + files.map { .file($0) } + shots.map { .file($0) }).prefix(6)))
         }
+    }
+
+    /// Re-runs the current query, for results that arrive later (a port lookup).
+    func refresh() {
+        guard !query.isEmpty else { return }
+        let keep = selected
+        update(query)
+        selected = min(keep, max(items.count - 1, 0))
     }
 
     func move(_ delta: Int) {

@@ -86,6 +86,14 @@ final class CalendarManager: ObservableObject {
             let minutes = max(1, Int((until / 60).rounded(.up)))
             ActivityCenter.shared.show(.meeting(title: event.title ?? "Event", minutes: minutes,
                                                 color: event.calendar?.color ?? .systemBlue), for: 8)
+            // With a call link, opening the notch now offers to join.
+            if let link = MeetingLinks.find(in: event) {
+                NotchPresenter.shared.offer(Prompt(icon: "video.fill", tint: event.calendar?.color ?? .systemBlue,
+                                                   title: event.title ?? "Meeting",
+                                                   detail: "Starts in \(minutes) min · \(link.service)",
+                                                   actions: [.init(title: "Join \(link.service)", primary: true) { MeetingLinks.join(link) }]),
+                                            peek: false)
+            }
             break
         }
     }

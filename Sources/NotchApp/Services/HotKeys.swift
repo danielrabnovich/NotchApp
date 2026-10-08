@@ -6,11 +6,88 @@ import SwiftUI
 /// System-wide shortcuts that open the notch straight to a tab (Carbon hot keys: no
 /// Accessibility permission needed). Pressing one again while that tab is showing closes it.
 @MainActor
-final class HotKeys {
+final class HotKeys: ObservableObject {
     static let shared = HotKeys()
 
+    /// A key with its modifiers, as Carbon wants them, plus the key's name for display.
+    /// An empty `key` means the shortcut is turned off.
+    struct Combo: Codable, Equatable, Hashable {
+        var keyCode: UInt32
+        var modifiers: UInt32
+        var key: String
+
+        /// Turned off. (Not `none`: assigned to an optional, `.none` would mean nil, i.e. "back to the default".)
+        static let off = Combo(keyCode: 0, modifiers: 0, key: "")
+        var isNone: Bool { key.isEmpty }
+
+        /// ⌃⌥⇧⌘ in the system's order, or ✦ for all four (Hyper).
+        var modifierSymbols: String {
+            if modifiers == Modifiers.hyper.carbon { return "✦" }
+            var out = ""
+            if modifiers & UInt32(controlKey) != 0 { out += "⌃" }
+            if modifiers & UInt32(optionKey) != 0 { out += "⌥" }
+            if modifiers & UInt32(shiftKey) != 0 { out += "⇧" }
+            if modifiers & UInt32(cmdKey) != 0 { out += "⌘" }
+            return out
+        }
+
+        var display: String { isNone ? "" : modifierSymbols + key }
+
+        /// Reads a key press for the shortcut recorder. Needs ⌃, ⌥ or ⌘ (⇧ alone would eat
+        /// ordinary typing), except for function keys.
+        init?(event: NSEvent) {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            var carbon: UInt32 = 0
+            if flags.contains(.control) { carbon |= UInt32(controlKey) }
+            if flags.contains(.option) { carbon |= UInt32(optionKey) }
+            if flags.contains(.shift) { carbon |= UInt32(shiftKey) }
+            if flags.contains(.command) { carbon |= UInt32(cmdKey) }
+            let code = UInt32(event.keyCode)
+            let function = Self.functionKeys[code]
+            guard carbon & UInt32(controlKey | optionKey | cmdKey) != 0 || function != nil else { return nil }
+            let name = function ?? Self.specialKeys[code]
+                ?? event.characters(byApplyingModifiers: [])?.uppercased()
+                ?? event.charactersIgnoringModifiers?.uppercased() ?? ""
+            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || code == UInt32(kVK_Space) else { return nil }
+            self.init(keyCode: code, modifiers: carbon, key: code == UInt32(kVK_Space) ? "Space" : name)
+        }
+
+        init(keyCode: UInt32, modifiers: UInt32, key: String) {
+            self.keyCode = keyCode
+            self.modifiers = modifiers
+            self.key = key
+        }
+
+        private static let functionKeys: [UInt32: String] = [
+            UInt32(kVK_F1): "F1", UInt32(kVK_F2): "F2", UInt32(kVK_F3): "F3", UInt32(kVK_F4): "F4",
+            UInt32(kVK_F5): "F5", UInt32(kVK_F6): "F6", UInt32(kVK_F7): "F7", UInt32(kVK_F8): "F8",
+            UInt32(kVK_F9): "F9", UInt32(kVK_F10): "F10", UInt32(kVK_F11): "F11", UInt32(kVK_F12): "F12",
+            UInt32(kVK_F13): "F13", UInt32(kVK_F14): "F14", UInt32(kVK_F15): "F15", UInt32(kVK_F16): "F16",
+            UInt32(kVK_F17): "F17", UInt32(kVK_F18): "F18", UInt32(kVK_F19): "F19", UInt32(kVK_F20): "F20",
+        ]
+        private static let specialKeys: [UInt32: String] = [
+            UInt32(kVK_Space): "Space", UInt32(kVK_Return): "↩", UInt32(kVK_Tab): "⇥", UInt32(kVK_Delete): "⌫",
+            UInt32(kVK_ForwardDelete): "⌦", UInt32(kVK_Escape): "⎋", UInt32(kVK_LeftArrow): "←", UInt32(kVK_RightArrow): "→",
+            UInt32(kVK_UpArrow): "↑", UInt32(kVK_DownArrow): "↓", UInt32(kVK_Home): "↖", UInt32(kVK_End): "↘",
+            UInt32(kVK_PageUp): "⇞", UInt32(kVK_PageDown): "⇟",
+        ]
+    }
+
+    /// Actions whose shortcut couldn't be registered (usually another app has it).
+    @Published private(set) var failed: Set<Action> = []
+    /// While a shortcut is being recorded nothing is registered, so the keys reach the recorder.
+    var suspended = false { didSet { if suspended != oldValue { register() } } }
+
+    /// The shortcut an action uses now: its own if rebound, else the shared modifiers and its key.
+    /// Nil when turned off.
+    static func combo(for action: Action) -> Combo? {
+        let s = AppSettings.shared
+        if let own = s.hotKeyOverrides[action.rawValue] { return own.isNone ? nil : own }
+        return action.defaultCombo(s.hotKeyModifiers)
+    }
+
     enum Action: String, CaseIterable, Identifiable {
-        case toggle, search, home, shelf, downloads, tasks, notes, timer, mixer, controls, camera, stats
+        case toggle, search, home, shelf, downloads, tasks, notes, timer, mixer, controls, camera, stats, tools, agents, clipboard, copyText
         var id: String { rawValue }
 
         var key: String {
@@ -27,6 +104,10 @@ final class HotKeys {
             case .controls: "C"
             case .camera: "W"
             case .stats: "I"
+            case .tools: "O"
+            case .agents: "A"
+            case .clipboard: "B"
+            case .copyText: "X"
             }
         }
 
@@ -44,7 +125,15 @@ final class HotKeys {
             case .controls: "Controls"
             case .camera: "Camera mirror"
             case .stats: "Stats"
+            case .tools: "Tools"
+            case .agents: "Agents"
+            case .clipboard: "Clipboard history"
+            case .copyText: "Copy text from the screen"
             }
+        }
+
+        func defaultCombo(_ modifiers: Modifiers) -> Combo {
+            Combo(keyCode: keyCode, modifiers: modifiers.carbon, key: key)
         }
 
         var keyCode: UInt32 {
@@ -61,6 +150,10 @@ final class HotKeys {
             case .controls: UInt32(kVK_ANSI_C)
             case .camera: UInt32(kVK_ANSI_W)
             case .stats: UInt32(kVK_ANSI_I)
+            case .tools: UInt32(kVK_ANSI_O)
+            case .agents: UInt32(kVK_ANSI_A)
+            case .clipboard: UInt32(kVK_ANSI_B)
+            case .copyText: UInt32(kVK_ANSI_X)
             }
         }
     }
@@ -95,8 +188,8 @@ final class HotKeys {
 
     func start() {
         let s = AppSettings.shared
-        s.$hotKeysEnabled.combineLatest(s.$hotKeyModifiers)
-            .sink { [weak self] _, _ in DispatchQueue.main.async { self?.register() } }
+        s.$hotKeysEnabled.combineLatest(s.$hotKeyModifiers, s.$hotKeyOverrides)
+            .sink { [weak self] _, _, _ in DispatchQueue.main.async { self?.register() } }
             .store(in: &cancellables)
     }
 
@@ -104,7 +197,7 @@ final class HotKeys {
         refs.forEach { UnregisterEventHotKey($0) }
         refs = []
         let s = AppSettings.shared
-        guard s.hotKeysEnabled else { return }
+        guard s.hotKeysEnabled, !suspended else { return }
 
         if handler == nil {
             var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
@@ -123,16 +216,19 @@ final class HotKeys {
             }, 1, &spec, nil, &handler)
         }
 
-        let modifiers = s.hotKeyModifiers.carbon
+        var failed: Set<Action> = []
         for (i, action) in Action.allCases.enumerated() {
+            guard let combo = Self.combo(for: action) else { continue }
             var ref: EventHotKeyRef?
             let id = EventHotKeyID(signature: OSType(0x4E4F5443), id: UInt32(i)) // 'NOTC'
-            if RegisterEventHotKey(action.keyCode, modifiers, id, GetApplicationEventTarget(), 0, &ref) == noErr, let ref {
+            if RegisterEventHotKey(combo.keyCode, combo.modifiers, id, GetApplicationEventTarget(), 0, &ref) == noErr, let ref {
                 refs.append(ref)
             } else {
-                DebugHooks.log("HotKeys: couldn't register \(s.hotKeyModifiers.symbol)\(action.key) (taken by another app?)")
+                failed.insert(action)
+                DebugHooks.log("HotKeys: couldn't register \(combo.display) (taken by another app?)")
             }
         }
+        if failed != self.failed { self.failed = failed }
         DebugHooks.log("HotKeys: registered \(refs.count) of \(Action.allCases.count)")
     }
 
@@ -159,6 +255,13 @@ final class HotKeys {
         case .mixer: target = .mixer
         case .controls: target = .controls
         case .stats: target = .stats
+        case .tools: target = .tools
+        case .agents: target = .agents
+        case .clipboard: defaults.set(ShelfPane.clipboard.rawValue, forKey: "shelf.pane"); target = .shelf
+        case .copyText:
+            vm.close()
+            SystemTweaks.shared.copyTextFromScreen()
+            return
         }
         guard let target, vm.tabs.contains(target) else { return }
         if vm.isOpen && vm.tab == target && !vm.mirror {

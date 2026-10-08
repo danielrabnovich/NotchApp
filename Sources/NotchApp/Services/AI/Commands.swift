@@ -27,6 +27,16 @@ struct Command: Identifiable, Equatable {
         case deleteEvent(id: String, title: String)
         case media(MediaAction)
         case openApp(URL)
+        case speedTest
+        case copyText
+        case flushDNS
+        case toggleHiddenFiles, toggleDesktopIcons, toggleNightShift
+        case stopPort(port: Int, pid: pid_t, name: String)
+        case uninstall(URL)
+        case copyClip(UUID)
+        case emptyTrash
+        case downloadMedia(URL, VideoDownloader.Format, height: Int?)
+        case transformClipboard(TextTransform)
     }
 
     enum MediaAction: String, Equatable { case toggle, play, pause, next, previous }
@@ -35,7 +45,7 @@ struct Command: Identifiable, Equatable {
     /// (moving or deleting an event, quitting an app) is shown for a quick review first.
     var runsWithoutReview: Bool {
         switch action {
-        case .moveEvent, .deleteEvent, .quitApp: false
+        case .moveEvent, .deleteEvent, .quitApp, .stopPort, .emptyTrash: false
         default: true
         }
     }
@@ -68,6 +78,8 @@ enum CommandParser {
         }
 
         if let c = tasks(q, lower) ?? note(q, lower) ?? complete(q, lower) ?? quit(lower) ?? event(q, lower) { return c }
+        if let c = port(lower) ?? uninstall(q, lower) ?? clip(q, lower) ?? media(q, lower) { return c }
+        if let c = utility(lower) ?? transform(lower) { return [c] }
         if let c = media(lower) { return [c] }
         if let c = timer(lower) ?? awake(lower) ?? control(lower) { return [c] }
         if let c = navigation(lower) { return [c] }
@@ -157,6 +169,150 @@ enum CommandParser {
         return apps.map { app, name in
             Command(action: .quitApp(app.processIdentifier), title: "Quit \(name)",
                     subtitle: app.isActive ? "Frontmost app" : "Running", icon: "xmark.app", verb: "Quit")
+        }
+    }
+
+    // MARK: - Utilities
+
+    /// "port 3000", "what's on port 8080", "ports".
+    private static func port(_ lower: String) -> [Command]? {
+        if ["ports", "open ports", "listening ports", "port list", "show ports"].contains(lower) {
+            return [Command(action: .show(.controls, pane: "ports"), title: "Show listening ports", icon: "point.3.connected.trianglepath.dotted", verb: "Show")]
+        }
+        guard let prefix = ["port ", "what's on port ", "whats on port ", "what is on port ", "kill port ", "free port ", "lsof "]
+            .first(where: lower.hasPrefix) else { return nil }
+        guard let port = Int(lower.dropFirst(prefix.count).trimmingCharacters(in: CharacterSet(charactersIn: " :"))),
+              (1...65535).contains(port) else { return nil }
+        // lsof takes a moment, so the matching listeners are filled in by PortLookup as you type.
+        let found = PortLookup.shared.listeners(for: port)
+        guard let found else {
+            return [Command(action: .template(prefix + "\(port)"), title: "Checking port \(port)…", icon: "point.3.connected.trianglepath.dotted", verb: "Wait")]
+        }
+        guard !found.isEmpty else {
+            return [Command(action: .template(prefix), title: "Nothing is listening on port \(port)", subtitle: "It's free to use",
+                            icon: "checkmark.circle", verb: "Edit")]
+        }
+        return found.map { l in
+            l.isSystem
+                ? Command(action: .template(prefix + String(port)), title: "\(l.displayName) is using port \(port)",
+                          subtitle: "Part of macOS · PID " + String(l.pid), icon: "apple.logo", verb: "OK")
+                : Command(action: .stopPort(port: port, pid: l.pid, name: l.displayName), title: "Stop \(l.displayName) on port \(port)",
+                    subtitle: "PID " + String(l.pid) + " · \(l.isLocalOnly ? "this Mac only" : "all interfaces")", icon: "network.slash", verb: "Stop")
+        }
+    }
+
+    /// A pasted link (or "download …", "audio …") → save it with yt-dlp.
+    private static func media(_ q: String, _ lower: String) -> [Command]? {
+        guard VideoDownloader.isAvailable else { return nil }
+        let prefixes: [(String, VideoDownloader.Format?)] = [("download ", nil), ("yt ", nil), ("ytdl ", nil), ("yt-dlp ", nil),
+                                                            ("video ", .video), ("audio ", .audio), ("mp3 ", .audio), ("m4a ", .audio)]
+        let match = prefixes.first { lower.hasPrefix($0.0) }
+        let rest = match.map { String(q.dropFirst($0.0.count)) } ?? q
+        guard let url = VideoDownloader.webURL(rest) else { return nil }
+        let host = url.host()?.replacingOccurrences(of: "www.", with: "") ?? "the web"
+        let downloader = VideoDownloader.shared
+        let info = downloader.cachedInfo(for: url)
+        if info == nil, !downloader.isProbing(url) {
+            // Ask yt-dlp what's on offer; the list fills in with each resolution when it answers.
+            Task { if await downloader.probe(url) != nil { SearchSuggestions.shared.refresh() } }
+        }
+        let preferred = AppSettings.shared.videoQuality
+        let audio = Command(action: .downloadMedia(url, .audio, height: nil), title: "Download audio only",
+                            subtitle: "M4A from \(host)" + (info?.audioSize.map { " · ~" + formatBytes($0) } ?? ""),
+                            icon: "music.note", verb: "Download")
+        if match?.1 == .audio { return [audio] }
+        var videos: [Command]
+        if let qualities = info?.qualities, !qualities.isEmpty {
+            // The default quality first (or the best below it), then the others, highest first.
+            let first = qualities.first { preferred == 0 || $0.height <= preferred } ?? qualities[0]
+            let ordered = [first] + qualities.filter { $0 != first }
+            videos = ordered.prefix(4).map { q in
+                Command(action: .downloadMedia(url, .video, height: q.height), title: "Download video · \(q.label)",
+                        subtitle: q.detail + " · from \(host)", icon: "arrow.down.circle", verb: "Download")
+            }
+        } else {
+            videos = [Command(action: .downloadMedia(url, .video, height: preferred > 0 ? preferred : nil), title: "Download video",
+                              subtitle: (downloader.isProbing(url) || info == nil ? "Checking qualities… · " : "") + "from \(host)",
+                              icon: "arrow.down.circle", verb: "Download")]
+        }
+        return match?.1 == .video ? videos : videos + [audio]
+    }
+
+    /// "uninstall slack".
+    private static func uninstall(_ q: String, _ lower: String) -> [Command]? {
+        guard let prefix = ["uninstall ", "remove app ", "delete app "].first(where: lower.hasPrefix) else { return nil }
+        let needle = String(q.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty, AppSettings.shared.toolsEnabled else { return nil }
+        let hits = AppIndex.shared.search(needle, limit: 3).filter { $0.score >= 60 && !$0.app.url.path.hasPrefix("/System/") }
+        guard !hits.isEmpty else {
+            return [Command(action: .template(prefix), title: "No app matches “\(needle)”", icon: "xmark.app", verb: "Edit")]
+        }
+        return hits.map { hit in
+            Command(action: .uninstall(hit.app.url), title: "Uninstall \(hit.app.name)…", subtitle: "Shows what will go to the Trash first",
+                    icon: "xmark.app", verb: "Review")
+        }
+    }
+
+    /// "clip invoice", "paste address": matching clipboard history.
+    private static func clip(_ q: String, _ lower: String) -> [Command]? {
+        guard AppSettings.shared.clipboardHistory,
+              let prefix = ["clip ", "clipboard ", "paste ", "copied "].first(where: lower.hasPrefix) ?? (["clip", "clipboard"].contains(lower) ? lower : nil)
+        else { return nil }
+        let needle = String(q.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+        let hits = ClipboardHistory.shared.search(needle, limit: 6)
+        guard !hits.isEmpty else {
+            return [Command(action: .show(.shelf, pane: ShelfPane.clipboard.rawValue), title: "Nothing copied matches “\(needle)”",
+                            subtitle: "Show clipboard history", icon: "doc.on.clipboard", verb: "Show")]
+        }
+        return hits.map { clip in
+            Command(action: .copyClip(clip.id), title: String(clip.title.replacingOccurrences(of: "\n", with: " ").prefix(80)),
+                    subtitle: "Copied " + clip.date.formatted(.relative(presentation: .named)), icon: clip.icon, verb: "Copy")
+        }
+    }
+
+    /// "format json", "base64 decode", "uppercase": applied to the clipboard, with a preview.
+    private static func transform(_ lower: String) -> Command? {
+        guard let t = TextTransform.allCases.first(where: { $0.phrases.contains(lower) }) else { return nil }
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+            return Command(action: .transformClipboard(t), title: t.title, subtitle: "Copy some text first", icon: "wand.and.rays", verb: "Run")
+        }
+        // Short: the row drops a detail that doesn't fit whole.
+        let preview = t.apply(text).map { out -> String in
+            let flat = out.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return "→ " + (flat.count > 34 ? String(flat.prefix(33)) + "…" : flat)
+        }
+            ?? "Clipboard isn't valid for that"
+        return Command(action: .transformClipboard(t), title: "\(t.title) on clipboard", subtitle: preview, icon: "wand.and.rays", verb: "Apply")
+    }
+
+    private static func utility(_ lower: String) -> Command? {
+        let tweaks = SystemTweaks.shared
+        switch lower {
+        case "speedtest", "speed test", "speed", "internet speed", "test speed", "test internet", "network speed":
+            return Command(action: .speedTest, title: "Run a speed test", subtitle: "Download, upload and responsiveness · about 20 seconds",
+                           icon: "speedometer", verb: "Run")
+        case "ocr", "copy text", "grab text", "text from screen", "copy text from screen", "scan text":
+            return Command(action: .copyText, title: "Copy text from the screen", subtitle: "Drag over the text you want",
+                           icon: "text.viewfinder", verb: "Start")
+        case "flush dns", "flushdns", "clear dns", "dns flush", "reset dns":
+            return Command(action: .flushDNS, title: "Flush the DNS cache", subtitle: "Asks for your password", icon: "arrow.clockwise.circle", verb: "Flush")
+        case "hidden files", "show hidden files", "hide hidden files", "dotfiles":
+            return Command(action: .toggleHiddenFiles, title: tweaks.hiddenFilesShown ? "Hide hidden files" : "Show hidden files",
+                           subtitle: "Restarts Finder", icon: "eye", verb: "Toggle")
+        case "desktop icons", "hide desktop", "hide desktop icons", "show desktop icons", "clean desktop":
+            return Command(action: .toggleDesktopIcons, title: tweaks.desktopIconsHidden ? "Show desktop icons" : "Hide desktop icons",
+                           subtitle: "Restarts Finder", icon: "menubar.dock.rectangle", verb: "Toggle")
+        case "night shift", "nightshift", "toggle night shift":
+            return Command(action: .toggleNightShift, title: tweaks.nightShiftOn ? "Turn Night Shift off" : "Turn Night Shift on",
+                           icon: "moon.circle.fill", verb: "Toggle")
+        case "empty trash", "empty the trash":
+            return Command(action: .emptyTrash, title: "Empty the Trash", subtitle: "Can't be undone", icon: "trash.fill", verb: "Empty")
+        case "clean", "cleaner", "clean up", "cleanup", "free space", "free up space", "disk space", "storage":
+            guard AppSettings.shared.toolsEnabled else { return nil }
+            let free = Cleaner.shared.disk.map { "\(formatBytes($0.available)) free" } ?? "Caches, logs, old downloads…"
+            return Command(action: .show(.tools, pane: ToolsPane.cleaner.rawValue), title: "Free up space", subtitle: free,
+                           icon: "sparkles", verb: "Show")
+        default: return nil
         }
     }
 
@@ -282,6 +438,10 @@ enum CommandParser {
             (["mixer", "audio"], "Mixer", .show(.mixer), "slider.vertical.3"),
             (["controls"], "Controls", .show(.controls), "switch.2"),
             (["stats", "system", "activity"], "Stats", .show(.stats), "gauge.with.dots.needle.50percent"),
+            (["tools", "network", "wifi info", "ip", "my ip", "ip address"], "Network", .show(.tools, pane: ToolsPane.network.rawValue), "network"),
+            (["agents", "claude", "claude code", "codex", "opencode", "zcode", "tokens", "usage"], "Agents", .show(.agents), "sparkles.rectangle.stack.fill"),
+            (["devices", "bluetooth", "airpods", "batteries"], "Devices", .show(.tools, pane: ToolsPane.devices.rawValue), "airpods"),
+            (["clipboard", "clipboard history", "clips"], "Clipboard", .show(.shelf, pane: ShelfPane.clipboard.rawValue), "doc.on.clipboard"),
             (["home", "music", "calendar"], "Home", .show(.home), "house.fill"),
             (["settings", "preferences"], "Settings", .settings, "gearshape.fill"),
         ]
@@ -304,6 +464,17 @@ enum CommandParser {
                 icon: "calendar.badge.plus", verb: "Use"),
         Command(action: .template("timer "), title: "timer 10m", subtitle: "Countdown · or “pomodoro”, “stopwatch”", icon: "timer", verb: "Use"),
         Command(action: .template("quit "), title: "quit …", subtitle: "Quit a running app by name", icon: "xmark.app", verb: "Use"),
+        Command(action: .template("port "), title: "port 3000", subtitle: "See what's listening on a port, and stop it · or “ports”",
+                icon: "point.3.connected.trianglepath.dotted", verb: "Use"),
+        Command(action: .template("speedtest"), title: "speedtest", subtitle: "Internet speed · also: ocr, flush dns, hidden files, night shift",
+                icon: "speedometer", verb: "Use"),
+        Command(action: .template("uninstall "), title: "uninstall …", subtitle: "Remove an app and the files it left behind",
+                icon: "xmark.app", verb: "Use"),
+        Command(action: .template("download "), title: "download <link>", subtitle: "Save a video with yt-dlp · or “audio <link>” · or just paste a link",
+                icon: "arrow.down.circle", verb: "Use"),
+        Command(action: .template("format json"), title: "format json", subtitle: "Also: base64, url decode, uppercase, plain text, sort lines… on the clipboard",
+                icon: "wand.and.rays", verb: "Use"),
+        Command(action: .template("clip "), title: "clip …", subtitle: "Find something you copied earlier", icon: "doc.on.clipboard", verb: "Use"),
         Command(action: .template("keep awake "), title: "keep awake 1h", subtitle: "Also: volume 40, brightness, dark mode, wifi, lock, screenshot",
                 icon: "switch.2", verb: "Use"),
     ]
@@ -495,12 +666,59 @@ final class CommandCenter: ObservableObject {
             NSWorkspace.shared.openApplication(at: url, configuration: .init())
             NotchPresenter.shared.primary?.close()
             return nil
+        case .speedTest:
+            SpeedTest.shared.start()
+            return Confirmation(text: "Speed test running…", icon: "speedometer",
+                                destination: AppSettings.shared.toolsEnabled ? .show(.tools, pane: ToolsPane.network.rawValue) : nil)
+        case .copyText:
+            NotchPresenter.shared.primary?.close()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { SystemTweaks.shared.copyTextFromScreen() }
+            return nil
+        case .flushDNS: SystemTweaks.shared.flushDNS(); return nil
+        case .toggleHiddenFiles: SystemTweaks.shared.toggleHiddenFiles(); return nil
+        case .toggleDesktopIcons: SystemTweaks.shared.toggleDesktopIcons(); return nil
+        case .toggleNightShift: SystemTweaks.shared.toggleNightShift(); return nil
+        case .emptyTrash:
+            Cleaner.emptyTrash { ok in
+                if !ok { ActivityCenter.shared.show(.notice(title: "Couldn't empty the Trash", detail: "Allow NotchApp to control Finder", icon: "trash.slash", tone: .warning), for: 4) }
+            }
+            return Confirmation(text: "Emptied the Trash", icon: "trash.fill")
+        case .stopPort(let port, let pid, let name):
+            PortScanner.shared.stop(PortScanner.Listener(port: port, pid: pid, command: name, address: "*"))
+            PortLookup.shared.invalidate()
+            return Confirmation(text: "Stopped \(name) on port \(port)", icon: "network.slash")
+        case .uninstall(let url):
+            AppUninstaller.shared.inspect(url)
+            show(.tools, pane: ToolsPane.cleaner.rawValue)
+            return nil
+        case .copyClip(let id):
+            guard let clip = ClipboardHistory.shared.clips.first(where: { $0.id == id }) else { return nil }
+            ClipboardHistory.shared.copy(clip)
+            NotchPresenter.shared.primary?.close()
+            return nil
+        case .transformClipboard(let t):
+            TextTransform.applyToClipboard(t)
+            return nil
+        case .downloadMedia(let url, let format, let height):
+            VideoDownloader.shared.download(url, format: format, height: height)
+            return Confirmation(text: "Downloading \(format == .audio ? "audio" : "video")…", icon: "arrow.down.circle",
+                                destination: AppSettings.shared.shelfEnabled ? .show(.shelf, pane: ShelfPane.downloads.rawValue) : nil)
         case .addTasks, .completeTask, .appendNote, .template, .createEvent, .moveEvent, .deleteEvent, .media: return nil
         }
     }
 
     func show(_ tab: NotchTab, pane: String?) {
-        if let pane { UserDefaults.standard.set(pane, forKey: tab == .tasks ? "tasks.pane" : "shelf.pane") }
+        if let pane {
+            switch tab {
+            case .tasks: UserDefaults.standard.set(pane, forKey: "tasks.pane")
+            case .shelf: UserDefaults.standard.set(pane, forKey: "shelf.pane")
+            case .tools: UserDefaults.standard.set(pane, forKey: "tools.pane")
+            case .controls where pane == "ports":
+                PortScanner.shared.refresh()
+                PortScanner.shared.listOpen = true
+            default: break
+            }
+        }
         guard let vm = NotchPresenter.shared.primary, vm.tabs.contains(tab) else { return }
         if vm.isOpen { vm.select(tab) } else { vm.open(tab: tab) }
     }
@@ -536,7 +754,7 @@ enum CommandPlanner {
         {"type":"color_picker"}
         {"type":"open_app","name":"app name"}
         {"type":"quit_app","name":"app name"}
-        {"type":"show","tab":"tasks|notes|shelf|downloads|timer|mixer|controls|stats|home|settings"}
+        {"type":"show","tab":"tasks|notes|shelf|downloads|clipboard|timer|mixer|controls|stats|tools|agents|network|devices|home|settings"}
         {"type":"task","title":"short imperative task","due":"when, in plain words like 'tomorrow 3pm' or 'friday', or null"}
         {"type":"note","text":"the text to jot down"}
         {"type":"timer","minutes":number}

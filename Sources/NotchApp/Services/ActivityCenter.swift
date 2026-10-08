@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+/// How a heads-up reads: done (a green check), for information (a dot), something wrong (orange),
+/// or waiting in the open notch with buttons (a chevron).
+enum NoticeTone: Equatable {
+    case success, info, warning, action
+}
+
 /// A short-lived "live activity" that pops out of the collapsed notch.
 enum SneakPeek: Equatable {
     case volume(level: Float, muted: Bool)
@@ -12,8 +18,8 @@ enum SneakPeek: Equatable {
     case download(name: String)
     case assistant(title: String, detail: String, isWeb: Bool)
     case taildrop(title: String, detail: String, received: Bool)
-    /// A general confirmation: an icon, a title and a detail line.
-    case notice(title: String, detail: String, icon: String)
+    /// A general heads-up: an icon, a title and a detail line. The tone picks the mark on the right.
+    case notice(title: String, detail: String, icon: String, tone: NoticeTone = .success)
 
     enum Kind: Equatable {
         case volume, brightness, charging, meeting, screenshot, timer, download, assistant, taildrop, notice

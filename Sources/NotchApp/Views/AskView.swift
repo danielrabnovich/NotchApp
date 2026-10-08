@@ -16,6 +16,8 @@ struct AskView: View {
     @ObservedObject private var commands = CommandCenter.shared
     /// Proposed actions the user unticked before running the plan.
     @State private var excluded: Set<UUID> = []
+    /// The result the arrow keys are on: previewed, and what ↩ / ⌘↩ / ⌘Y act on.
+    @State private var resultIndex = 0
 
     var body: some View {
         // One layout with a single search field: swapping between separate layouts recreated
@@ -25,7 +27,7 @@ struct AskView: View {
             if idle { Spacer(minLength: 0) }
             searchBar(compact: !idle)
             if let job = assistant.current {
-                ResultView(job: job, accent: accent, excluded: $excluded, applyPlan: applyPlan)
+                ResultView(job: job, accent: accent, excluded: $excluded, selection: $resultIndex, applyPlan: applyPlan)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .padding(.top, 8)
                     .padding(.horizontal, 4)
@@ -45,6 +47,7 @@ struct AskView: View {
                     }
                 }
                 .transition(.opacity)
+                IndexingLine()
                 Spacer(minLength: 0)
             }
         }
@@ -57,6 +60,8 @@ struct AskView: View {
         }
         .onAppear {
             assistant.refreshStatusIfStale()
+            // If Quick Look keeps the keyboard, its arrow keys still move the selection here.
+            QuickLook.shared.onMove = { moveSelection($0) }
             // Hidden tabs aren't rendered, so restore the query when this page comes back.
             if let q = assistant.current?.query { query = q }
             focusIfShown()
@@ -66,7 +71,12 @@ struct AskView: View {
         .onChange(of: viewModel.wantsKeyboard) { _, _ in focusIfShown() }
         .onChange(of: assistant.current?.id) { _, _ in
             if let q = assistant.current?.query { query = q }
+            resultIndex = 0
+            QuickLook.shared.close()
         }
+        .onChange(of: viewModel.isOpen) { _, open in if !open { QuickLook.shared.close() } }
+
+        .onChange(of: viewModel.tab) { _, _ in QuickLook.shared.close() }
         .onChange(of: commands.confirmation?.id) { _, new in
             // An action that ran straight from the bar: clear it for the next thing.
             if new != nil, assistant.current == nil { query = ""; suggestions.clear() }
@@ -125,6 +135,83 @@ struct AskView: View {
         viewModel.close()
     }
 
+    // MARK: - Keyboard over results
+
+    /// What the arrow keys move through right now: a finished search's files or links, else the
+    /// suggestion list's files and apps (nil entries for rows that aren't files).
+    private var browsable: [URL] {
+        guard let job = assistant.current else { return [] }
+        let streaming = job.route == .web && !(job.answer ?? "").isEmpty
+        guard job.state == .done || streaming else { return [] }
+        switch job.route {
+        case .files?: return job.files.map(\.url)
+        case .weather?, .calendar?, .actions?: return []
+        default: return (job.answer ?? "").isEmpty ? job.sources.map(\.url) : job.sources.prefix(5).map(\.url)
+        }
+    }
+
+    private var showsFiles: Bool { assistant.current?.route == .files }
+
+    /// The local file under the selection, in results or suggestions.
+    private var selectedFile: URL? {
+        if assistant.current != nil {
+            return showsFiles && browsable.indices.contains(resultIndex) ? browsable[resultIndex] : nil
+        }
+        return suggestions.current.flatMap { if case .file(let url) = $0 { url } else { nil } }
+    }
+
+    /// Files in the suggestion list, for Quick Look, with the selected one's position among them.
+    private var suggestionFiles: (urls: [URL], index: Int?) {
+        let urls = suggestions.items.compactMap { if case .file(let url) = $0 { url } else { nil } }
+        return (urls, selectedFile.flatMap { urls.firstIndex(of: $0) })
+    }
+
+    private func moveSelection(_ delta: Int) {
+        if assistant.current != nil {
+            let count = browsable.count
+            guard count > 0 else { return }
+            resultIndex = min(max(resultIndex + delta, 0), count - 1)
+            if showsFiles { QuickLook.shared.follow(browsable, at: resultIndex) }
+        } else {
+            suggestions.move(delta)
+            let files = suggestionFiles
+            if let i = files.index { QuickLook.shared.follow(files.urls, at: i) } else { QuickLook.shared.close() }
+        }
+    }
+
+    /// ↩ on a result opens it.
+    private func openSelected() -> Bool {
+        guard assistant.current != nil, browsable.indices.contains(resultIndex) else { return false }
+        QuickLook.shared.close()
+        NSWorkspace.shared.open(browsable[resultIndex])
+        if showsFiles { finish() }
+        return true
+    }
+
+    /// ⌘↩ shows the selected file (or app) in Finder.
+    private func revealSelected() -> KeyPress.Result {
+        var url = selectedFile
+        if url == nil, assistant.current == nil, case .app(let app)? = suggestions.current { url = app.url }
+        guard let url else { return .ignored }
+        QuickLook.shared.close()
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        return .handled
+    }
+
+    /// ⌘Y previews the selected file full size, or closes the preview.
+    private func quickLookSelected() -> KeyPress.Result {
+        if QuickLook.shared.isVisible { QuickLook.shared.close(); return .handled }
+        if assistant.current != nil {
+            guard showsFiles, browsable.indices.contains(resultIndex) else { return .ignored }
+            QuickLook.shared.show(browsable, at: resultIndex)
+        } else {
+            let files = suggestionFiles
+            guard let i = files.index else { return .ignored }
+            QuickLook.shared.show(files.urls, at: i)
+        }
+        return .handled
+    }
+
     /// Puts the cursor in the search bar whenever the notch shows this tab.
     private func focusIfShown() {
         guard viewModel.isOpen, viewModel.wantsKeyboard, viewModel.tab == .ask else { return }
@@ -144,7 +231,8 @@ struct AskView: View {
         return HStack(spacing: compact ? 9 : 11) {
             Group {
                 if running {
-                    ProgressView().controlSize(.small).tint(.white)
+                    ThinkingRing(size: compact ? 20 : 24, speed: 0.9, disc: false)
+                        .transition(.scale(scale: 0.5).combined(with: .opacity))
                 } else {
                     Image(systemName: routeIcon)
                         .font(.system(size: compact ? 14 : 17, weight: .medium))
@@ -164,14 +252,22 @@ struct AskView: View {
                         perform(pick)
                     } else if let job = assistant.current, job.route == .actions, let plan = job.plan {
                         applyPlan(plan)
-                    } else {
+                    } else if !openSelected() {
                         assistant.run(query)
                     }
                 }
-                .onKeyPress(.downArrow) { suggestions.move(1); return .handled }
-                .onKeyPress(.upArrow) { suggestions.move(-1); return .handled }
+                .onKeyPress(.downArrow) { moveSelection(1); return .handled }
+                .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
+                .onKeyPress(keys: [.return]) { press in
+                    press.modifiers.contains(.command) ? revealSelected() : .ignored
+                }
+                .onKeyPress(keys: ["y"]) { press in
+                    press.modifiers.contains(.command) ? quickLookSelected() : .ignored
+                }
                 .onExitCommand {
-                    if assistant.current != nil || !query.isEmpty {
+                    if QuickLook.shared.isVisible {
+                        QuickLook.shared.close()
+                    } else if assistant.current != nil || !query.isEmpty {
                         assistant.clear(); query = ""; suggestions.clear()
                     } else {
                         focused = false
@@ -215,7 +311,6 @@ struct AskView: View {
         // Room for the glow's bloom when the bar spans the page, so it isn't cut off at the edges.
         .padding(.horizontal, compact ? 8 : 0)
         .padding(.top, compact ? 7 : 0)
-        .shadow(color: .white.opacity(focused ? 0.06 : 0), radius: 16)
         .animation(.easeOut(duration: 0.18), value: focused)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: compact)
         .animation(.easeOut(duration: 0.15), value: query.isEmpty)
@@ -232,6 +327,7 @@ struct AskView: View {
         case .weather?: "cloud.sun"
         case .actions?: "sparkles"
         case .calendar?: "calendar"
+        case .notes?: "note.text"
         case nil: "magnifyingglass"
         }
     }
@@ -255,8 +351,14 @@ private struct CalendarResult: View {
                         .lineLimit(2)
                 }
                 Spacer(minLength: 0)
-                Button("Open Calendar") { CalendarManager.shared.openCalendar() }
-                    .buttonStyle(NotchPillButtonStyle())
+                HStack(spacing: 6) {
+                    Button("Open Calendar") { CalendarManager.shared.openCalendar() }
+                        .buttonStyle(NotchPillButtonStyle())
+                    if !answer.tasks.isEmpty {
+                        Button("Open Tasks") { CommandCenter.shared.show(.tasks, pane: TasksPane.tasks.rawValue) }
+                            .buttonStyle(NotchPillButtonStyle())
+                    }
+                }
             }
             .frame(width: 220, alignment: .leading)
 
@@ -289,6 +391,116 @@ private struct CalendarResult: View {
                                 Spacer(minLength: 0)
                             }
                             .padding(.vertical, 5)
+                        }
+                    }
+                    if !answer.tasks.isEmpty {
+                        if !answer.events.isEmpty || !answer.free.isEmpty {
+                            Text("Tasks")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.35))
+                                .padding(.top, 8)
+                                .padding(.bottom, 2)
+                        }
+                        ForEach(answer.tasks) { task in TaskCheckRow(task: task) }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// A task in an answer, ticked off right there.
+private struct TaskCheckRow: View {
+    let task: CalendarAnswer.TaskBrief
+    @EnvironmentObject private var tasks: TaskStore
+
+    var body: some View {
+        let done = tasks.tasks.first { $0.id == task.id }?.isDone ?? false
+        HStack(spacing: 10) {
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { tasks.setDone(task.id, !done) }
+            } label: {
+                Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(done ? .green : .white.opacity(0.45))
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(.plain)
+            .help(done ? "Mark as not done" : "Mark as done")
+            VStack(alignment: .leading, spacing: 1) {
+                Text(task.title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .strikethrough(done, color: .white.opacity(0.5))
+                    .foregroundStyle(.white.opacity(done ? 0.45 : 1))
+                    .lineLimit(1)
+                if let due = task.due {
+                    Text(task.overdue ? "Overdue · \(due.formatted(date: .abbreviated, time: .shortened))"
+                         : "Due \(due.formatted(date: .omitted, time: .shortened))")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(task.overdue && !done ? Color.orange.opacity(0.85) : .white.opacity(0.45))
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// An answer from the app's notes and tasks, with the lines it came from.
+private struct NotesResult: View {
+    let answer: NotesAnswer
+    @EnvironmentObject private var tasks: TaskStore
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 4) {
+                // Long answers get smaller rather than cut off, and can be copied.
+                Text(answer.headline)
+                    .font(.system(size: answer.headline.count > 140 ? 12.5 : answer.headline.count > 70 ? 14 : 17, weight: .semibold))
+                    .lineLimit(7)
+                    .minimumScaleFactor(0.85)
+                    .textSelection(.enabled)
+                if let detail = answer.detail {
+                    Text(detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 6) {
+                    Button("Open Notes") { CommandCenter.shared.show(.tasks, pane: TasksPane.notes.rawValue) }
+                        .buttonStyle(NotchPillButtonStyle(primary: true))
+                    if answer.lines.contains(where: { $0.task != nil }) {
+                        Button("Tasks") { CommandCenter.shared.show(.tasks, pane: TasksPane.tasks.rawValue) }
+                            .buttonStyle(NotchPillButtonStyle())
+                    }
+                }
+            }
+            .frame(width: 250, alignment: .leading)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(answer.lines) { line in
+                        if let id = line.task {
+                            TaskCheckRow(task: .init(id: id, title: line.text, due: line.due,
+                                                     overdue: line.due.map { $0 < Date() } ?? false))
+                        } else {
+                            HStack(alignment: .top, spacing: 10) {
+                                Image(systemName: "text.alignleft")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.white.opacity(0.35))
+                                    .frame(width: 14)
+                                    .padding(.top, 2)
+                                Text(line.text)
+                                    .font(.system(size: 12.5))
+                                    .foregroundStyle(.white.opacity(0.88))
+                                    .lineLimit(3)
+                                    .textSelection(.enabled)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.vertical, 4)
                         }
                     }
                 }
@@ -370,6 +582,7 @@ private struct ResultView: View {
     let job: AssistantStore.Job
     let accent: Color
     @Binding var excluded: Set<UUID>
+    @Binding var selection: Int
     let applyPlan: (CommandPlanner.Plan) -> Void
     @EnvironmentObject private var assistant: AssistantStore
 
@@ -377,14 +590,18 @@ private struct ResultView: View {
         switch job.state {
         case .running where job.route == .web && !(job.answer ?? "").isEmpty:
             // The answer streams in as it's written.
-            WebResults(job: job, accent: accent)
+            WebResults(job: job, accent: accent, selection: $selection)
         case .running(let stage):
             VStack(spacing: 10) {
                 Spacer(minLength: 0)
+                ThinkingRing(size: 48)
+                    .padding(.bottom, 2)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
                 ShimmerText(text: stage)
                 Text(job.route == .web ? "Searching the web" : job.route == .files ? "Searching your Mac"
                      : job.route == .weather ? "Getting the weather" : job.route == .actions ? "Turning that into actions"
                      : job.route == .calendar ? "Reading your calendar"
+                     : job.route == .notes ? "Looking in your notes"
                      : "Working out where to look")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.3))
@@ -407,10 +624,11 @@ private struct ResultView: View {
         case .done:
             VStack(spacing: 10) {
                 switch job.route {
-                case .files?: FileResults(job: job, accent: accent)
+                case .files?: FileResults(job: job, accent: accent, selection: $selection)
                 case .weather?: if let report = job.weather { WeatherCard(report: report, accent: accent) }
                 case .calendar?: if let answer = job.calendar { CalendarResult(answer: answer) }
-                default: WebResults(job: job, accent: accent)
+                case .notes?: if let answer = job.notes { NotesResult(answer: answer) }
+                default: WebResults(job: job, accent: accent, selection: $selection)
                 }
                 RouteFooter(job: job)
             }
@@ -422,18 +640,45 @@ private struct RouteFooter: View {
     let job: AssistantStore.Job
     @EnvironmentObject private var assistant: AssistantStore
 
+    /// Where the answer came from.
+    private var source: (icon: String, text: String) {
+        switch job.route {
+        case .files?: ("internaldrive", "Searched your Mac")
+        case .weather?: ("cloud.sun", "Open-Meteo forecast")
+        case .calendar?: ("calendar", job.calendar?.tasks.isEmpty == false ? "Your calendar and tasks" : "Your calendar")
+        case .notes?: ("note.text", "Your notes and tasks")
+        default: ("globe", "Searched the web")
+        }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: job.route == .files ? "internaldrive" : job.route == .weather ? "cloud.sun" : "globe")
-            Text(job.route == .files ? "Searched your Mac" : job.route == .weather ? "Open-Meteo forecast" : "Searched the web")
-            Text("·")
-            Button(job.route == .web ? "Search my files instead" : "Search the web instead") { assistant.switchRoute() }
+            Image(systemName: source.icon)
+            Text(source.text)
+            // With a list showing, its header says this instead.
+            if job.findingMore, job.files.count < 2 {
+                Text("·")
+                ThinkingRing(size: 14, speed: 0.9, disc: false)
+                Text("finding more")
+                    .transition(.opacity)
+            }
+            if job.route != .calendar {
+                Text("·")
+                Button(job.route == .web || job.route == .notes ? "Search my files instead" : "Search the web instead") {
+                    assistant.switchRoute()
+                }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white.opacity(0.65))
+            }
             Spacer()
             if !assistant.aiAvailable && job.route != .weather && assistant.pullingModel == nil {
                 Text(job.route == .web ? "AI writes answers from these ·" : "AI picks the best match ·")
                 if case .modelMissing = assistant.status { DownloadModelMenu() }
+            } else if job.route == .files, !job.files.isEmpty {
+                KeyHints(hints: job.files.count > 1 ? [("↑↓", nil), ("↩", "open"), ("⌘Y", "preview")]
+                                                    : [("↩", "open"), ("⌘Y", "preview")])
+            } else if job.route != .weather && job.route != .calendar && !job.sources.isEmpty {
+                KeyHints(hints: [("↑↓", nil), ("↩", "open")])
             }
         }
         .font(.system(size: 10.5, weight: .medium))
@@ -441,29 +686,73 @@ private struct RouteFooter: View {
     }
 }
 
-private struct FileResults: View {
-    @ObservedObject private var access = FolderAccess.shared
-    let job: AssistantStore.Job
-    let accent: Color
+/// Small keycaps with what each does, for the keyboard shortcuts over results.
+private struct KeyHints: View {
+    let hints: [(key: String, action: String?)]
 
     var body: some View {
-        if let best = job.files.first {
-            HStack(alignment: .top, spacing: 20) {
-                BestFile(hit: best, confident: job.confident)
+        HStack(spacing: 8) {
+            ForEach(hints, id: \.key) { hint in
+                HStack(spacing: 3) {
+                    KeyCap(text: hint.key)
+                    if let action = hint.action { Text(action) }
+                }
+            }
+        }
+    }
+}
+
+private struct FileResults: View {
+    @ObservedObject private var access = FolderAccess.shared
+    @ObservedObject private var images = ImageIndex.shared
+    let job: AssistantStore.Job
+    let accent: Color
+    @Binding var selection: Int
+
+    var body: some View {
+        if !job.files.isEmpty {
+            let index = min(selection, job.files.count - 1)
+            HStack(alignment: .top, spacing: 16) {
+                // The selected match, previewed: ↑↓ (or a click in the list) changes it.
+                BestFile(hit: job.files[index],
+                         label: index == 0 ? (job.confident ? "Best match" : "Closest match") : "Match \(index + 1) of \(job.files.count)")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if job.files.count > 1 {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Other matches")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.white.opacity(0.4))
-                            .padding(.leading, 8)
-                        ScrollView(.vertical, showsIndicators: false) {
-                            VStack(spacing: 0) {
-                                ForEach(job.files.dropFirst()) { hit in FileRow(hit: hit) }
+                        HStack(spacing: 5) {
+                            Text("\(job.files.count) matches")
+                                .contentTransition(.numericText())
+                            if job.findingMore {
+                                Text("·")
+                                ThinkingRing(size: 13, speed: 0.9, disc: false)
+                                Text("finding more")
+                            } else if images.isIndexing {
+                                // Pictures not looked at yet can't match; say so.
+                                Text("· \(images.remaining.formatted()) pictures still indexing")
+                                    .help("Picture search finds the ones done so far")
+                            }
+                        }
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .padding(.leading, 8)
+                        ScrollViewReader { proxy in
+                            ScrollView(.vertical, showsIndicators: false) {
+                                VStack(spacing: 0) {
+                                    ForEach(Array(job.files.enumerated()), id: \.element.id) { i, hit in
+                                        FileRow(hit: hit, selected: i == index) {
+                                            selection = i
+                                            QuickLook.shared.follow(job.files.map(\.url), at: i)
+                                        }
+                                        .id(i)
+                                    }
+                                }
+                            }
+                            .onChange(of: index) { _, i in
+                                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(i) }
                             }
                         }
                     }
-                    .frame(width: 250, alignment: .leading)
+                    .frame(width: 230, alignment: .leading)
                 }
             }
             .frame(maxHeight: .infinity, alignment: .top)
@@ -489,19 +778,23 @@ private struct FileResults: View {
 
 private struct BestFile: View {
     let hit: FileHit
-    let confident: Bool
+    let label: String
     @State private var thumbnail: NSImage?
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
+            // Sized to the picture so a wide screenshot isn't a sliver in a tall box.
             Image(nsImage: thumbnail ?? NSWorkspace.shared.icon(forFile: hit.url.path))
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 72, height: 88)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(.white.opacity(thumbnail == nil ? 0 : 0.12), lineWidth: 1))
+                .frame(maxWidth: 96, maxHeight: 108)
+                .frame(width: 96, height: 108, alignment: .top)
+                .id(hit.url)
+                .transition(.opacity)
             VStack(alignment: .leading, spacing: 4) {
-                Text(confident ? "Best match" : "Closest match")
+                Text(label)
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.4))
                 Text(hit.url.lastPathComponent)
@@ -524,6 +817,7 @@ private struct BestFile: View {
                 HStack(spacing: 6) {
                     button("Open", primary: true) { NSWorkspace.shared.open(hit.url) }
                     button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([hit.url]) }
+                        .help("⌘↩")
                     ShelfButton(url: hit.url)
                 }
                 .padding(.top, 8)
@@ -532,7 +826,10 @@ private struct BestFile: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { NSWorkspace.shared.open(hit.url) }
         .onDrag { NSItemProvider(object: hit.url as NSURL) }
-        .task(id: hit.url) { thumbnail = await Thumbnail.load(hit.url, size: 160) }
+        .task(id: hit.url) {
+            thumbnail = nil
+            thumbnail = await Thumbnail.load(hit.url, size: 300)
+        }
     }
 
     private var location: String {
@@ -562,21 +859,19 @@ private struct ShelfButton: View {
                 }
                 Text(added ? "On Shelf" : "Add to Shelf")
             }
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(.white.opacity(added ? 1 : 0.85))
-            .fixedSize()
-            .padding(.horizontal, 10)
-            .frame(height: 24)
-            .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(added ? 0.18 : 0.1)))
             .contentTransition(.opacity)
         }
-        .buttonStyle(.plain)
+        // The same pill as Open and Show in Finder beside it.
+        .buttonStyle(NotchPillButtonStyle(height: 24))
         .help(added ? "Already on your shelf" : "Keep it on the shelf")
     }
 }
 
 private struct FileRow: View {
     let hit: FileHit
+    var selected = false
+    /// A click previews the file; a double-click opens it.
+    var select: () -> Void = {}
     @State private var hovering = false
 
     var body: some View {
@@ -600,10 +895,11 @@ private struct FileRow: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 38)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(hovering ? 0.07 : 0)))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(selected ? 0.14 : hovering ? 0.07 : 0)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { NSWorkspace.shared.open(hit.url) }
+        .onTapGesture(count: 2) { NSWorkspace.shared.open(hit.url) }
+        .onTapGesture(count: 1) { select() }
         .onDrag { NSItemProvider(object: hit.url as NSURL) }
         .help(hit.reason ?? hit.url.path)
         .contextMenu {
@@ -617,10 +913,11 @@ private struct FileRow: View {
 private struct WebResults: View {
     let job: AssistantStore.Job
     let accent: Color
+    @Binding var selection: Int
 
     var body: some View {
         if job.state == .done && (job.answer ?? "").isEmpty {
-            LinkResults(sources: job.sources)
+            LinkResults(sources: job.sources, selection: selection)
         } else {
             answerWithSources
         }
@@ -658,7 +955,7 @@ private struct WebResults: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 2) {
                         ForEach(Array(job.sources.prefix(5).enumerated()), id: \.element.id) { i, source in
-                            SourceRow(index: i + 1, source: source)
+                            SourceRow(index: i + 1, source: source, selected: i == selection)
                         }
                     }
                 }
@@ -672,13 +969,19 @@ private struct WebResults: View {
 /// Plain search results (no model to write an answer): title, site and snippet.
 private struct LinkResults: View {
     let sources: [WebSource]
+    let selection: Int
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(sources) { source in
-                    LinkRow(source: source)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(sources.enumerated()), id: \.element.id) { i, source in
+                        LinkRow(source: source, selected: i == selection).id(i)
+                    }
                 }
+            }
+            .onChange(of: selection) { _, i in
+                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(i) }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -687,6 +990,7 @@ private struct LinkResults: View {
 
 private struct LinkRow: View {
     let source: WebSource
+    var selected = false
     @State private var hovering = false
 
     var body: some View {
@@ -703,18 +1007,19 @@ private struct LinkRow: View {
                         .lineLimit(1)
                 }
                 if !source.snippet.isEmpty {
+                    // The selected link shows more of its snippet, as a preview of the page.
                     Text(source.snippet)
                         .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .lineLimit(1)
+                        .foregroundStyle(.white.opacity(selected ? 0.65 : 0.5))
+                        .lineLimit(selected ? 3 : 1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .trailing) { LinkShelfButton(source: source, hovering: hovering) }
+            .overlay(alignment: .trailing) { LinkShelfButton(source: source, hovering: hovering || selected) }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(hovering ? 0.07 : 0)))
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(selected ? 0.12 : hovering ? 0.07 : 0)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -817,6 +1122,7 @@ private struct AnswerText: View {
 private struct SourceRow: View {
     let index: Int
     let source: WebSource
+    var selected = false
     @State private var hovering = false
 
     var body: some View {
@@ -839,11 +1145,11 @@ private struct SourceRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
-                LinkShelfButton(source: source, hovering: hovering)
+                LinkShelfButton(source: source, hovering: hovering || selected)
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(hovering ? 0.07 : 0)))
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(selected ? 0.12 : hovering ? 0.07 : 0)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1035,7 +1341,7 @@ private struct RainbowGlow: View {
             }
         }
         .padding(-Self.spread)
-        .opacity(running ? 1 : focused ? 0.9 : 0.55)
+        .opacity(running ? 0.9 : focused ? 0.7 : 0.35)
         .animation(.easeOut(duration: 0.3), value: focused)
         .animation(.easeOut(duration: 0.3), value: running)
         .allowsHitTesting(false)
@@ -1074,12 +1380,12 @@ private struct RainbowGlow: View {
                                        angle: .degrees(Double(step) * 360 / Double(steps)))
         let ring = Capsule().frame(width: bar.width, height: bar.height)
         let content = ZStack {
-            ring.overlay(Capsule().stroke(gradient, lineWidth: 26)).foregroundStyle(.clear)
-                .blur(radius: 22).opacity(0.45)                     // faint wash, tints the inside
-            ring.overlay(Capsule().stroke(gradient, lineWidth: 9)).foregroundStyle(.clear)
-                .blur(radius: 9).opacity(0.85)                      // bloom
-            ring.overlay(Capsule().stroke(gradient, lineWidth: 2.5)).foregroundStyle(.clear)
-                .blur(radius: 1.2)                                  // crisp core along the edge
+            ring.overlay(Capsule().stroke(gradient, lineWidth: 16)).foregroundStyle(.clear)
+                .blur(radius: 18).opacity(0.18)                     // faint wash, barely tints the inside
+            ring.overlay(Capsule().stroke(gradient, lineWidth: 5)).foregroundStyle(.clear)
+                .blur(radius: 6).opacity(0.5)                       // soft bloom
+            ring.overlay(Capsule().stroke(gradient, lineWidth: 1.5)).foregroundStyle(.clear)
+                .blur(radius: 0.5).opacity(0.9)                     // fine core along the edge
         }
         .frame(width: bar.width + spread * 2, height: bar.height + spread * 2)
         let renderer = ImageRenderer(content: content)
@@ -1104,20 +1410,21 @@ private struct SweepingEdge: View {
     }
 }
 
-/// Status text that gently pulses while work is happening.
+/// Status text that gently pulses while work is happening. The pulse comes from a timeline rather
+/// than a repeating animation: one started on appear also caught the layout settling around it
+/// and kept replaying that, drawing the text twice.
 private struct ShimmerText: View {
     let text: String
-    @State private var dim = false
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(.white.opacity(dim ? 0.35 : 0.8))
-            .contentTransition(.opacity)
-            .animation(.easeInOut(duration: 0.25), value: text)
-            .onAppear {
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { dim = true }
-            }
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            Text(text)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white.opacity(0.575 + 0.225 * sin(t * .pi / 0.9)))
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.25), value: text)
+        }
     }
 }
 
@@ -1136,54 +1443,85 @@ private struct SuggestionList: View {
         // Rows are keyed by position and the highlight is one layer behind them: the list changes
         // on every keystroke ("Search for …" is a new item each time), and per-item identity made
         // the highlight fade out and back in as you typed.
-        VStack(spacing: 0) {
-            ForEach(Array(items.enumerated()), id: \.offset) { i, item in
-                row(item, highlighted: i == selected)
-                    .contentShape(Rectangle())
-                    .onTapGesture { selected = i; perform(item) }
-                    .onHover { if $0 { selected = i } }
+        // The full "/" command list is taller than the notch: show six rows and scroll the rest,
+        // instead of pushing the search bar up out of view.
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    ForEach(Array(items.enumerated()), id: \.offset) { i, item in
+                        row(item, highlighted: i == selected)
+                            .contentShape(Rectangle())
+                            .onTapGesture { selected = i; perform(item) }
+                            .onHover { if $0 { selected = i } }
+                            .id(i)
+                    }
+                }
+                .background(alignment: .top) {
+                    if items.indices.contains(selected) {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(Color.accentColor.gradient)
+                            .frame(height: rowHeight)
+                            .offset(y: CGFloat(selected) * rowHeight)
+                    }
+                }
             }
-        }
-        .background(alignment: .top) {
-            if items.indices.contains(selected) {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Color.accentColor.gradient)
-                    .frame(height: rowHeight)
-                    .offset(y: CGFloat(selected) * rowHeight)
-            }
+            .scrollDisabled(items.count <= Self.maxRows)
+            .frame(height: CGFloat(min(items.count, Self.maxRows)) * rowHeight)
+            .onChange(of: selected) { _, i in proxy.scrollTo(i) }
         }
         .transaction { $0.animation = nil }
     }
+
+    private static let maxRows = 5
 
     /// One line per result, like Spotlight: icon, name, a dimmer detail, and the action on the selected row.
     @ViewBuilder private func row(_ item: Suggestion, highlighted: Bool) -> some View {
         HStack(spacing: 9) {
             icon(item, highlighted: highlighted)
                 .frame(width: 20, height: 20)
-            Text(title(item))
-                .font(.system(size: item.isAnswer ? 15 : 13, weight: item.isAnswer ? .semibold : .regular).monospacedDigit())
-                .foregroundStyle(.white.opacity(0.95))
-                .lineLimit(1)
-                .layoutPriority(1)
-            if let sub = subtitle(item) {
-                Text(sub)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.white.opacity(highlighted ? 0.7 : 0.38))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+            // A long query truncates the title; the detail drops out rather than shrinking to a letter.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 9) {
+                    titleText(item)
+                    if let sub = subtitle(item) {
+                        Text(sub)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.white.opacity(highlighted ? 0.7 : 0.38))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(minWidth: 90, alignment: .leading)
+                    }
+                }
+                titleText(item)
             }
             Spacer(minLength: 8)
             if highlighted {
                 HStack(spacing: 5) {
+                    if case .file = item {
+                        KeyCap(text: "⌘Y", onAccent: true)
+                        Text("Preview").font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.7))
+                            .padding(.trailing, 4)
+                    }
                     Text(hint(item))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.85))
                     if !(item.isAnswer && copied == title(item)) { KeyCap(text: "↩", onAccent: true) }
                 }
+                // The action keeps its size however long the query gets.
+                .fixedSize()
+                .layoutPriority(2)
             }
         }
         .padding(.horizontal, 9)
         .frame(height: rowHeight)
+    }
+
+    private func titleText(_ item: Suggestion) -> some View {
+        Text(title(item))
+            .font(.system(size: item.isAnswer ? 15 : 13, weight: item.isAnswer ? .semibold : .regular).monospacedDigit())
+            .foregroundStyle(.white.opacity(0.95))
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 
     @ViewBuilder private func icon(_ item: Suggestion, highlighted: Bool) -> some View {
@@ -1223,7 +1561,9 @@ private struct SuggestionList: View {
         switch item {
         case .answer(let a): a.subtitle
         case .app: "Application"
-        case .file(let url): url.deletingLastPathComponent().path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
+        case .file(let url):
+            ScreenshotText.shared.snippet(for: url, query: SearchSuggestions.shared.currentQuery).map { "Screenshot · “\($0)”" }
+                ?? url.deletingLastPathComponent().path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
         case .search: assistant.aiAvailable ? "Files, web and weather, with AI" : "Files, web and weather"
         case .command(let c): c.subtitle
         case .plan: "AI drafts them, you review first"
@@ -1246,6 +1586,33 @@ private extension Suggestion {
 }
 
 /// Under the search bar: a hint when AI is on, otherwise how to turn it on. Search works either way.
+/// While pictures are being indexed: a small ring, a thin bar and how far along it is.
+private struct IndexingLine: View {
+    @ObservedObject private var images = ImageIndex.shared
+
+    var body: some View {
+        if images.isIndexing {
+            HStack(spacing: 7) {
+                ThinkingRing(size: 13, speed: 0.7, disc: false)
+                Text("Indexing pictures")
+                Capsule()
+                    .fill(.white.opacity(0.1))
+                    .frame(width: 90, height: 3)
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.5)).frame(width: 90 * images.fraction, height: 3)
+                    }
+                    .animation(.easeOut(duration: 0.4), value: images.fraction)
+                Text("\(images.passDone.formatted()) of \(images.passTotal.formatted())")
+                    .monospacedDigit()
+                if let left = images.timeLeft { Text("· \(left)") }
+            }
+            .font(.system(size: 10.5))
+            .foregroundStyle(.white.opacity(0.32))
+            .transition(.opacity)
+        }
+    }
+}
+
 private struct AIStatusLine: View {
     @EnvironmentObject private var assistant: AssistantStore
 

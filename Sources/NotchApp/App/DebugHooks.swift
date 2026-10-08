@@ -68,7 +68,90 @@ enum DebugHooks {
             }
         case "pane": // pane notes|tasks|downloads|shelf
             let p = parts[safe: 1] ?? ""
-            UserDefaults.standard.set(p, forKey: ["notes", "tasks"].contains(p) ? "tasks.pane" : "shelf.pane")
+            let key = ["notes", "tasks"].contains(p) ? "tasks.pane" : ["network", "vpn", "cleaner", "devices"].contains(p) ? "tools.pane" : "shelf.pane"
+            UserDefaults.standard.set(p, forKey: key)
+        case "sim": DebugSimulator.run(parts[safe: 1] ?? "", Array(parts.dropFirst(2)))
+        case "spane": // spane <pane raw value…>: opens Settings on a pane at 900×1100
+            SettingsWindowController.shared.show(pane: SettingsPane(rawValue: parts.dropFirst().joined(separator: " ")))
+            SettingsWindowController.shared.debugResize(width: 900, height: 1100)
+        case "sshot": SettingsWindowController.shared.debugSnapshot(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/settings.png"))
+        case "smove", "sclick", "srclick": // x y in points, top-left of the content
+            let x = CGFloat(Double(parts[safe: 1] ?? "") ?? 0), y = CGFloat(Double(parts[safe: 2] ?? "") ?? 0)
+            let w = SettingsWindowController.shared
+            switch verb {
+            case "smove": w.debugMouse(.mouseMoved, x: x, y: y)
+            case "srclick": w.debugMouse(.rightMouseDown, x: x, y: y); w.debugMouse(.rightMouseUp, x: x, y: y)
+            default: w.debugMouse(.mouseMoved, x: x, y: y); w.debugMouse(.leftMouseDown, x: x, y: y); w.debugMouse(.leftMouseUp, x: x, y: y)
+            }
+        case "sdrag": // sdrag x1 y1 x2 y2: press, drag in steps, release (points, top-left of the content)
+            let v = parts.dropFirst().compactMap { Double($0) }.map { CGFloat($0) }
+            guard v.count == 4 else { break }
+            let w = SettingsWindowController.shared
+            w.debugMouse(.mouseMoved, x: v[0], y: v[1])
+            w.debugMouse(.leftMouseDown, x: v[0], y: v[1])
+            for i in 1...12 {
+                let t = CGFloat(i) / 12
+                w.debugMouse(.leftMouseDragged, x: v[0] + (v[2] - v[0]) * t, y: v[1] + (v[3] - v[1]) * t)
+            }
+            w.debugMouse(.leftMouseUp, x: v[2], y: v[3])
+        case "clipsuggest": // clipsuggest <kind> <text…>: logs what the clipboard would offer (runs nothing)
+            let kind = ClipboardHistory.Clip.Kind(rawValue: parts[safe: 1] ?? "") ?? .text
+            let text = parts.dropFirst(2).joined(separator: " ").replacingOccurrences(of: "\\n", with: "\n")
+            let clip = ClipboardHistory.Clip(id: UUID(), kind: kind, text: text, date: Date())
+            log("SUGGEST [\(text.replacingOccurrences(of: "\n", with: "⏎"))] → " + ClipActions.suggestions(for: clip).map(\.title).joined(separator: " | "))
+        case "nmove", "nclick", "nrclick": // x y in points, top-left of the notch panel's content
+            guard let window = c.panelContentView?.window, let view = window.contentView else { break }
+            // The panel only takes the mouse while the real pointer is over it; pinned, let it.
+            window.ignoresMouseEvents = false
+            let x = CGFloat(Double(parts[safe: 1] ?? "") ?? 0), y = CGFloat(Double(parts[safe: 2] ?? "") ?? 0)
+            let point = view.convert(NSPoint(x: x, y: view.isFlipped ? y : view.bounds.height - y), to: nil)
+            let types: [NSEvent.EventType] = verb == "nmove" ? [.mouseMoved]
+                : verb == "nrclick" ? [.mouseMoved, .rightMouseDown, .rightMouseUp] : [.mouseMoved, .leftMouseDown, .leftMouseUp]
+            for type in types {
+                if let e = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                                              pressure: type == .leftMouseUp ? 0 : 1) { NSApp.postEvent(e, atStart: false) }
+            }
+        case "nbounds": log("NBOUNDS \(c.panelContentView?.bounds ?? .zero) flipped=\(c.panelContentView?.isFlipped ?? false) ignores=\(c.panelContentView?.window?.ignoresMouseEvents ?? true)")
+        case "cliprun": // cliprun <index> <action id>: runs a clip's suggestion like the card does
+            let clips = ClipboardHistory.shared.clips
+            guard let i = Int(parts[safe: 1] ?? ""), clips.indices.contains(i) else { break }
+            let all = ClipActions.suggestions(for: clips[i])
+            let pick = all.first { $0.id == parts[safe: 2] }
+            log("CLIPRUN \(clips[i].title.prefix(30)) offers [\(all.map(\.id).joined(separator: ","))] → \(pick?.run() ?? "no such action")")
+        case "notestrim": // notestrim <text…>: removes that line from the end of Notes (undoes a test)
+            let line = parts.dropFirst().joined(separator: " ")
+            let store = ScratchpadStore.shared
+            if store.text.hasSuffix("\n" + line) { store.text.removeLast(line.count + 1) }
+            else if store.text == line { store.text = "" }
+        case "notes": log("NOTES-TAIL \(ScratchpadStore.shared.text.suffix(80))")
+        case "tiles": log("TILES \(ControlTiles.shared.tiles.map(\.rawValue).joined(separator: ","))")
+        case "skey": // skey <keycode> <chars> [cmd,opt,ctrl,shift]
+            var flags: NSEvent.ModifierFlags = []
+            for m in (parts[safe: 3] ?? "").split(separator: ",") {
+                switch m { case "cmd": flags.insert(.command); case "opt": flags.insert(.option)
+                case "ctrl": flags.insert(.control); case "shift": flags.insert(.shift); default: break }
+            }
+            SettingsWindowController.shared.debugKey(code: UInt16(parts[safe: 1] ?? "") ?? 0, characters: parts[safe: 2] ?? "", modifiers: flags)
+        case "keywin": log("KEYWIN \(NSApp.keyWindow.map { String(describing: type(of: $0)) } ?? "none") open=\(c.viewModel.isOpen)")
+        case "overrides": log("OVERRIDES \(AppSettings.shared.hotKeyOverrides.mapValues(\.display))")
+        case "settingsshot": // settingsshot <path> <pane title…>
+            SettingsWindowController.shared.show(pane: SettingsPane(rawValue: parts.dropFirst(2).joined(separator: " ")))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                SettingsWindowController.shared.snapshot(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/settings.png"))
+            }
+        case "pins": // pins item,item… (empty clears); saves nothing else
+            let items = (parts[safe: 1] ?? "").split(separator: ",").compactMap { LiveItem(rawValue: String($0)) }
+            LiveActivities.shared.slots.forEach { LiveActivities.shared.unpin($0.item) }
+            items.forEach { LiveActivities.shared.pin($0) }
+        case "speedtest": SpeedTest.shared.start()
+        case "convert": // convert <operation> <path>
+            if let op = MediaConverter.Operation(rawValue: parts[safe: 1] ?? "") {
+                MediaConverter.shared.convert([URL(fileURLWithPath: parts.dropFirst(2).joined(separator: " "))], op)
+            }
+        case "ytdl": if let url = URL(string: parts[safe: 1] ?? "") { VideoDownloader.shared.download(url, format: parts[safe: 2] == "audio" ? .audio : .video, height: Int(parts[safe: 2] ?? "")) }
+        case "ports": PortScanner.shared.refresh(); PortScanner.shared.listOpen = parts[safe: 1] != "0"
+        case "uninstall": AppUninstaller.shared.inspect(URL(fileURLWithPath: parts.dropFirst().joined(separator: " ")))
         case "peek":
             ActivityCenter.shared.show(parts[safe: 1] == "download" ? .download(name: "Report-final.pdf")
                                                                     : .timer(message: "Short break · 5 min"), for: 5)
@@ -76,6 +159,15 @@ enum DebugHooks {
         case "pull": AssistantStore.shared.pullModel(parts[safe: 1])
         case "cancelpull": AssistantStore.shared.cancelPull()
         case "suggest": SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
+        case "spectrum":
+            let sp = AudioSpectrum.shared
+            log("spectrum live=\(sp.isLive) permitted=\(AudioSpectrum.permitted) playing=\(MediaController.shared.isPlaying) app=\(MediaController.shared.bundleID ?? "-") levels=\(sp.levels.map { String(format: "%.2f", $0) })")
+        case "visual": parts[safe: 1] == "remove" ? VisualSearch.shared.remove() : VisualSearch.shared.install()
+        case "lookalike":
+            let q = parts.dropFirst().joined(separator: " ")
+            for hit in ImageIndexStore.shared.visualSearch(q, limit: 5) {
+                log(String(format: "lookalike %.3f z%.1f %@", hit.similarity, hit.standout, hit.url.lastPathComponent))
+            }
         case "taildrop": TaildropService.shared.offer([URL(fileURLWithPath: parts.dropFirst().joined(separator: " "))])
         case "mirror": c.viewModel.mirror = parts[safe: 1] != "0"
         case "updates":
@@ -165,5 +257,47 @@ final class FrameProbe: NSObject {
                               gaps.count, budget, sorted[Int(Double(sorted.count) * 0.95)], sorted.last!, dropped.count,
                               100 * Double(dropped.count) / Double(gaps.count),
                               dropped.sorted(by: >).prefix(6).map { String(format: "%.0f", $0) }.joined(separator: ",")))
+    }
+}
+
+/// `sim <event>`: shows what a real event would, through the same code, for screenshots.
+@MainActor
+enum DebugSimulator {
+    static func run(_ event: String, _ args: [String]) {
+        switch event {
+        case "meeting":
+            ActivityCenter.shared.show(.meeting(title: "Design review", minutes: 3, color: .systemPurple), for: 8)
+            let link = MeetingLinks.Link(url: URL(string: "https://zoom.us/j/123456789")!, service: "Zoom")
+            NotchPresenter.shared.offer(Prompt(icon: "video.fill", tint: .systemPurple, title: "Design review",
+                                               detail: "Starts in 3 min · Zoom",
+                                               actions: [.init(title: "Join Zoom", primary: true) { MeetingLinks.join(link) }]), peek: false)
+        case "devserver":
+            NotchPresenter.shared.offer(Prompt(icon: "server.rack", tint: .systemGreen, title: "localhost:5173 is up", detail: "node · notch-site",
+                                               actions: [.init(title: "Copy URL") {}, .init(title: "Open", primary: true) {}]))
+        case "offline": ConnectionWatcher.alertOffline()
+        case "online": ConnectionWatcher.alertOnline("Home Wi-Fi")
+        case "vpnup": ConnectionWatcher.alertVPN("ProtonVPN", up: true, detail: "Zurich, Switzerland", fullTunnel: true)
+        case "vpndown": ConnectionWatcher.alertVPN("ProtonVPN", up: false, detail: nil, fullTunnel: true)
+        case "ip": ConnectionWatcher.alertIP(VPNMonitor.Exit(ip: "185.159.157.12", city: "Zurich", country: "Switzerland", countryCode: "CH"))
+        case "battery":
+            ActivityCenter.shared.show(.notice(title: "AirPods Pro · 15%", detail: "Battery low", icon: "airpodspro", tone: .warning), for: 5)
+        case "mic":
+            ActivityCenter.shared.show(.notice(title: "Microphone on", detail: "Zoom", icon: "mic.fill", tone: .info), for: 5)
+        case "agentdone":
+            ActivityCenter.shared.show(.notice(title: "Claude Code finished", detail: "NotchApp", icon: "sparkles.rectangle.stack.fill"), for: 5)
+        case "agentwaiting":
+            ActivityCenter.shared.show(.notice(title: "Claude Code needs you", detail: "NotchApp", icon: "hand.raised.fill", tone: .warning), for: 5)
+        case "lowdisk":
+            ActivityCenter.shared.show(.notice(title: "8.2 GB free", detail: "Low disk space · Tools → Cleaner",
+                                               icon: "externaldrive.fill.badge.exclamationmark", tone: .warning), for: 5)
+        case "speed":
+            ActivityCenter.shared.show(.notice(title: "↓ 748  ↑ 118 Mbps", detail: "Speed test", icon: "speedometer"), for: 5)
+        case "converted":
+            ActivityCenter.shared.show(.notice(title: "Compress Video", detail: "48.2 MB → 9.6 MB", icon: "wand.and.stars"), for: 5)
+        case "convertfail":
+            ActivityCenter.shared.show(.notice(title: "Conversion failed", detail: "Clip.mov", icon: "wand.and.stars", tone: .warning), for: 5)
+        default:
+            DebugHooks.log("sim: unknown event \(event)")
+        }
     }
 }

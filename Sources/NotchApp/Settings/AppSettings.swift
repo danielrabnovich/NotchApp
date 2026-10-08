@@ -98,6 +98,34 @@ final class AppSettings: ObservableObject {
     @Published var cameraMirrorEnabled: Bool { didSet { defaults.set(cameraMirrorEnabled, forKey: "cameraMirrorEnabled") } }
     @Published var hotKeysEnabled: Bool { didSet { defaults.set(hotKeysEnabled, forKey: "hotKeysEnabled") } }
     @Published var hotKeyModifiers: HotKeys.Modifiers { didSet { defaults.set(hotKeyModifiers.rawValue, forKey: "hotKeyModifiers") } }
+    /// Shortcuts rebound one by one, by action; the rest use the shared modifiers and their default key.
+    @Published var hotKeyOverrides: [String: HotKeys.Combo] {
+        didSet { defaults.set(try? JSONEncoder().encode(hotKeyOverrides), forKey: "hotKeyOverrides") }
+    }
+
+    // Tools
+    @Published var toolsEnabled: Bool { didSet { defaults.set(toolsEnabled, forKey: "toolsEnabled") } }
+    @Published var clipboardHistory: Bool { didSet { defaults.set(clipboardHistory, forKey: "clipboardHistory") } }
+    @Published var deviceBatteryAlerts: Bool { didSet { defaults.set(deviceBatteryAlerts, forKey: "deviceBatteryAlerts") } }
+    @Published var privacyAlerts: Bool { didSet { defaults.set(privacyAlerts, forKey: "privacyAlerts") } }
+    @Published var lowDiskAlerts: Bool { didSet { defaults.set(lowDiskAlerts, forKey: "lowDiskAlerts") } }
+    @Published var speedTestLiveActivity: Bool { didSet { defaults.set(speedTestLiveActivity, forKey: "speedTestLiveActivity") } }
+    @Published var downloadLiveActivity: Bool { didSet { defaults.set(downloadLiveActivity, forKey: "downloadLiveActivity") } }
+    @Published var convertToShelf: Bool { didSet { defaults.set(convertToShelf, forKey: "convertToShelf") } }
+    @Published var screenshotSearch: Bool { didSet { defaults.set(screenshotSearch, forKey: "screenshotSearch") } }
+    @Published var devServerAlerts: Bool { didSet { defaults.set(devServerAlerts, forKey: "devServerAlerts") } }
+    @Published var connectionAlerts: Bool { didSet { defaults.set(connectionAlerts, forKey: "connectionAlerts") } }
+
+    @Published var videoDownloadsToShelf: Bool { didSet { defaults.set(videoDownloadsToShelf, forKey: "videoDownloadsToShelf") } }
+    /// Largest video height for one-click downloads; 0 = best available.
+    @Published var videoQuality: Int { didSet { defaults.set(videoQuality, forKey: "videoQuality") } }
+
+    // Agents
+    @Published var agentsEnabled: Bool { didSet { defaults.set(agentsEnabled, forKey: "agentsEnabled") } }
+    @Published var agentAlerts: Bool { didSet { defaults.set(agentAlerts, forKey: "agentAlerts") } }
+    /// Plan chosen per agent tool (Claude Code, Codex…); empty means use the detected one.
+    @Published var agentPlans: [String: String] { didSet { defaults.set(agentPlans, forKey: "agentPlans") } }
+    @Published var agentsKeepAwake: Bool { didSet { defaults.set(agentsKeepAwake, forKey: "agentsKeepAwake") } }
 
     // Stats
     @Published var statsEnabled: Bool { didSet { defaults.set(statsEnabled, forKey: "statsEnabled") } }
@@ -108,6 +136,7 @@ final class AppSettings: ObservableObject {
     @Published var ollamaURL: String { didSet { defaults.set(ollamaURL, forKey: "ollamaURL") } }
     @Published var ollamaModel: String { didSet { defaults.set(ollamaModel, forKey: "ollamaModel") } }
     @Published var systemNotifications: Bool { didSet { defaults.set(systemNotifications, forKey: "systemNotifications") } }
+    @Published var imageIndexing: Bool { didSet { defaults.set(imageIndexing, forKey: "imageIndexing") } }
     @Published var homeCity: String { didSet { defaults.set(homeCity, forKey: "homeCity") } }
 
     // Brief & nudges
@@ -174,11 +203,28 @@ final class AppSettings: ObservableObject {
             "hotKeysEnabled": true,
             "hotKeyModifiers": HotKeys.Modifiers.controlOption.rawValue,
             "statsEnabled": false,
+            "toolsEnabled": false,
+            "clipboardHistory": false,
+            "deviceBatteryAlerts": true,
+            "privacyAlerts": false,
+            "lowDiskAlerts": true,
+            "devServerAlerts": true,
+            "screenshotSearch": true,
+            "speedTestLiveActivity": true,
+            "downloadLiveActivity": true,
+            "convertToShelf": true,
+            "connectionAlerts": true,
+            "agentsEnabled": false,
+            "videoDownloadsToShelf": true,
+            "videoQuality": 1080,
+            "agentAlerts": true,
+            "agentsKeepAwake": true,
             "useFahrenheit": Locale.current.measurementSystem == .us,
             "assistantEnabled": true,
             "ollamaURL": "http://localhost:11434",
             "ollamaModel": OllamaModelCatalog.defaultModel,
             "systemNotifications": true,
+            "imageIndexing": true,
             "homeCity": "",
             "morningBrief": false,
             "briefHour": 6,
@@ -239,12 +285,31 @@ final class AppSettings: ObservableObject {
         cameraMirrorEnabled = defaults.bool(forKey: "cameraMirrorEnabled")
         hotKeysEnabled = defaults.bool(forKey: "hotKeysEnabled")
         hotKeyModifiers = HotKeys.Modifiers(rawValue: defaults.string(forKey: "hotKeyModifiers") ?? "") ?? .controlOption
+        hotKeyOverrides = defaults.data(forKey: "hotKeyOverrides").flatMap { try? JSONDecoder().decode([String: HotKeys.Combo].self, from: $0) } ?? [:]
         statsEnabled = defaults.bool(forKey: "statsEnabled")
+        toolsEnabled = defaults.bool(forKey: "toolsEnabled")
+        clipboardHistory = defaults.bool(forKey: "clipboardHistory")
+        deviceBatteryAlerts = defaults.bool(forKey: "deviceBatteryAlerts")
+        privacyAlerts = defaults.bool(forKey: "privacyAlerts")
+        lowDiskAlerts = defaults.bool(forKey: "lowDiskAlerts")
+        devServerAlerts = defaults.bool(forKey: "devServerAlerts")
+        screenshotSearch = defaults.bool(forKey: "screenshotSearch")
+        speedTestLiveActivity = defaults.bool(forKey: "speedTestLiveActivity")
+        downloadLiveActivity = defaults.bool(forKey: "downloadLiveActivity")
+        convertToShelf = defaults.bool(forKey: "convertToShelf")
+        connectionAlerts = defaults.bool(forKey: "connectionAlerts")
+        agentsEnabled = defaults.bool(forKey: "agentsEnabled")
+        videoDownloadsToShelf = defaults.bool(forKey: "videoDownloadsToShelf")
+        videoQuality = defaults.integer(forKey: "videoQuality")
+        agentAlerts = defaults.bool(forKey: "agentAlerts")
+        agentsKeepAwake = defaults.bool(forKey: "agentsKeepAwake")
+        agentPlans = defaults.dictionary(forKey: "agentPlans") as? [String: String] ?? [:]
         useFahrenheit = defaults.bool(forKey: "useFahrenheit")
         assistantEnabled = defaults.bool(forKey: "assistantEnabled")
         ollamaURL = defaults.string(forKey: "ollamaURL") ?? "http://localhost:11434"
         ollamaModel = defaults.string(forKey: "ollamaModel") ?? OllamaModelCatalog.defaultModel
         systemNotifications = defaults.bool(forKey: "systemNotifications")
+        imageIndexing = defaults.bool(forKey: "imageIndexing")
         homeCity = defaults.string(forKey: "homeCity") ?? ""
         morningBrief = defaults.bool(forKey: "morningBrief")
         briefHour = defaults.integer(forKey: "briefHour")

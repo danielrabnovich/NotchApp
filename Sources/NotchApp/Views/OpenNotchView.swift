@@ -107,7 +107,7 @@ private struct TabIndicator: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.white.opacity(i == viewModel.tabIndex ? 1 : 0.45))
                                 .frame(width: buttonWidth, height: 22)
-                                .overlay(alignment: .topTrailing) { badge(for: tab) }
+                                .overlay(alignment: .topTrailing) { badge(for: tab, compact: buttonWidth < 28) }
                                 .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
@@ -117,9 +117,17 @@ private struct TabIndicator: View {
         }
     }
 
-    @ViewBuilder private func badge(for tab: NotchTab) -> some View {
+    /// A count over the tab; with many tabs the buttons are narrow, so it becomes a small dot that
+    /// doesn't cover the neighbouring icon.
+    @ViewBuilder private func badge(for tab: NotchTab, compact: Bool) -> some View {
         let count = tab == .tasks ? tasks.openCount : tab == .shelf ? shelf.items.count : tab == .ask ? assistant.runningCount : 0
-        if count > 0 {
+        if count > 0, compact {
+            Circle()
+                .fill(.white.opacity(0.9))
+                .frame(width: 5, height: 5)
+                .offset(x: -1, y: 1)
+                .help("\(count)")
+        } else if count > 0 {
             Text("\(count)")
                 .font(.system(size: 8, weight: .bold).monospacedDigit())
                 .foregroundStyle(.black)
@@ -171,7 +179,7 @@ private struct PagedTabsView: View {
             HStack(spacing: 0) {
                 ForEach(Array(tabs.enumerated()), id: \.element) { i, tab in
                     // The current tab, its neighbours (built once things are still), and the tab a slide started from.
-                    let near = abs(i - current) <= 1 && (pager.isSwiping || pager.neighborsReady)
+                    let near = pager.builtCenter.map { abs(i - $0) <= 1 } ?? false
                     let visible = i == current || near || i == from
                     // 0 when centred, 1 when a full page away.
                     let distance: CGFloat = min(1, abs((CGFloat(i) - index) * w + pager.offset) / max(w, 1))
@@ -203,6 +211,8 @@ private struct PagedTabsView: View {
         case .mixer: MixerView(viewModel: viewModel)
         case .controls: ControlsView(viewModel: viewModel)
         case .stats: StatsView()
+        case .tools: ToolsView(viewModel: viewModel)
+        case .agents: AgentsView()
         case .ask: AskView(viewModel: viewModel)
         }
     }

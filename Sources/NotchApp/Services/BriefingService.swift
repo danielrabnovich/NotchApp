@@ -6,6 +6,27 @@ import SwiftUI
 enum NotchOverlay: Equatable {
     case brief(Brief)
     case nudge(Nudge)
+    case prompt(Prompt)
+}
+
+/// A heads-up with buttons ("localhost:5173 is up · Open", "Design review in 3 min · Join"). It's
+/// shown as a quick peek first; opening the notch while it's fresh shows it with its actions.
+struct Prompt: Equatable, Identifiable {
+    struct Action {
+        let title: String
+        var primary = false
+        let run: @MainActor () -> Void
+    }
+
+    let id = UUID()
+    let icon: String
+    var tint: NSColor = .white
+    let title: String
+    let detail: String
+    let actions: [Action]
+    var created = Date()
+
+    static func == (a: Prompt, b: Prompt) -> Bool { a.id == b.id }
 }
 
 struct Brief: Equatable {
@@ -56,6 +77,30 @@ final class NotchPresenter {
     }
 
     var isBusy: Bool { primary?.isOpen == true || primary?.overlay != nil }
+
+    /// The latest prompt, offered when the notch next opens (for half a minute).
+    private(set) var pendingPrompt: Prompt?
+
+    /// Peeks the prompt beside the notch now; its buttons show if the notch is opened soon after.
+    func offer(_ prompt: Prompt, peek: Bool = true, peekFor seconds: TimeInterval = 6) {
+        pendingPrompt = prompt
+        if peek { ActivityCenter.shared.show(.notice(title: prompt.title, detail: prompt.detail, icon: prompt.icon, tone: .action), for: seconds) }
+        if let vm = primary, vm.isOpen, vm.overlay == nil {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { vm.overlay = .prompt(prompt) }
+        }
+    }
+
+    func hasPendingPrompt(titled title: String) -> Bool {
+        guard let p = pendingPrompt else { return false }
+        return p.title == title && Date().timeIntervalSince(p.created) < 30
+    }
+
+    /// Called as the notch opens: hands over a fresh prompt.
+    func takePendingPrompt() -> Prompt? {
+        defer { pendingPrompt = nil }
+        guard let p = pendingPrompt, Date().timeIntervalSince(p.created) < 30 else { return nil }
+        return p
+    }
 }
 
 /// Morning brief on the first unlock of the day, and "due soon" nudges for tasks.

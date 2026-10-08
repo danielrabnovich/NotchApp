@@ -18,11 +18,35 @@ enum CalendarQuery {
     }
 
     static func answer(_ question: String, useAI: Bool) async throws -> CalendarAnswer {
-        if !UserDefaults.standard.bool(forKey: "debugDryRun") { try CalendarManager.shared.ensureAccess() }
         var query = parseWithoutAI(question)
         if useAI, let smart = try? await parse(question) { query = smart }
         DebugHooks.log("CalendarQuery: \(question) → \(query.kind.rawValue) \(query.start)–\(query.end) search=\(query.search ?? "-") exact=\(query.exactTime)")
+        do {
+            if !UserDefaults.standard.bool(forKey: "debugDryRun") { try CalendarManager.shared.ensureAccess() }
+        } catch {
+            // Without the calendar, "what do I have to do today" can still answer from tasks.
+            let tasks = query.kind == .list ? tasks(from: query.start, to: query.end) : []
+            guard !tasks.isEmpty else { throw error }
+            return CalendarAnswer(headline: taskHeadline(tasks.count, rangeLabel(query.start, query.end)),
+                                  detail: "Calendar isn't connected", tasks: tasks)
+        }
         return answer(for: query)
+    }
+
+    /// Open tasks for a range: due in it, plus (when it includes today) overdue ones and undated ones.
+    static func tasks(from start: Date, to end: Date) -> [CalendarAnswer.TaskBrief] {
+        let now = Date()
+        let includesToday = start <= now && now < end
+        return TaskStore.shared.open.filter { task in
+            guard let due = task.due else { return includesToday }
+            return (due >= start && due < end) || (includesToday && due < now)
+        }
+        .sorted { ($0.due ?? .distantFuture) < ($1.due ?? .distantFuture) }
+        .map { CalendarAnswer.TaskBrief(id: $0.id, title: $0.title, due: $0.due, overdue: $0.isOverdue) }
+    }
+
+    private static func taskHeadline(_ count: Int, _ label: String) -> String {
+        "\(count) task\(count == 1 ? "" : "s") \(label.lowercased() == "today" || label.lowercased() == "tomorrow" ? label.lowercased() : "· " + label)"
     }
 
     // MARK: - Understanding the question
@@ -146,10 +170,16 @@ enum CalendarQuery {
 
         case .list:
             let events = calendar.summaries(from: q.start, to: q.end, matching: q.search)
+            // Tasks belong in "what do I have to do", not in a search for one event.
+            let tasks = q.search == nil ? tasks(from: q.start, to: q.end) : []
             let label = rangeLabel(q.start, q.end)
-            let headline = events.isEmpty ? "Nothing on \(label.lowercased() == "today" ? "today" : label)"
-                : "\(events.count) event\(events.count == 1 ? "" : "s") \(label.lowercased() == "today" || label.lowercased() == "tomorrow" ? label.lowercased() : "· " + label)"
-            return CalendarAnswer(headline: headline, events: events)
+            let when = label.lowercased() == "today" || label.lowercased() == "tomorrow" ? label.lowercased() : "· " + label
+            let parts = [events.isEmpty ? nil : "\(events.count) event\(events.count == 1 ? "" : "s")",
+                         tasks.isEmpty ? nil : "\(tasks.count) task\(tasks.count == 1 ? "" : "s")"].compactMap { $0 }
+            let headline = parts.isEmpty ? "Nothing on \(label.lowercased() == "today" ? "today" : label)"
+                : "\(parts.joined(separator: " and ")) \(when)"
+            let overdue = tasks.filter(\.overdue).count
+            return CalendarAnswer(headline: headline, detail: overdue > 0 ? "\(overdue) overdue" : nil, events: events, tasks: tasks)
         }
     }
 

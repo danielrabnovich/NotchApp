@@ -24,11 +24,14 @@ struct AlbumArtView: View {
 }
 
 /// Bouncing bars that suggest the music's energy, tinted with the accent colour.
+/// Bars that move with the music: real levels from AudioSpectrum (bass on the left, treble on the
+/// right) when it's listening, or a gentle stand-in animation when it can't (no permission yet).
 struct AudioVisualizer: View {
     let color: Color
     let isPlaying: Bool
     var barCount = 4
 
+    @ObservedObject private var spectrum = AudioSpectrum.shared
     @State private var levels: [CGFloat] = [0.4, 0.8, 0.55, 0.7, 0.45, 0.65]
     private let timer = Timer.publish(every: 0.28, on: .main, in: .common).autoconnect()
 
@@ -40,18 +43,29 @@ struct AudioVisualizer: View {
                 ForEach(0..<barCount, id: \.self) { i in
                     Capsule()
                         .fill(color)
-                        .frame(width: barWidth, height: max(barWidth, geo.size.height * (isPlaying ? levels[i % levels.count] : 0.18)))
+                        .frame(width: barWidth, height: max(barWidth, geo.size.height * height(of: i)))
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .onReceive(timer) { _ in
-            guard isPlaying else { return }
+            guard isPlaying, !spectrum.isLive else { return }
             withAnimation(.easeInOut(duration: 0.28)) {
                 levels = levels.map { _ in CGFloat.random(in: 0.25...1) }
             }
         }
         .animation(.easeInOut(duration: 0.3), value: isPlaying)
+        .onAppear { AudioSpectrum.shared.viewerAppeared() }
+        .onDisappear { AudioSpectrum.shared.viewerDisappeared() }
+    }
+
+    private func height(of bar: Int) -> CGFloat {
+        guard isPlaying else { return 0.18 }
+        guard spectrum.isLive else { return levels[bar % levels.count] }
+        // Spread the bars across the bands, bass to treble.
+        let bands = spectrum.levels
+        let band = min(bands.count - 1, Int((Double(bar) + 0.5) * Double(bands.count) / Double(barCount)))
+        return 0.15 + 0.85 * bands[band]
     }
 }
 

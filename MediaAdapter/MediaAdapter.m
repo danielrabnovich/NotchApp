@@ -69,6 +69,9 @@ static void refresh(void) {
                             lastArtworkHash = hash;
                             out[@"artwork"] = [art base64EncodedStringWithOptions:0];
                         }
+                    } else {
+                        // Players drop the artwork while paused; send it again when it comes back.
+                        lastArtworkHash = nil;
                     }
                 }
                 emit(out);

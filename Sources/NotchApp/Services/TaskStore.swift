@@ -33,6 +33,8 @@ struct DragPreview: Equatable {
     var taskTitle: String?
     var hasFiles: Bool
     var icon: String
+    /// A web link being dragged (for the video download bin).
+    var webLink: URL?
 }
 
 /// Today's tasks. Persisted as JSON in Application Support.
@@ -206,10 +208,10 @@ final class TaskStore: ObservableObject {
         case .email: icon = "envelope.fill"
         case nil: icon = "text.alignleft"
         }
-        return DragPreview(taskTitle: first?.title, hasFiles: hasFiles, icon: icon)
+        return DragPreview(taskTitle: first?.title, hasFiles: hasFiles, icon: icon, webLink: hasFiles ? nil : webURL(in: pb).flatMap { VideoDownloader.webURL($0.absoluteString) })
     }
 
-    private static func webURL(in pb: NSPasteboard) -> URL? {
+    static func webURL(in pb: NSPasteboard) -> URL? {
         if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
            let url = urls.first(where: { !$0.isFileURL }) {
             return url

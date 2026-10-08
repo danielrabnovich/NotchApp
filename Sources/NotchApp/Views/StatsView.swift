@@ -192,6 +192,7 @@ private struct MemoryCard: View {
                 HStack(spacing: 4) {
                     Text("\(gigabytes(m.used, digits: 1)) / \(gigabytes(m.total, digits: 0)) GB")
                         .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .rollingNumber("\(gigabytes(m.used, digits: 1))")
                         .foregroundStyle(.white.opacity(0.55))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -373,6 +374,7 @@ private struct StatCard<Graph: View, Footer: View, Note: View, Detail: View>: Vi
             HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text(value)
                     .font(.system(size: 22, weight: .semibold, design: .rounded).monospacedDigit())
+                    .rollingNumber(value)
                 Text(unit)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.45))
@@ -398,6 +400,7 @@ private struct StatCard<Graph: View, Footer: View, Note: View, Detail: View>: Vi
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Text(value)
                     .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
+                    .rollingNumber(value)
                 Text(unit)
                     .font(.system(size: 9, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.45))
@@ -561,6 +564,7 @@ private struct DetailRow: View {
             Spacer(minLength: 2)
             Text(value)
                 .foregroundStyle(.white.opacity(0.85))
+                .rollingNumber(value)
         }
         .font(.system(size: 10, weight: .medium).monospacedDigit())
         .lineLimit(1)
@@ -581,6 +585,7 @@ private struct TemperaturePill: View {
             }
             Text(settings.formatTemperature(celsius))
                 .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+                .rollingNumber(settings.formatTemperature(celsius))
         }
         .foregroundStyle(color)
         .padding(.horizontal, 5)
@@ -621,6 +626,7 @@ private struct MiniStat: View {
             Text(value)
                 .font(.system(size: 13, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(color == .white ? .white : color)
+                .rollingNumber(value)
             Text(label)
                 .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.4))
@@ -651,6 +657,7 @@ private struct MeterRow: View {
             .frame(height: 4)
             Text(text ?? percent(value) + "%")
                 .foregroundStyle(.white.opacity(0.85))
+                .rollingNumber(text ?? percent(value))
                 .frame(minWidth: 26, alignment: .trailing)
         }
         .font(.system(size: 9, weight: .medium).monospacedDigit())
@@ -675,6 +682,7 @@ private struct TemperatureRow: View {
             Spacer(minLength: 2)
             Text(celsius.map(settings.formatTemperature) ?? "–")
                 .foregroundStyle(celsius.map(StatsPalette.temperature) ?? .white.opacity(0.85))
+                .rollingNumber(celsius.map(settings.formatTemperature) ?? "–")
         }
         .font(.system(size: 10, weight: .medium).monospacedDigit())
         .lineLimit(1)
@@ -705,6 +713,7 @@ private struct AppList: View {
                     Spacer(minLength: 2)
                     Text(value(app))
                         .foregroundStyle(.white.opacity(0.9))
+                        .rollingNumber(value(app))
                         .layoutPriority(1)
                 }
                 .font(.system(size: 10, weight: .medium).monospacedDigit())
@@ -722,4 +731,13 @@ private func rpm(_ v: Double) -> String { v >= 1000 ? String(format: "%.1fk rpm"
 private func gigabytes(_ bytes: UInt64) -> String { gigabytes(bytes, digits: 1) + " GB" }
 private func gigabytes(_ bytes: UInt64, digits: Int) -> String {
     String(format: "%.\(digits)f", Double(bytes) / 1_073_741_824)
+}
+
+extension View {
+    /// Digits that roll to their new value, for the Stats page where there's room to watch them.
+    /// (The live activities beside the notch change in place instead: less to catch the eye.)
+    func rollingNumber<V: Equatable>(_ value: V) -> some View {
+        contentTransition(.numericText())
+            .animation(.snappy(duration: 0.35), value: value)
+    }
 }

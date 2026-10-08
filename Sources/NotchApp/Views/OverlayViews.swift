@@ -8,6 +8,7 @@ struct OverlayView: View {
         switch overlay {
         case .brief(let brief): BriefView(brief: brief)
         case .nudge(let nudge): NudgeView(nudge: nudge)
+        case .prompt(let prompt): PromptView(prompt: prompt)
         }
     }
 }
@@ -147,5 +148,38 @@ private struct NudgeView: View {
             Label(title, systemImage: icon)
         }
         .buttonStyle(NotchPillButtonStyle(primary: primary))
+    }
+}
+
+/// A heads-up with its buttons, filling the notch until acted on or dismissed.
+private struct PromptView: View {
+    let prompt: Prompt
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: prompt.icon)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Color(nsColor: prompt.tint))
+                .frame(width: 46, height: 46)
+                .background(Circle().fill(Color(nsColor: prompt.tint).opacity(0.16)))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(prompt.title).font(.system(size: 15, weight: .semibold)).lineLimit(2)
+                Text(prompt.detail).font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.55)).lineLimit(2)
+            }
+            Spacer(minLength: 10)
+            HStack(spacing: 8) {
+                Button("Dismiss") { NotchPresenter.shared.dismissOverlay(close: false) }
+                    .buttonStyle(NotchPillButtonStyle())
+                ForEach(Array(prompt.actions.enumerated()), id: \.offset) { _, action in
+                    Button(action.title) {
+                        action.run()
+                        NotchPresenter.shared.dismissOverlay(close: true)
+                    }
+                    .buttonStyle(NotchPillButtonStyle(primary: action.primary))
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

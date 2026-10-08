@@ -68,6 +68,8 @@ final class SystemMonitor: ObservableObject {
     private var timer: DispatchSourceTimer?
     private var viewers = 0
     private var detailViewers = 0
+    /// Stats are pinned beside the closed notch: keep sampling (every 2s) even with the Stats tab off.
+    private var liveDemand = false
     private var cancellables = Set<AnyCancellable>()
 
     func start() {
@@ -77,6 +79,12 @@ final class SystemMonitor: ObservableObject {
                 DispatchQueue.main.async { self?.reschedule(enabled: enabled) }
             }
             .store(in: &cancellables)
+    }
+
+    func setLiveDemand(_ wanted: Bool) {
+        guard wanted != liveDemand else { return }
+        liveDemand = wanted
+        reschedule(enabled: AppSettings.shared.statsEnabled)
     }
 
     func viewerAppeared() {
@@ -103,8 +111,8 @@ final class SystemMonitor: ObservableObject {
     private func reschedule(enabled: Bool) {
         timer?.cancel()
         timer = nil
-        guard enabled else { return }
-        let interval: Double = viewers > 0 ? 1 : 4
+        guard enabled || liveDemand else { return }
+        let interval: Double = viewers > 0 ? 1 : liveDemand ? 2 : 4
         let details = viewers > 0 && detailViewers > 0
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(100))

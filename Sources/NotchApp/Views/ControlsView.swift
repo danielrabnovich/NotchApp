@@ -7,10 +7,15 @@ struct ControlsView: View {
     @EnvironmentObject private var keepAwake: KeepAwake
     @EnvironmentObject private var updates: UpdateChecker
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var tiles: ControlTiles
+    @EnvironmentObject private var ports: PortScanner
 
     var body: some View {
         if updates.listOpen {
             UpdatesList(onBack: { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { updates.listOpen = false } })
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+        } else if ports.listOpen {
+            PortsList(onBack: { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { ports.listOpen = false } })
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
         } else {
             controlsBody
@@ -19,7 +24,8 @@ struct ControlsView: View {
     }
 
     private var controlsBody: some View {
-        HStack(alignment: .top, spacing: 14) {
+        let shown = tiles.tiles.filter(\.isAvailable)
+        return HStack(alignment: .top, spacing: 14) {
             VStack(spacing: 10) {
                 PillSlider(icon: volumeIcon, value: controls.volume) { controls.setVolume($0) }
                 if Brightness.isAvailable {
@@ -39,42 +45,225 @@ struct ControlsView: View {
             }
             .frame(width: 210)
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                ControlTile(icon: controls.wifiOn ? "wifi" : "wifi.slash", title: "Wi-Fi", on: controls.wifiOn) {
-                    controls.toggleWiFi()
+            if shown.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "square.grid.2x2").font(.system(size: 20))
+                    Text("Pick quick actions in Settings → Controls").font(.system(size: 11))
                 }
-                KeepAwakeTile()
-                ControlTile(icon: "circle.lefthalf.filled", title: "Dark Mode", on: controls.darkMode) {
-                    controls.toggleDarkMode()
-                }
-                ControlTile(icon: controls.micMuted ? "mic.slash.fill" : "mic.fill", title: controls.micMuted ? "Mic Off" : "Mic On",
-                            on: controls.micMuted, onTint: .red) {
-                    controls.toggleMic()
-                }
-                ControlTile(icon: "camera.viewfinder", title: "Screenshot", on: false) {
-                    viewModel.close()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { controls.screenshot() }
-                }
-                ControlTile(icon: "eyedropper", title: "Color Picker", on: false) {
-                    viewModel.close()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { controls.pickColor() }
-                }
-                ControlTile(icon: "lock.fill", title: "Lock Screen", on: false) {
-                    viewModel.close()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { controls.lockScreen() }
-                }
-                ControlTile(icon: "trash.fill", title: controls.confirmingTrash ? "Click Again" : "Empty Trash",
-                            on: controls.confirmingTrash, onTint: .red) {
-                    controls.emptyTrash()
+                .foregroundStyle(.white.opacity(0.45))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { SettingsWindowController.shared.show(pane: .controls) }
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: shown.count > 8 ? 6 : 4), spacing: 8) {
+                    ForEach(shown) { action in
+                        ActionTile(action: action, viewModel: viewModel)
+                    }
                 }
             }
         }
-        .onAppear { controls.refresh() }
+        .onAppear {
+            controls.refresh()
+            SystemTweaks.shared.refresh()
+        }
     }
 
     private var volumeIcon: String {
         controls.volume <= 0.001 ? "speaker.slash.fill" : controls.volume < 0.34 ? "speaker.wave.1.fill"
             : controls.volume < 0.67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
+    }
+}
+
+extension ControlAction {
+    /// Tiles that lead to a feature which is switched off are hidden rather than dead.
+    @MainActor var isAvailable: Bool {
+        switch self {
+        case .cleaner: AppSettings.shared.toolsEnabled
+        case .clipboard: AppSettings.shared.clipboardHistory && AppSettings.shared.shelfEnabled
+        case .nightShift: NightShift.isAvailable
+        case .saveVideo: VideoDownloader.isAvailable
+        default: true
+        }
+    }
+}
+
+/// One quick action, with its live state.
+private struct ActionTile: View {
+    let action: ControlAction
+    @ObservedObject var viewModel: NotchViewModel
+    @EnvironmentObject private var controls: ControlsService
+    @EnvironmentObject private var tweaks: SystemTweaks
+    @EnvironmentObject private var speed: SpeedTest
+    @EnvironmentObject private var ports: PortScanner
+    @EnvironmentObject private var videos: VideoDownloader
+
+    var body: some View {
+        switch action {
+        case .wifi:
+            ControlTile(icon: controls.wifiOn ? "wifi" : "wifi.slash", title: "Wi-Fi", on: controls.wifiOn) { controls.toggleWiFi() }
+        case .keepAwake:
+            KeepAwakeTile()
+        case .darkMode:
+            ControlTile(icon: "circle.lefthalf.filled", title: "Dark Mode", on: controls.darkMode) { controls.toggleDarkMode() }
+        case .mic:
+            ControlTile(icon: controls.micMuted ? "mic.slash.fill" : "mic.fill", title: controls.micMuted ? "Mic Off" : "Mic On",
+                        on: controls.micMuted, onTint: .red) { controls.toggleMic() }
+        case .screenshot:
+            ControlTile(icon: "camera.viewfinder", title: "Screenshot", on: false) { closeThen { controls.screenshot() } }
+        case .colorPicker:
+            ControlTile(icon: "eyedropper", title: "Color Picker", on: false) { closeThen { controls.pickColor() } }
+        case .lockScreen:
+            ControlTile(icon: "lock.fill", title: "Lock Screen", on: false) { closeThen { controls.lockScreen() } }
+        case .emptyTrash:
+            ControlTile(icon: "trash.fill", title: controls.confirmingTrash ? "Click Again" : "Empty Trash",
+                        on: controls.confirmingTrash, onTint: .red) { controls.emptyTrash() }
+        case .copyText:
+            ControlTile(icon: "text.viewfinder", title: "Copy Text", on: tweaks.recognizing) {
+                closeThen { tweaks.copyTextFromScreen() }
+            }
+            .help("Drag over any part of the screen to copy the text in it")
+        case .ports:
+            ControlTile(icon: action.icon, title: "Ports", on: false) {
+                ports.refresh()
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { ports.listOpen = true }
+            }
+            .help("What's listening on which port")
+        case .speedTest:
+            ControlTile(icon: "speedometer", title: speedTitle, on: speed.phase.isRunning, onTint: ToolsPalette.good) {
+                if speed.phase.isRunning { speed.cancel() } else { speed.start() }
+            }
+            .help(speed.phase.isRunning ? "Click to stop" : "Test your internet speed")
+        case .cleaner:
+            ControlTile(icon: "sparkles", title: "Cleaner", on: false) {
+                CommandCenter.shared.show(.tools, pane: ToolsPane.cleaner.rawValue)
+            }
+        case .clipboard:
+            ControlTile(icon: "doc.on.clipboard", title: "Clipboard", on: false) {
+                CommandCenter.shared.show(.shelf, pane: ShelfPane.clipboard.rawValue)
+            }
+        case .hiddenFiles:
+            ControlTile(icon: tweaks.hiddenFilesShown ? "eye" : "eye.slash", title: "Hidden Files", on: tweaks.hiddenFilesShown) {
+                tweaks.toggleHiddenFiles()
+            }
+            .help("Show hidden files in Finder (restarts Finder)")
+        case .desktopIcons:
+            ControlTile(icon: "menubar.dock.rectangle", title: tweaks.desktopIconsHidden ? "Icons Hidden" : "Desktop Icons",
+                        on: tweaks.desktopIconsHidden) { tweaks.toggleDesktopIcons() }
+            .help("Hide desktop icons, for screen sharing (restarts Finder)")
+        case .nightShift:
+            ControlTile(icon: tweaks.nightShiftOn ? "moon.circle.fill" : "moon.circle", title: "Night Shift", on: tweaks.nightShiftOn,
+                        onTint: Color(red: 1, green: 0.62, blue: 0.25)) { tweaks.toggleNightShift() }
+        case .flushDNS:
+            ControlTile(icon: "arrow.clockwise.circle", title: "Flush DNS", on: false) { tweaks.flushDNS() }
+                .help("Clears the DNS cache (asks for your password)")
+        case .saveVideo:
+            ControlTile(icon: "arrow.down.circle.fill", title: videoTitle, on: videos.current != nil, onTint: .red) {
+                guard let link = NSPasteboard.general.string(forType: .string).flatMap(VideoDownloader.webURL) else {
+                    ActivityCenter.shared.show(.notice(title: "Copy a video link first", detail: "Save Video", icon: "link", tone: .warning), for: 3)
+                    return
+                }
+                // Pick a quality; ⌥-click skips the menu and uses the default.
+                if NSEvent.modifierFlags.contains(.option) { videos.download(link, format: .video) } else { videos.chooseQuality(for: link) }
+            }
+            .help("Downloads the link on your clipboard: pick a quality (⌥-click for your default)")
+        }
+    }
+
+    private var videoTitle: String {
+        guard let job = videos.current else { return "Save Video" }
+        return job.state == .processing ? "Finishing…" : "\(Int((job.progress * 100).rounded()))%"
+    }
+
+    private var speedTitle: String {
+        switch speed.phase {
+        case .connecting: "Starting…"
+        case .download, .upload: formatMbps(speed.liveSpeed) + " Mbps"
+        case .done(let r): "↓ " + formatMbps(r.download)
+        default: "Speed Test"
+        }
+    }
+
+    private func closeThen(_ action: @escaping () -> Void) {
+        viewModel.close()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: action)
+    }
+}
+
+/// Every listening port, with the app behind it and a Stop button.
+private struct PortsList: View {
+    let onBack: () -> Void
+    @EnvironmentObject private var ports: PortScanner
+    @State private var filter = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left").font(.system(size: 11, weight: .bold))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 22))
+                Text("Listening Ports").font(.system(size: 13, weight: .semibold))
+                if ports.loading { ProgressView().controlSize(.mini).tint(.white) }
+                Spacer()
+                Text("\(ports.listeners.count) open").font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.4))
+                Button("Refresh") { ports.refresh() }
+                    .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.55))
+            }
+            if ports.listeners.isEmpty {
+                Text(ports.loading ? "Looking…" : "Nothing is listening")
+                    .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 1) {
+                        ForEach(ports.listeners) { PortRow(listener: $0) }
+                    }
+                }
+            }
+        }
+        .onAppear { ports.refresh() }
+    }
+}
+
+private struct PortRow: View {
+    let listener: PortScanner.Listener
+    @EnvironmentObject private var ports: PortScanner
+    @State private var hovering = false
+    @State private var confirming = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(":" + String(listener.port))
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .frame(width: 62, alignment: .leading)
+            AppIcon(bundlePath: listener.app?.bundleURL?.path, size: 16)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(listener.displayName).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                Text("PID " + String(listener.pid) + " · \(listener.isSystem ? "macOS · " : "")\(listener.isLocalOnly ? "this Mac only" : listener.address == "*" ? "all interfaces" : listener.address)")
+                    .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if hovering || confirming {
+                Button("Open") { ports.open(listener) }
+                    .buttonStyle(NotchPillButtonStyle(height: 20))
+                    .help("Open http://localhost:\(listener.port)")
+                if !listener.isSystem {
+                Button(confirming ? "Confirm" : "Stop") {
+                    if confirming { confirming = false; ports.stop(listener) } else {
+                        confirming = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { confirming = false }
+                    }
+                }
+                .buttonStyle(NotchPillButtonStyle(primary: confirming, height: 20))
+                .help("Quit \(listener.displayName)")
+                }
+            }
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 30)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(hovering ? 0.06 : 0)))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
     }
 }
 

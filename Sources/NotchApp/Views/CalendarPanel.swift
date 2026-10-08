@@ -69,7 +69,13 @@ private struct EventRow: View {
                     .foregroundStyle(.white.opacity(0.5))
             }
             Spacer(minLength: 0)
-            if ongoing {
+            // A Join button from 15 minutes before until the call ends.
+            if !event.isAllDay, event.endDate > now, event.startDate.timeIntervalSince(now) < 15 * 60,
+               let link = MeetingLinks.find(in: event) {
+                Button("Join") { MeetingLinks.join(link) }
+                    .buttonStyle(NotchPillButtonStyle(primary: true, height: 20))
+                    .help("Join on \(link.service)")
+            } else if ongoing {
                 Text("Now")
                     .font(.system(size: 9, weight: .bold))
                     .padding(.horizontal, 5)

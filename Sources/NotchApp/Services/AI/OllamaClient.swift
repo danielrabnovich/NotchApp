@@ -168,20 +168,40 @@ enum OllamaClient {
     // MARK: - Chat
 
     /// Single-shot chat. With `json: true` the model is constrained to emit a JSON object.
-    static func chat(system: String, user: String, json: Bool = false, temperature: Double = 0.2) async throws -> String {
+    static func chat(system: String, user: String, images: [Data] = [], json: Bool = false, temperature: Double = 0.2) async throws -> String {
         do {
-            return try await chat(system: system, user: user, json: json, temperature: temperature, disableThinking: true)
+            return try await chat(system: system, user: user, images: images, json: json, temperature: temperature, disableThinking: true)
         } catch let error as OllamaError where error.isThinkingUnsupported {
-            return try await chat(system: system, user: user, json: json, temperature: temperature, disableThinking: false)
+            return try await chat(system: system, user: user, images: images, json: json, temperature: temperature, disableThinking: false)
         }
     }
 
+    /// Whether the selected model can look at images (Ollama lists "vision" among its capabilities).
+    static func supportsVision() async -> Bool {
+        let name = await model
+        if let known = await MainActor.run(body: { visionSupport[name] }) { return known }
+        var request = URLRequest(url: await baseURL.appendingPathComponent("api/show"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["model": name])
+        guard let (data, _) = try? await session.data(for: request),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        let vision = (obj["capabilities"] as? [String] ?? []).contains("vision")
+        await MainActor.run { visionSupport[name] = vision }
+        return vision
+    }
+
+    @MainActor private static var visionSupport: [String: Bool] = [:]
+
     /// `disableThinking` sends "think": false so thinking models answer directly; models without
     /// a thinking mode can reject that option, so callers retry without it.
-    private static func chat(system: String, user: String, json: Bool, temperature: Double, disableThinking: Bool) async throws -> String {
+    private static func chat(system: String, user: String, images: [Data], json: Bool, temperature: Double,
+                             disableThinking: Bool) async throws -> String {
+        var message: [String: Any] = ["role": "user", "content": user]
+        if !images.isEmpty { message["images"] = images.map { $0.base64EncodedString() } }
         var body: [String: Any] = [
             "model": await model,
-            "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
+            "messages": [["role": "system", "content": system], message],
             "stream": false,
             "keep_alive": "15m",
             "options": ["temperature": temperature, "num_ctx": 16384],
@@ -255,20 +275,20 @@ enum OllamaClient {
     /// e.g. some MLX-backed models); for those, JSON is asked for in the prompt instead.
     @MainActor private static var noJSONMode: Set<String> = []
 
-    static func chatJSON(system: String, user: String) async throws -> [String: Any] {
+    static func chatJSON(system: String, user: String, images: [Data] = []) async throws -> [String: Any] {
         let name = await model
         let text: String
         if await noJSONMode.contains(name) {
             text = try await chat(system: system + "\nReply with ONLY the JSON object: no prose, no code fences.",
-                                  user: user, json: false, temperature: 0.1)
+                                  user: user, images: images, json: false, temperature: 0.1)
         } else {
             do {
-                text = try await chat(system: system, user: user, json: true, temperature: 0.1)
+                text = try await chat(system: system, user: user, images: images, json: true, temperature: 0.1)
             } catch let error as OllamaError where error.message.localizedCaseInsensitiveContains("structured output") {
                 // Without this fallback every routing call failed and search quietly fell back to keywords.
                 await MainActor.run { _ = noJSONMode.insert(name) }
                 DebugHooks.log("OllamaClient: \(name) has no JSON mode; asking for JSON in the prompt instead")
-                return try await chatJSON(system: system, user: user)
+                return try await chatJSON(system: system, user: user, images: images)
             }
         }
         if let obj = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] { return obj }

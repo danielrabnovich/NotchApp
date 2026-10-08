@@ -29,6 +29,20 @@ final class NotchPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
+    /// ⌘, opens Settings. The app's menu only handles key equivalents while the app is active, and
+    /// this panel deliberately never activates it, so the panel catches it itself.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags == .command, event.charactersIgnoringModifiers == "," {
+            MainActor.assumeIsolated {
+                NotchPresenter.shared.primary?.close()
+                SettingsWindowController.shared.show()
+            }
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     // Allow the window to sit over the menu bar / notch.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }

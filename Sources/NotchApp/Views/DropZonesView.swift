@@ -22,6 +22,19 @@ struct DropZonesView: View {
                     return true
                 }
             }
+            if VideoDownloader.isAvailable, let link = preview?.webLink {
+                DropBin(icon: "arrow.down.circle.fill", title: "Download Video",
+                        detail: link.host()?.replacingOccurrences(of: "www.", with: "") ?? "With yt-dlp",
+                        detailIcon: "link", tint: .red, enabled: true) {
+                    // ⌥ while dropping saves just the audio.
+                    let audio = NSEvent.modifierFlags.contains(.option)
+                    VideoDownloader.shared.download(link, format: audio ? .audio : .video)
+                    finish(on: settings.shelfEnabled ? .shelf : viewModel.tab)
+                    if settings.shelfEnabled { UserDefaults.standard.set(ShelfPane.downloads.rawValue, forKey: "shelf.pane") }
+                    return true
+                }
+                .help("Hold ⌥ while dropping to save only the audio")
+            }
             if settings.shelfEnabled {
                 DropBin(icon: "tray.and.arrow.down.fill", title: "Shelf",
                         detail: preview?.hasFiles == true ? "Keep it handy" : "Files only",
@@ -34,6 +47,18 @@ struct DropZonesView: View {
                     finish(on: .shelf)
                     return true
                 }
+                DropBin(icon: "wand.and.stars", title: "Convert",
+                        detail: preview?.hasFiles == true ? "Compress, GIF, JPEG…" : "Files only",
+                        detailIcon: nil, tint: .purple, enabled: preview?.hasFiles == true) {
+                    let urls = NSPasteboard(name: .drag)
+                        .readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+                    guard !urls.isEmpty else { return false }
+                    viewModel.isDragActive = false
+                    // The menu waits for the drop to finish first.
+                    DispatchQueue.main.async { MediaConverter.shared.offer(urls) }
+                    return true
+                }
+                .frame(width: 120)
                 if settings.airDropZone {
                     DropBin(icon: "dot.radiowaves.left.and.right", image: SystemIcons.airDrop, title: "AirDrop",
                             detail: preview?.hasFiles == true ? "Send nearby" : "Files only",

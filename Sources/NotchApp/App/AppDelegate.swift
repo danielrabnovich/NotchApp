@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installEditMenu()
         MediaController.shared.start()
         AudioOutputManager.shared.start()
         BatteryMonitor.shared.start()
@@ -19,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ScreenshotWatcher.shared.start()
         CalendarManager.shared.start()
         SystemMonitor.shared.start()
+        LiveActivities.shared.start()
+        AudioSpectrum.shared.start()
         AppIndex.shared.refreshIfNeeded()
         ScratchpadStore.shared.load()
         DownloadsStore.shared.start()
@@ -26,6 +29,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HotKeys.shared.start()
         UpdateChecker.shared.start()
         MouseUtilities.shared.start()
+        VisualSearch.shared.start()
+        ImageIndex.shared.start()
+        Cleaner.shared.start()
+        ClipboardHistory.shared.start()
+        DeviceBatteries.shared.start()
+        PrivacyMonitor.shared.start()
+        AgentMonitor.shared.start()
+        settings.$screenshotSearch.removeDuplicates().sink { on in
+            DispatchQueue.main.async { ScreenshotText.shared.apply(on) }
+        }.store(in: &cancellables)
+        settings.$devServerAlerts.removeDuplicates().sink { on in
+            DispatchQueue.main.async { DevServerWatcher.shared.apply(on) }
+        }.store(in: &cancellables)
+        settings.$connectionAlerts.removeDuplicates().sink { on in
+            DispatchQueue.main.async { ConnectionWatcher.shared.apply(on) }
+        }.store(in: &cancellables)
+        settings.$agentsEnabled.combineLatest(settings.$agentAlerts, settings.$agentsKeepAwake).sink { _ in
+            DispatchQueue.main.async { AgentMonitor.shared.update() }
+        }.store(in: &cancellables)
+        settings.$clipboardHistory.removeDuplicates().sink { enabled in
+            DispatchQueue.main.async { ClipboardHistory.shared.apply(enabled) }
+        }.store(in: &cancellables)
+        settings.$privacyAlerts.removeDuplicates().sink { _ in
+            DispatchQueue.main.async { PrivacyMonitor.shared.update() }
+        }.store(in: &cancellables)
         settings.$mixerEnabled.removeDuplicates().sink { enabled in
             DispatchQueue.main.async { AudioMixer.shared.setEnabled(enabled) }
         }.store(in: &cancellables)
@@ -118,4 +146,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings() { SettingsWindowController.shared.show() }
     @objc private func quit() { NSApp.terminate(nil) }
+
+    /// ⌘, opens Settings. ⌘C, ⌘V, ⌘X, ⌘A and ⌘Z reach text views through the main menu's Edit items. An app without a
+    /// menu bar has none, so copying in the notch only worked from the right-click menu. This menu is
+    /// never shown; it's there for the shortcuts.
+    private func installEditMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        // ⌘, opens Settings, like any Mac app (from the notch, or Settings itself).
+        appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit NotchApp", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+        main.addItem(editItem)
+        NSApp.mainMenu = main
+    }
 }

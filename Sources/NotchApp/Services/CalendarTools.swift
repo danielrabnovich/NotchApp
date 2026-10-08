@@ -32,10 +32,19 @@ struct EventSummary: Identifiable, Equatable, Sendable {
 
 /// What the search bar shows for a calendar question.
 struct CalendarAnswer: Equatable, Sendable {
+    struct TaskBrief: Equatable, Sendable, Identifiable {
+        var id: UUID
+        var title: String
+        var due: Date?
+        var overdue: Bool
+    }
+
     var headline: String
     var detail: String?
     var events: [EventSummary] = []
     var free: [DateInterval] = []
+    /// "What do I have to do today" is about tasks as much as meetings.
+    var tasks: [TaskBrief] = []
 }
 
 /// Calendar operations for the search bar. They go through EventKit, so they cover every calendar

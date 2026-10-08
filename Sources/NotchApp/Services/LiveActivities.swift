@@ -1,0 +1,366 @@
+import Combine
+import EventKit
+import SwiftUI
+
+/// Something that can stay on beside the closed notch.
+enum LiveItem: String, CaseIterable, Codable, Identifiable {
+    case music, timer, cpu, temperature, memory, gpu, battery, nextEvent, tasks, network, devices, privacy, agents, vpn, keepAwake, disk
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .music: "Now Playing"
+        case .timer: "Timer"
+        case .cpu: "CPU"
+        case .temperature: "Temperature"
+        case .memory: "Memory"
+        case .gpu: "GPU"
+        case .battery: "Battery"
+        case .nextEvent: "Next Event"
+        case .tasks: "Tasks"
+        case .network: "Network"
+        case .devices: "Bluetooth Battery"
+        case .privacy: "Mic & Camera"
+        case .agents: "Agents"
+        case .vpn: "VPN"
+        case .keepAwake: "Keep Awake"
+        case .disk: "Disk Space"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .music: "Cover art and a visualizer."
+        case .timer: "Progress ring and time left."
+        case .cpu: "How busy the processor is."
+        case .temperature: "CPU temperature, warmer colors as it heats up."
+        case .memory: "How much memory is in use."
+        case .gpu: "How busy the graphics are."
+        case .battery: "Charge level."
+        case .nextEvent: "Countdown to your next meeting."
+        case .tasks: "How many tasks are open."
+        case .network: "Download speed right now."
+        case .devices: "The emptiest connected AirPods, mouse or keyboard."
+        case .privacy: "A dot while an app uses the microphone or camera."
+        case .agents: "Coding agents at work, and a hand when one needs you."
+        case .vpn: "A shield and the country your traffic exits in."
+        case .keepAwake: "A cup while the Mac is being kept awake, with time left."
+        case .disk: "Free space on the startup disk."
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .music: "music.note"
+        case .timer: "timer"
+        case .cpu: "cpu"
+        case .temperature: "thermometer.medium"
+        case .memory: "memorychip"
+        case .gpu: "square.stack.3d.up.fill"
+        case .battery: "battery.75percent"
+        case .nextEvent: "calendar"
+        case .tasks: "checklist"
+        case .network: "arrow.up.arrow.down"
+        case .devices: "airpods"
+        case .privacy: "mic.fill"
+        case .agents: "sparkles.rectangle.stack.fill"
+        case .vpn: "lock.shield.fill"
+        case .keepAwake: "cup.and.saucer.fill"
+        case .disk: "internaldrive.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .music: .pink
+        case .timer: TimerPalette.accent
+        case .cpu: .cyan
+        case .temperature: .orange
+        case .memory: .purple
+        case .gpu: .mint
+        case .battery: .green
+        case .nextEvent: .red
+        case .tasks: .teal
+        case .network: .blue
+        case .devices: .indigo
+        case .privacy: .orange
+        case .agents: .purple
+        case .vpn: .green
+        case .keepAwake: .brown
+        case .disk: .pink
+        }
+    }
+
+    /// Items that come and go: these can be shown only while there's something to show.
+    var canWaitForActivity: Bool { [.music, .timer, .nextEvent, .network, .devices, .agents, .vpn, .disk].contains(self) }
+
+    var whileActiveLabel: String {
+        switch self {
+        case .music: "Only while playing"
+        case .timer: "Only while running"
+        case .nextEvent: "Only within the hour"
+        case .network: "Only while busy"
+        case .devices: "Only when low"
+        case .agents: "Only while working"
+        case .vpn: "Only while connected"
+        case .disk: "Only when low"
+        default: ""
+        }
+    }
+
+    /// Fixed widths, so values ticking over never resize the notch.
+    func width(notchHeight h: CGFloat) -> CGFloat {
+        switch self {
+        case .music: h + 12
+        case .timer: 64
+        case .cpu, .gpu, .memory: 50
+        case .temperature: 46
+        case .battery: 68
+        case .nextEvent: 62
+        case .tasks: 22
+        case .network: 60
+        case .devices: 58
+        case .privacy: 34
+        case .agents: 40
+        case .vpn: 50
+        case .keepAwake: 52
+        case .disk: 58
+        }
+    }
+
+    var usesStats: Bool { [.cpu, .temperature, .memory, .gpu].contains(self) }
+}
+
+struct LiveSlot: Codable, Identifiable, Equatable {
+    enum Side: String, Codable, CaseIterable { case left, right }
+
+    var item: LiveItem
+    var side: Side
+    var whileActive: Bool
+    var id: LiveItem { item }
+}
+
+/// The live activities pinned beside the closed notch, which of them are showing right now, and
+/// how wide that makes each side. Quick alerts (volume, charging…) still take over while they show.
+@MainActor
+final class LiveActivities: ObservableObject {
+    static let shared = LiveActivities()
+
+    /// Pinned items, in order. Saved.
+    @Published var slots: [LiveSlot] {
+        didSet {
+            if let data = try? JSONEncoder().encode(slots) { UserDefaults.standard.set(data, forKey: "liveActivities") }
+            recompute()
+        }
+    }
+
+    /// What's showing on each side right now.
+    @Published private(set) var left: [LiveItem] = []
+    @Published private(set) var right: [LiveItem] = []
+
+    private var cancellables = Set<AnyCancellable>()
+
+    private init() {
+        let saved = UserDefaults.standard.data(forKey: "liveActivities")
+        slots = saved.flatMap { try? JSONDecoder().decode([LiveSlot].self, from: $0) } ?? []
+    }
+
+    var isEmpty: Bool { left.isEmpty && right.isEmpty }
+
+    func start() {
+        let media = MediaController.shared, timer = TimerStore.shared, battery = BatteryMonitor.shared
+        let refresh: () -> Void = { [weak self] in DispatchQueue.main.async { self?.recompute() } }
+        media.$isPlaying.sink { _ in refresh() }.store(in: &cancellables)
+        media.$title.sink { _ in refresh() }.store(in: &cancellables)
+        timer.$state.sink { _ in refresh() }.store(in: &cancellables)
+        battery.$hasBattery.sink { _ in refresh() }.store(in: &cancellables)
+        CalendarManager.shared.$events.sink { _ in refresh() }.store(in: &cancellables)
+        TaskStore.shared.objectWillChange.sink { _ in refresh() }.store(in: &cancellables)
+        DeviceBatteries.shared.$devices.sink { _ in refresh() }.store(in: &cancellables)
+        PrivacyMonitor.shared.objectWillChange.sink { _ in refresh() }.store(in: &cancellables)
+        AgentMonitor.shared.$sessions.sink { _ in refresh() }.store(in: &cancellables)
+        VPNMonitor.shared.$connections.sink { _ in refresh() }.store(in: &cancellables)
+        KeepAwake.shared.$isActive.sink { _ in refresh() }.store(in: &cancellables)
+        Cleaner.shared.$disk.sink { _ in refresh() }.store(in: &cancellables)
+        // Network "only while busy" follows the rate, which changes every second.
+        NetworkMonitor.shared.$downRate.sink { _ in
+            if LiveActivities.shared.slot(for: .network)?.whileActive == true { refresh() }
+        }.store(in: &cancellables)
+        // "Within the hour" and a reading appearing (temperature) change with time, not events.
+        Timer.publish(every: 20, on: .main, in: .common).autoconnect().sink { _ in refresh() }.store(in: &cancellables)
+        recompute()
+    }
+
+    func slot(for item: LiveItem) -> LiveSlot? { slots.first { $0.item == item } }
+
+    func pin(_ item: LiveItem) {
+        guard slot(for: item) == nil else { return }
+        // Alternate sides so a first few picks balance out.
+        let side: LiveSlot.Side = slots.filter { $0.side == .left }.count <= slots.filter { $0.side == .right }.count ? .left : .right
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+            slots.append(LiveSlot(item: item, side: side, whileActive: item.canWaitForActivity))
+        }
+    }
+
+    func unpin(_ item: LiveItem) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { slots.removeAll { $0.item == item } }
+    }
+
+    /// The last removal made in Settings, kept for a few seconds so it can be undone.
+    struct Removal: Equatable {
+        let id = UUID()
+        let message: String
+        let slots: [LiveSlot]
+    }
+    @Published private(set) var lastRemoval: Removal?
+
+    /// Removes activities from Settings, offering an undo.
+    func remove(_ items: [LiveItem]) {
+        let removing = slots.filter { items.contains($0.item) }
+        guard !removing.isEmpty else { return }
+        let removal = Removal(message: removing.count == 1 ? "Removed \(removing[0].item.title)" : "Removed \(removing.count) activities",
+                              slots: slots)
+        lastRemoval = removal
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { slots.removeAll { items.contains($0.item) } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+            if self?.lastRemoval == removal { self?.lastRemoval = nil }
+        }
+    }
+
+    func undoRemoval() {
+        guard let removal = lastRemoval else { return }
+        lastRemoval = nil
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { slots = removal.slots }
+    }
+
+    func update(_ item: LiveItem, _ change: (inout LiveSlot) -> Void) {
+        guard let i = slots.firstIndex(where: { $0.item == item }) else { return }
+        var slot = slots[i]
+        change(&slot)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { slots[i] = slot }
+    }
+
+    /// The pinned items on one side, left to right as drawn.
+    func items(on side: LiveSlot.Side) -> [LiveSlot] { slots.filter { $0.side == side } }
+
+    /// Pins (or moves) an item to a position on a side; `index` counts left to right as drawn.
+    func place(_ item: LiveItem, side: LiveSlot.Side, at index: Int) {
+        var slot = slot(for: item) ?? LiveSlot(item: item, side: side, whileActive: item.canWaitForActivity)
+        slot.side = side
+        var left = slots.filter { $0.side == .left && $0.item != item }
+        var right = slots.filter { $0.side == .right && $0.item != item }
+        if side == .left {
+            left.insert(slot, at: min(max(index, 0), left.count))
+        } else {
+            right.insert(slot, at: min(max(index, 0), right.count))
+        }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { slots = left + right }
+    }
+
+    /// Whether a pinned item has something to show right now (for dimming it in the editor).
+    func isShowingNow(_ item: LiveItem) -> Bool { slot(for: item).map(isShowing) ?? false }
+
+    /// Whether an item, pinned or not, has a reading to preview (as if set to show always).
+    func hasReading(_ item: LiveItem) -> Bool {
+        isShowing(slot(for: item) ?? LiveSlot(item: item, side: .left, whileActive: false))
+    }
+
+    /// While the Live Activities settings are open, every reading is kept fresh for the gallery.
+    var previewing = false { didSet { if previewing != oldValue { recompute() } } }
+
+    func move(from source: IndexSet, to destination: Int) {
+        slots.move(fromOffsets: source, toOffset: destination)
+    }
+
+    /// Width of each side of the notch: the fuller side decides, so the notch stays centered.
+    func sideWidth(notchHeight h: CGFloat) -> CGFloat {
+        let widths = [left, right].map { items -> CGFloat in
+            guard !items.isEmpty else { return 0 }
+            return items.reduce(0) { $0 + $1.width(notchHeight: h) } + CGFloat(items.count - 1) * Self.spacing + Self.outerPadding + Self.innerPadding
+        }
+        return widths.max() ?? 0
+    }
+
+    static let spacing: CGFloat = 10
+    /// Room for the notch's rounded bottom corners on the outside, and a gap beside the hardware notch.
+    static let outerPadding: CGFloat = 12
+    static let innerPadding: CGFloat = 8
+
+    /// Whether the stats sampler should keep values fresh for the notch.
+    var wantsStats: Bool { slots.contains { $0.item.usesStats } }
+    var wantsPrivacy: Bool { slot(for: .privacy) != nil }
+
+    private func recompute() {
+        let showing = slots.filter(isShowing)
+        var newLeft = showing.filter { $0.side == .left }.map(\.item)
+        var newRight = showing.filter { $0.side == .right }.map(\.item)
+        // Once anything is pinned, the timer and music join the layout while they run (if their own
+        // live activities are on) instead of replacing it: music at the left, the timer at the right.
+        if !slots.isEmpty {
+            let s = AppSettings.shared, media = MediaController.shared
+            if slot(for: .music) == nil, s.musicEnabled, s.musicLiveActivity, media.hasTrack, media.isPlaying {
+                newLeft.append(.music)
+            }
+            if slot(for: .timer) == nil, s.timerEnabled, s.timerLiveActivity, TimerStore.shared.isActive {
+                newRight.append(.timer)
+            }
+        }
+        if newLeft != left || newRight != right {
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.8)) {
+                left = newLeft
+                right = newRight
+            }
+        }
+        SystemMonitor.shared.setLiveDemand(wantsStats || previewing)
+        NetworkMonitor.shared.setLiveDemand(slot(for: .network) != nil || previewing)
+        PrivacyMonitor.shared.setLiveDemand(wantsPrivacy || previewing)
+        AgentMonitor.shared.setLiveDemand(slot(for: .agents) != nil || previewing)
+    }
+
+    private func isShowing(_ slot: LiveSlot) -> Bool {
+        switch slot.item {
+        case .music:
+            let media = MediaController.shared
+            return media.hasTrack && (media.isPlaying || !slot.whileActive)
+        case .timer:
+            return TimerStore.shared.isActive || !slot.whileActive
+        case .nextEvent:
+            guard let next = Self.nextEvent() else { return false }
+            return !slot.whileActive || next.startDate.timeIntervalSinceNow <= 3600
+        case .temperature:
+            // Not every Mac reports one; don't hold a blank space for it.
+            return SystemMonitor.shared.snapshot.cpuTemp != nil || SystemMonitor.shared.cpuHistory.isEmpty
+        case .battery:
+            return BatteryMonitor.shared.hasBattery
+        case .tasks:
+            return TaskStore.shared.openCount > 0
+        case .cpu, .memory, .gpu:
+            return true
+        case .network:
+            // "Busy" is more than background chatter: 200 KB/s either way.
+            let n = NetworkMonitor.shared
+            return !slot.whileActive || max(n.downRate, n.upRate) > 200_000
+        case .devices:
+            guard let level = DeviceBatteries.shared.lowest?.level else { return false }
+            return !slot.whileActive || level <= 20
+        case .privacy:
+            return PrivacyMonitor.shared.isActive
+        case .keepAwake:
+            return KeepAwake.shared.isActive
+        case .disk:
+            guard let disk = Cleaner.shared.disk else { return false }
+            return !slot.whileActive || disk.available < 20_000_000_000
+        case .vpn:
+            return !slot.whileActive || VPNMonitor.shared.connections.contains { $0.isUp && $0.fullTunnel }
+        case .agents:
+            guard AppSettings.shared.agentsEnabled else { return false }
+            return !slot.whileActive || AgentMonitor.shared.activeCount > 0
+        }
+    }
+
+    /// The next timed event today that hasn't started yet.
+    static func nextEvent(now: Date = Date()) -> EKEvent? {
+        CalendarManager.shared.events.filter { !$0.isAllDay && $0.startDate > now }.min { $0.startDate < $1.startDate }
+    }
+}

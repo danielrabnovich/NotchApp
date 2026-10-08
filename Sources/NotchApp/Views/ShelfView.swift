@@ -2,8 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum ShelfPane: String {
-    case shelf, downloads
-    static let options: [(value: ShelfPane, title: String)] = [(.shelf, "Shelf"), (.downloads, "Downloads")]
+    case shelf, downloads, clipboard
+
+    @MainActor static var options: [(value: ShelfPane, title: String)] {
+        let s = AppSettings.shared
+        return [(.shelf, "Shelf")] + (s.downloadsEnabled ? [(.downloads, "Downloads")] : [])
+            + (s.clipboardHistory ? [(.clipboard, "Clipboard")] : [])
+    }
 }
 
 struct ShelfView: View {
@@ -12,11 +17,16 @@ struct ShelfView: View {
     @EnvironmentObject private var downloads: DownloadsStore
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var taildrop: TaildropService
+    @EnvironmentObject private var clipboard: ClipboardHistory
+    @EnvironmentObject private var videos: VideoDownloader
+    @EnvironmentObject private var converter: MediaConverter
     @AppStorage("shelf.pane") private var pane: ShelfPane = .shelf
 
     private var showsTaildrop: Bool { settings.taildropZone && TaildropService.cli != nil }
 
     private var showingDownloads: Bool { settings.downloadsEnabled && pane == .downloads }
+    private var showingClipboard: Bool { settings.clipboardHistory && pane == .clipboard }
+    private var hasPanes: Bool { settings.downloadsEnabled || settings.clipboardHistory }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -24,24 +34,40 @@ struct ShelfView: View {
                 if !taildrop.pending.isEmpty {
                     DevicePicker(viewModel: viewModel)
                         .transition(.opacity.combined(with: .scale(scale: 0.97)))
-                } else if shelf.items.isEmpty && !settings.downloadsEnabled {
+                } else if shelf.items.isEmpty && !hasPanes {
                     emptyState
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         header
-                        if showingDownloads {
-                            if downloads.items.isEmpty {
+                        if showingClipboard {
+                            ClipboardStrip(viewModel: viewModel)
+                        } else if showingDownloads {
+                            if !videos.jobs.isEmpty {
+                                HStack(spacing: 6) {
+                                    ForEach(videos.jobs.prefix(3)) { VideoJobTile(job: $0) }
+                                    if !downloads.items.isEmpty {
+                                        TileStrip(items: downloads.items, regionID: "downloads", viewModel: viewModel) {
+                                            ShelfTile(item: $0, kind: .download)
+                                        }
+                                    } else {
+                                        Spacer(minLength: 0)
+                                    }
+                                }
+                            } else if downloads.items.isEmpty {
                                 placeholder(icon: "arrow.down.circle", text: "No downloads yet")
                             } else {
                                 TileStrip(items: downloads.items, regionID: "downloads", viewModel: viewModel) {
                                     ShelfTile(item: $0, kind: .download)
                                 }
                             }
-                        } else if shelf.items.isEmpty {
+                        } else if shelf.items.isEmpty && converter.jobs.isEmpty {
                             emptyState
                         } else {
-                            TileStrip(items: shelf.items, regionID: "shelf", viewModel: viewModel) {
-                                ShelfTile(item: $0, kind: .shelf)
+                            HStack(spacing: 6) {
+                                ForEach(converter.jobs.filter(\.isActive).prefix(2)) { ConvertJobTile(job: $0) }
+                                TileStrip(items: shelf.items, regionID: "shelf", viewModel: viewModel) {
+                                    ShelfTile(item: $0, kind: .shelf)
+                                }
                             }
                         }
                     }
@@ -62,7 +88,7 @@ struct ShelfView: View {
 
     private var header: some View {
         HStack {
-            if settings.downloadsEnabled {
+            if hasPanes {
                 PaneSwitcher(selection: $pane, options: ShelfPane.options)
             } else {
                 Text("Shelf")
@@ -70,7 +96,21 @@ struct ShelfView: View {
                     .foregroundStyle(.white.opacity(0.6))
             }
             Spacer()
-            if showingDownloads {
+            if showingClipboard {
+                if clipboard.clips.contains(where: { !$0.pinned }) {
+                    Button("Clear") { clipboard.clear() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .help("Clears everything except pinned items")
+                }
+            } else if showingDownloads {
+                if videos.jobs.contains(where: { !$0.isActive }) {
+                    Button("Clear Finished") { videos.clearFinished() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
                 Button("Open Folder") { NSWorkspace.shared.open(downloads.folder) }
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
@@ -193,6 +233,14 @@ private struct ShelfTile: View {
                 Button("Add to Shelf") { ShelfStore.shared.add([item.url]) }
             }
             Button("AirDrop") { ShelfStore.airDrop([item.url]) }
+            let conversions = MediaConverter.operations(for: [item.url])
+            if !conversions.isEmpty {
+                Menu("Convert") {
+                    ForEach(conversions) { op in
+                        Button(op.title) { MediaConverter.shared.convert([item.url], op) }
+                    }
+                }
+            }
             Button("Copy") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.writeObjects([item.url as NSURL])
@@ -428,5 +476,327 @@ struct TaildropIcon: View {
                 .foregroundStyle(TaildropPalette.accent)
                 .frame(width: size, height: size)
         }
+    }
+}
+
+// MARK: - Clipboard
+
+/// Recent copies as cards: click one to put it back on the clipboard (the notch closes so you can paste).
+private struct ClipboardStrip: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @EnvironmentObject private var clipboard: ClipboardHistory
+    @State private var overflows = false
+
+    var body: some View {
+        if clipboard.clips.isEmpty {
+            VStack(spacing: 6) {
+                Image(systemName: "doc.on.clipboard").font(.system(size: 20, weight: .medium))
+                Text("Things you copy show up here").font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(.white.opacity(0.45))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            GeometryReader { outer in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        // Pinned first, then newest.
+                        ForEach(clipboard.pinned + clipboard.clips.filter { !$0.pinned }) { clip in
+                            ClipCard(clip: clip) {
+                                clipboard.copy(clip)
+                                viewModel.close()
+                            }
+                            .transition(.scale(scale: 0.7).combined(with: .opacity))
+                        }
+                    }
+                    .frame(height: outer.size.height)
+                    .background(GeometryReader { inner in
+                        Color.clear
+                            .onAppear { overflows = inner.size.width > outer.size.width + 1 }
+                            .onChange(of: inner.size.width > outer.size.width + 1) { _, o in overflows = o }
+                    })
+                }
+            }
+            .horizontalScrollRegion("clipboard", in: viewModel, active: overflows)
+        }
+    }
+}
+
+private struct ClipCard: View {
+    let clip: ClipboardHistory.Clip
+    let action: () -> Void
+    @EnvironmentObject private var clipboard: ClipboardHistory
+    @State private var hovering = false
+    /// What can be done with this copy beyond pasting it (worked out once per clip).
+    @State private var suggestions: [ClipAction] = []
+    /// A short "Added to Tasks" over the card after an action.
+    @State private var flash: String?
+
+    private func run(_ suggestion: ClipAction) {
+        guard let message = suggestion.run() else { return }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { flash = message }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            withAnimation(.easeOut(duration: 0.25)) { if flash == message { flash = nil } }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            HStack(spacing: 4) {
+                if let id = clip.sourceBundleID, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+                    AppIcon(bundlePath: url.path, size: 11)
+                } else {
+                    Image(systemName: clip.icon).font(.system(size: 8, weight: .semibold)).foregroundStyle(.white.opacity(0.4))
+                }
+                Text(Date().timeIntervalSince(clip.date) < 60 ? "now" : clip.date.formatted(.relative(presentation: .numeric, unitsStyle: .narrow)))
+                    .font(.system(size: 9)).foregroundStyle(.white.opacity(0.35)).lineLimit(1)
+                Spacer(minLength: 0)
+                if clip.pinned {
+                    Image(systemName: "pin.fill").font(.system(size: 8)).foregroundStyle(.orange)
+                }
+            }
+        }
+        .padding(8)
+        .frame(width: 132)
+        .frame(maxHeight: .infinity)
+        .notchSurface(RoundedRectangle(cornerRadius: 12, style: .continuous), active: hovering)
+        .overlay(alignment: .topTrailing) {
+            if hovering, flash == nil {
+                HStack(spacing: 2) {
+                    // The most fitting action, one click away (the rest are on right-click).
+                    if let first = suggestions.first {
+                        Button { run(first) } label: {
+                            Image(systemName: first.icon).font(.system(size: 9, weight: .semibold))
+                        }
+                        .buttonStyle(NotchIconButtonStyle(size: 20))
+                        .help(first.title + (suggestions.count > 1 ? " · right-click for more" : ""))
+                    }
+                    Button { clipboard.togglePin(clip) } label: {
+                        Image(systemName: clip.pinned ? "pin.slash.fill" : "pin.fill").font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(NotchIconButtonStyle(size: 20))
+                    .help(clip.pinned ? "Unpin" : "Pin: kept when you clear the history")
+                    Button { clipboard.delete(clip) } label: {
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                    }
+                    .buttonStyle(NotchIconButtonStyle(size: 20))
+                    .help("Remove")
+                }
+                .padding(3)
+                .background(Capsule().fill(.black.opacity(0.6)))
+                .padding(4)
+            }
+        }
+        .overlay {
+            if let flash {
+                Label(flash, systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9).padding(.vertical, 5)
+                    .background(Capsule().fill(Color.green.opacity(0.85)))
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
+        .onTapGesture(perform: action)
+        .onDrag { dragItem }
+        .task(id: clip.id) { suggestions = ClipActions.suggestions(for: clip) }
+        .contextMenu {
+            Button("Copy") { clipboard.copy(clip) }
+            if !suggestions.isEmpty {
+                Divider()
+                ForEach(suggestions) { suggestion in
+                    Button { run(suggestion) } label: { Label(suggestion.title, systemImage: suggestion.icon) }
+                }
+            }
+            if let link = clip.kind == .link ? clip.text.flatMap(VideoDownloader.webURL) : nil, VideoDownloader.isAvailable {
+                Button("Download Video…") { VideoDownloader.shared.chooseQuality(for: link) }
+                Button("Download Audio") { VideoDownloader.shared.download(link, format: .audio, height: nil) }
+            }
+            if clip.kind == .text, let text = clip.text {
+                Menu("Transform") {
+                    ForEach(TextTransform.applicable(to: text).filter { $0 != .plain }) { t in
+                        Button(t.title) {
+                            clipboard.copy(clip)
+                            TextTransform.applyToClipboard(t)
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button(clip.pinned ? "Unpin" : "Pin") { clipboard.togglePin(clip) }
+            Button("Remove") { clipboard.delete(clip) }
+        }
+        .help("Click to copy")
+    }
+
+    @ViewBuilder private var content: some View {
+        switch clip.kind {
+        case .text:
+            Text(clip.title)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(5)
+        case .link:
+            VStack(alignment: .leading, spacing: 2) {
+                Image(systemName: "link").font(.system(size: 10, weight: .semibold)).foregroundStyle(.blue)
+                Text(URL(string: clip.title)?.host() ?? clip.title)
+                    .font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                Text(clip.title).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
+            }
+        case .image:
+            if let image = clipboard.image(for: clip) {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+        case .files:
+            HStack(spacing: 6) {
+                if let first = clip.filePaths?.first {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: first)).resizable().frame(width: 30, height: 30)
+                }
+                Text(clip.title).font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.85)).lineLimit(3)
+            }
+        }
+    }
+
+    private var dragItem: NSItemProvider {
+        switch clip.kind {
+        case .files: NSItemProvider(object: URL(fileURLWithPath: clip.filePaths?.first ?? "") as NSURL)
+        case .image: clipboard.image(for: clip).map { NSItemProvider(object: $0) } ?? NSItemProvider()
+        default: NSItemProvider(object: (clip.text ?? "") as NSString)
+        }
+    }
+}
+
+// MARK: - Video downloads
+
+/// A yt-dlp download in the Downloads pane: progress while it runs, then the file (drag it out).
+private struct VideoJobTile: View {
+    let job: VideoDownloader.Job
+    @EnvironmentObject private var videos: VideoDownloader
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: job.format == .audio ? "music.note" : "play.rectangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.red)
+                Text(job.displayTitle)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .lineLimit(2)
+                    .foregroundStyle(.white.opacity(0.88))
+            }
+            Spacer(minLength: 0)
+            status
+        }
+        .padding(8)
+        .frame(width: 150)
+        .frame(maxHeight: .infinity)
+        .notchSurface(RoundedRectangle(cornerRadius: 12, style: .continuous), active: hovering)
+        .overlay(alignment: .topTrailing) {
+            if hovering {
+                Button { job.isActive ? videos.cancel(job) : videos.dismiss(job) } label: {
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 18))
+                .background(Circle().fill(.black.opacity(0.6)))
+                .padding(4)
+                .help(job.isActive ? "Cancel" : "Hide")
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onHover { hovering = $0 }
+        .onTapGesture(count: 2) { if case .done(let url) = job.state { NSWorkspace.shared.open(url) } }
+        .onDrag {
+            if case .done(let url) = job.state { return NSItemProvider(object: url as NSURL) }
+            return NSItemProvider(object: job.url as NSURL)
+        }
+        .contextMenu {
+            if case .done(let url) = job.state {
+                Button("Open") { NSWorkspace.shared.open(url) }
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+            Button("Open Link") { NSWorkspace.shared.open(job.url) }
+            if case .failed = job.state {
+                Button("Try Again") { videos.dismiss(job); videos.download(job.url, format: job.format) }
+                Button("Update yt-dlp") { videos.upgrade() }
+            }
+        }
+        .help(job.url.absoluteString)
+    }
+
+    @ViewBuilder private var status: some View {
+        switch job.state {
+        case .starting:
+            Text("Starting…").font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.45))
+        case .downloading, .processing:
+            VStack(alignment: .leading, spacing: 3) {
+                ProgressView(value: job.progress).progressViewStyle(.linear).tint(.red).controlSize(.small)
+                Text(job.state == .processing ? "Finishing up…" : detail)
+                    .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+            }
+        case .done(let url):
+            Label(url.pathExtension.uppercased() + (job.height.map { " · \($0)p" } ?? "") + " · double-click to open", systemImage: "checkmark.circle.fill")
+                .font(.system(size: 9.5)).foregroundStyle(.green).lineLimit(1)
+        case .failed(let message):
+            Text(message).font(.system(size: 9.5)).foregroundStyle(.orange).lineLimit(2)
+        }
+    }
+
+    private var detail: String {
+        var parts = ["\(Int((job.progress * 100).rounded()))%"]
+        if job.speed > 0 { let r = formatRate(job.speed); parts.append("\(r.value) \(r.unit)") }
+        if let eta = job.eta, eta > 0 { parts.append(eta >= 60 ? "\(eta / 60)m \(eta % 60)s" : "\(eta)s") }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// A conversion in progress on the shelf.
+private struct ConvertJobTile: View {
+    let job: MediaConverter.Job
+    @EnvironmentObject private var converter: MediaConverter
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ZStack {
+                Circle().stroke(.white.opacity(0.12), lineWidth: 3)
+                if let p = job.progress {
+                    Circle().trim(from: 0, to: max(0.03, p))
+                        .stroke(Color.purple, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                } else {
+                    ProgressView().controlSize(.small).tint(.white)
+                }
+                Image(systemName: "wand.and.stars").font(.system(size: 13, weight: .semibold)).foregroundStyle(.purple)
+            }
+            .frame(width: 44, height: 44)
+            Text(job.operation.title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.8))
+                .lineLimit(1)
+            Text(job.progress.map { "\(Int(($0 * 100).rounded()))%" } ?? job.source.lastPathComponent)
+                .font(.system(size: 9.5).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.45))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(6)
+        .frame(width: 84)
+        .frame(maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(hovering ? 0.1 : 0.05)))
+        .overlay(alignment: .topTrailing) {
+            if hovering {
+                Button { converter.cancel(job) } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
+                    .buttonStyle(NotchIconButtonStyle(size: 18))
+                    .help("Cancel")
+            }
+        }
+        .onHover { hovering = $0 }
+        .help(job.source.path)
     }
 }

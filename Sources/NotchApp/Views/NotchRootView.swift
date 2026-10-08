@@ -9,6 +9,9 @@ struct NotchRootView: View {
     @EnvironmentObject private var tasks: TaskStore // collapsed width depends on the open count
     @EnvironmentObject private var timer: TimerStore // and on whether a timer is running
     @EnvironmentObject private var assistant: AssistantStore // …and on running searches
+    @ObservedObject private var live = LiveActivities.shared // …and on the pinned live activities
+    @ObservedObject private var speed = SpeedTest.shared // …and on a running speed test
+    @ObservedObject private var videos = VideoDownloader.shared // …and on a video download
 
     var body: some View {
         let vm = viewModel
@@ -49,6 +52,7 @@ struct NotchRootView: View {
             if !vm.isOpen { vm.open() }
         }
         .contextMenu {
+            Button("Live Activities…") { SettingsWindowController.shared.show(pane: .live) }
             Button("Settings…") { SettingsWindowController.shared.show() }
             Divider()
             Button("Quit NotchApp") { NSApp.terminate(nil) }
