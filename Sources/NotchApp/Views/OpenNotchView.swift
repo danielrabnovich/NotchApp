@@ -13,6 +13,9 @@ struct OpenNotchView: View {
                 if let overlay = viewModel.overlay {
                     OverlayView(overlay: overlay)
                         .transition(.scale(scale: 0.97).combined(with: .opacity))
+                } else if viewModel.mirror {
+                    MirrorView(viewModel: viewModel)
+                        .transition(.scale(scale: 0.97).combined(with: .opacity))
                 } else {
                 PagedTabsView(viewModel: viewModel)
                     .opacity(viewModel.isDragActive ? 0 : 1)
@@ -24,6 +27,7 @@ struct OpenNotchView: View {
                 }
             }
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: viewModel.overlay)
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: viewModel.mirror)
             .animation(.spring(response: 0.35, dampingFraction: 0.82), value: viewModel.isDragActive)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 18)
@@ -49,6 +53,17 @@ struct OpenNotchView: View {
                         BatteryIcon(level: battery.level, charging: battery.isCharging || battery.isPluggedIn)
                     }
                 }
+                if settings.cameraMirrorEnabled {
+                    Button {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { viewModel.mirror.toggle() }
+                    } label: {
+                        Image(systemName: viewModel.mirror ? "web.camera.fill" : "web.camera")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(viewModel.mirror ? 1 : 0.7))
+                    }
+                    .buttonStyle(NotchIconButtonStyle(size: 24))
+                    .help("Camera mirror")
+                }
                 Button {
                     SettingsWindowController.shared.show()
                 } label: {
@@ -72,16 +87,20 @@ private struct TabIndicator: View {
     @EnvironmentObject private var tasks: TaskStore
     @EnvironmentObject private var assistant: AssistantStore
 
-    private let buttonWidth: CGFloat = 40
-    private let spacing: CGFloat = 4
+    private let spacing: CGFloat = 3
 
     var body: some View {
         let tabs = viewModel.tabs
+        // Narrow the buttons as tabs are added so they still fit beside the notch.
+        // Fit every tab into the space left of the hardware notch (open width minus the header's
+        // side padding and the notch gap, halved); a fixed width pushed the last tab under the notch.
+        let available = (viewModel.openSize.width - 28 - viewModel.notchSize.width - 16) / 2
+        let buttonWidth = min(40, (available - spacing * CGFloat(max(tabs.count - 1, 0))) / CGFloat(max(tabs.count, 1)))
         if tabs.count > 1 {
             let progress = CGFloat(viewModel.tabIndex) - viewModel.pageOffset / max(viewModel.pageWidth, 1)
             ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(.white.opacity(0.14))
+                Color.clear
+                    .notchSurface(Capsule(), active: true)
                     .frame(width: buttonWidth, height: 22)
                     .offset(x: progress * (buttonWidth + spacing))
 
@@ -152,7 +171,11 @@ private struct PagedTabsView: View {
         switch tab {
         case .home: HomeView()
         case .shelf: ShelfView(viewModel: viewModel)
-        case .tasks: TasksView(viewModel: viewModel)
+        case .tasks: TasksTab(viewModel: viewModel)
+        case .timer: TimerView(viewModel: viewModel)
+        case .mixer: MixerView(viewModel: viewModel)
+        case .controls: ControlsView(viewModel: viewModel)
+        case .stats: StatsView()
         case .ask: AskView(viewModel: viewModel)
         }
     }

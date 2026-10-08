@@ -34,7 +34,7 @@ enum WebSearcher {
     }
     private static let gate = Gate()
 
-    static func answer(_ question: String, searchQuery: String,
+    static func answer(_ question: String, searchQuery: String, useAI: Bool = true,
                        progress: @escaping @Sendable (String) async -> Void,
                        partial: @escaping @Sendable (String, [WebSource]) async -> Void) async throws -> (answer: String, sources: [WebSource]) {
         await progress("Searching the web")
@@ -48,6 +48,9 @@ enum WebSearcher {
         guard !results.isEmpty else {
             throw OllamaClient.OllamaError(message: "Couldn't reach a search engine. Check your connection and try again.")
         }
+
+        // Without a model there's nothing to summarise with, so return the results as links.
+        guard useAI else { return ("", Array(results.prefix(8))) }
 
         await progress("Reading \(min(3, results.count)) pages")
         let pages = await withTaskGroup(of: (Int, String).self) { group in

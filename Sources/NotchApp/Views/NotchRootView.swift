@@ -7,6 +7,7 @@ struct NotchRootView: View {
     @EnvironmentObject private var media: MediaController
     @EnvironmentObject private var activity: ActivityCenter
     @EnvironmentObject private var tasks: TaskStore // collapsed width depends on the open count
+    @EnvironmentObject private var timer: TimerStore // and on whether a timer is running
     @EnvironmentObject private var assistant: AssistantStore // …and on running searches
 
     var body: some View {

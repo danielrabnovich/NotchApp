@@ -73,6 +73,36 @@ final class AppSettings: ObservableObject {
     @Published var tasksEnabled: Bool { didSet { defaults.set(tasksEnabled, forKey: "tasksEnabled") } }
     @Published var showTaskCount: Bool { didSet { defaults.set(showTaskCount, forKey: "showTaskCount") } }
 
+    // Timer
+    @Published var timerEnabled: Bool { didSet { defaults.set(timerEnabled, forKey: "timerEnabled") } }
+    @Published var timerLiveActivity: Bool { didSet { defaults.set(timerLiveActivity, forKey: "timerLiveActivity") } }
+    @Published var timerSounds: Bool { didSet { defaults.set(timerSounds, forKey: "timerSounds") } }
+    @Published var pomodoroAutoStart: Bool { didSet { defaults.set(pomodoroAutoStart, forKey: "pomodoroAutoStart") } }
+
+    // Notes, downloads, mixer
+    @Published var notesEnabled: Bool { didSet { defaults.set(notesEnabled, forKey: "notesEnabled") } }
+    @Published var downloadsEnabled: Bool { didSet { defaults.set(downloadsEnabled, forKey: "downloadsEnabled") } }
+    @Published var downloadAlerts: Bool { didSet { defaults.set(downloadAlerts, forKey: "downloadAlerts") } }
+    @Published var taildropZone: Bool { didSet { defaults.set(taildropZone, forKey: "taildropZone") } }
+    @Published var taildropReceive: Bool { didSet { defaults.set(taildropReceive, forKey: "taildropReceive") } }
+    @Published var taildropToShelf: Bool { didSet { defaults.set(taildropToShelf, forKey: "taildropToShelf") } }
+    @Published var mixerEnabled: Bool { didSet { defaults.set(mixerEnabled, forKey: "mixerEnabled") } }
+    @Published var controlsEnabled: Bool { didSet { defaults.set(controlsEnabled, forKey: "controlsEnabled") } }
+    @Published var updateChecks: Bool { didSet { defaults.set(updateChecks, forKey: "updateChecks") } }
+    @Published var updateChecksApps: Bool { didSet { defaults.set(updateChecksApps, forKey: "updateChecksApps") } }
+    @Published var updateAlerts: Bool { didSet { defaults.set(updateAlerts, forKey: "updateAlerts") } }
+    @Published var keepAwakeDisplay: Bool { didSet { defaults.set(keepAwakeDisplay, forKey: "keepAwakeDisplay") } }
+    @Published var keepAwakeBatteryFloor: Int { didSet { defaults.set(keepAwakeBatteryFloor, forKey: "keepAwakeBatteryFloor") } }
+    @Published var reverseMouseScroll: Bool { didSet { defaults.set(reverseMouseScroll, forKey: "reverseMouseScroll") } }
+    @Published var threeFingerMiddleClick: Bool { didSet { defaults.set(threeFingerMiddleClick, forKey: "threeFingerMiddleClick") } }
+    @Published var cameraMirrorEnabled: Bool { didSet { defaults.set(cameraMirrorEnabled, forKey: "cameraMirrorEnabled") } }
+    @Published var hotKeysEnabled: Bool { didSet { defaults.set(hotKeysEnabled, forKey: "hotKeysEnabled") } }
+    @Published var hotKeyModifiers: HotKeys.Modifiers { didSet { defaults.set(hotKeyModifiers.rawValue, forKey: "hotKeyModifiers") } }
+
+    // Stats
+    @Published var statsEnabled: Bool { didSet { defaults.set(statsEnabled, forKey: "statsEnabled") } }
+    @Published var useFahrenheit: Bool { didSet { defaults.set(useFahrenheit, forKey: "useFahrenheit") } }
+
     // Assistant (Ollama)
     @Published var assistantEnabled: Bool { didSet { defaults.set(assistantEnabled, forKey: "assistantEnabled") } }
     @Published var ollamaURL: String { didSet { defaults.set(ollamaURL, forKey: "ollamaURL") } }
@@ -113,9 +143,33 @@ final class AppSettings: ObservableObject {
             "airDropZone": true,
             "tasksEnabled": true,
             "showTaskCount": true,
+            "timerEnabled": true,
+            "timerLiveActivity": true,
+            "timerSounds": true,
+            "pomodoroAutoStart": true,
+            "notesEnabled": true,
+            "downloadsEnabled": true,
+            "downloadAlerts": true,
+            "taildropZone": TaildropService.cli != nil,
+            "taildropReceive": TaildropService.cli != nil,
+            "taildropToShelf": true,
+            "mixerEnabled": true,
+            "controlsEnabled": true,
+            "updateChecks": true,
+            "updateChecksApps": true,
+            "updateAlerts": true,
+            "keepAwakeDisplay": true,
+            "keepAwakeBatteryFloor": 20,
+            "reverseMouseScroll": false,
+            "threeFingerMiddleClick": false,
+            "cameraMirrorEnabled": true,
+            "hotKeysEnabled": true,
+            "hotKeyModifiers": HotKeys.Modifiers.controlOption.rawValue,
+            "statsEnabled": true,
+            "useFahrenheit": Locale.current.measurementSystem == .us,
             "assistantEnabled": true,
             "ollamaURL": "http://localhost:11434",
-            "ollamaModel": "qwen3:8b",
+            "ollamaModel": OllamaModelCatalog.defaultModel,
             "systemNotifications": true,
             "homeCity": "",
             "morningBrief": true,
@@ -147,9 +201,33 @@ final class AppSettings: ObservableObject {
         airDropZone = defaults.bool(forKey: "airDropZone")
         tasksEnabled = defaults.bool(forKey: "tasksEnabled")
         showTaskCount = defaults.bool(forKey: "showTaskCount")
+        timerEnabled = defaults.bool(forKey: "timerEnabled")
+        timerLiveActivity = defaults.bool(forKey: "timerLiveActivity")
+        timerSounds = defaults.bool(forKey: "timerSounds")
+        pomodoroAutoStart = defaults.bool(forKey: "pomodoroAutoStart")
+        notesEnabled = defaults.bool(forKey: "notesEnabled")
+        downloadsEnabled = defaults.bool(forKey: "downloadsEnabled")
+        downloadAlerts = defaults.bool(forKey: "downloadAlerts")
+        taildropZone = defaults.bool(forKey: "taildropZone")
+        taildropReceive = defaults.bool(forKey: "taildropReceive")
+        taildropToShelf = defaults.bool(forKey: "taildropToShelf")
+        mixerEnabled = defaults.bool(forKey: "mixerEnabled")
+        controlsEnabled = defaults.bool(forKey: "controlsEnabled")
+        updateChecks = defaults.bool(forKey: "updateChecks")
+        updateChecksApps = defaults.bool(forKey: "updateChecksApps")
+        updateAlerts = defaults.bool(forKey: "updateAlerts")
+        keepAwakeDisplay = defaults.bool(forKey: "keepAwakeDisplay")
+        keepAwakeBatteryFloor = defaults.integer(forKey: "keepAwakeBatteryFloor")
+        reverseMouseScroll = defaults.bool(forKey: "reverseMouseScroll")
+        threeFingerMiddleClick = defaults.bool(forKey: "threeFingerMiddleClick")
+        cameraMirrorEnabled = defaults.bool(forKey: "cameraMirrorEnabled")
+        hotKeysEnabled = defaults.bool(forKey: "hotKeysEnabled")
+        hotKeyModifiers = HotKeys.Modifiers(rawValue: defaults.string(forKey: "hotKeyModifiers") ?? "") ?? .controlOption
+        statsEnabled = defaults.bool(forKey: "statsEnabled")
+        useFahrenheit = defaults.bool(forKey: "useFahrenheit")
         assistantEnabled = defaults.bool(forKey: "assistantEnabled")
         ollamaURL = defaults.string(forKey: "ollamaURL") ?? "http://localhost:11434"
-        ollamaModel = defaults.string(forKey: "ollamaModel") ?? "qwen3:8b"
+        ollamaModel = defaults.string(forKey: "ollamaModel") ?? OllamaModelCatalog.defaultModel
         systemNotifications = defaults.bool(forKey: "systemNotifications")
         homeCity = defaults.string(forKey: "homeCity") ?? ""
         morningBrief = defaults.bool(forKey: "morningBrief")
@@ -172,6 +250,10 @@ final class AppSettings: ObservableObject {
         case .albumArt: Color(nsColor: media.hasTrack ? media.accentColor : .white)
         case .custom: customAccent
         }
+    }
+
+    func formatTemperature(_ celsius: Double) -> String {
+        "\(Int((useFahrenheit ? celsius * 9 / 5 + 32 : celsius).rounded()))°"
     }
 
     var openAnimation: Animation {

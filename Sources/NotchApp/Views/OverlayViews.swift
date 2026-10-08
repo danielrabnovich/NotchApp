@@ -50,25 +50,15 @@ private struct BriefView: View {
                             TaskStore.shared.justAddedID = focus
                         } label: {
                             Label("Let's start", systemImage: "play.fill")
-                                .font(.system(size: 11.5, weight: .semibold))
-                                .foregroundStyle(.black)
-                                .padding(.horizontal, 12)
-                                .frame(height: 26)
-                                .background(RoundedRectangle(cornerRadius: 6).fill(.white))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(NotchPillButtonStyle(primary: true))
                     }
                     Button {
                         NotchPresenter.shared.dismissOverlay(close: true)
                     } label: {
                         Text("Dismiss")
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.8))
-                            .padding(.horizontal, 12)
-                            .frame(height: 26)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(.white.opacity(0.12)))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(NotchPillButtonStyle())
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -155,12 +145,7 @@ private struct NudgeView: View {
     private func pill(_ title: String, icon: String, primary: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: icon)
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(primary ? .black : .white.opacity(0.85))
-                .padding(.horizontal, 12)
-                .frame(height: 26)
-                .background(RoundedRectangle(cornerRadius: 6).fill(primary ? .white : .white.opacity(0.12)))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(NotchPillButtonStyle(primary: primary))
     }
 }

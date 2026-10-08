@@ -1,0 +1,452 @@
+import AppKit
+import SwiftUI
+
+/// Something the search bar can do directly: add tasks, jot a note, start a timer, flip a control.
+struct Command: Identifiable, Equatable {
+    enum Action: Equatable {
+        /// Task titles, each possibly with a due phrase ("call mom tomorrow 3pm").
+        case addTasks([String])
+        case completeTask(UUID)
+        case appendNote(String)
+        case startTimer(minutes: Int)
+        case startPomodoro
+        case startStopwatch
+        case pauseTimer, resumeTimer, stopTimer
+        case keepAwake(minutes: Int?)
+        case stopKeepAwake
+        case toggleDarkMode, toggleWiFi, toggleMic, lockScreen, screenshot, pickColor
+        case setVolume(Float), setBrightness(Float)
+        /// A normal quit, so apps still ask to save unsaved work.
+        case quitApp(pid_t)
+        case show(NotchTab, pane: String? = nil)
+        case settings
+        /// Fills the bar with a command's prefix (from the "/" list).
+        case template(String)
+    }
+
+    let id = UUID()
+    let action: Action
+    let title: String
+    var subtitle: String?
+    let icon: String
+    /// The verb beside ↩ on the highlighted row.
+    var verb = "Run"
+
+    static func == (a: Command, b: Command) -> Bool { a.action == b.action && a.title == b.title && a.subtitle == b.subtitle }
+}
+
+/// Recognises commands in what's typed. Deliberate prefixes only ("task …", "note …", "timer 10m"),
+/// so ordinary searches never turn into actions by surprise.
+@MainActor
+enum CommandParser {
+    static func parse(_ raw: String) -> [Command] {
+        let q = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = q.lowercased()
+        guard !q.isEmpty else { return [] }
+        if lower == "/" || lower == "?" || lower == "help" || lower == "commands" { return templates }
+        if lower.hasPrefix("/") {
+            let rest = String(lower.dropFirst())
+            let parsed = parse(String(q.dropFirst()))
+            if !parsed.isEmpty { return parsed }
+            return templates.filter { $0.title.lowercased().contains(rest) || ($0.subtitle ?? "").lowercased().contains(rest) }
+        }
+
+        if let c = tasks(q, lower) ?? note(q, lower) ?? complete(q, lower) ?? quit(lower) { return c }
+        if let c = timer(lower) ?? awake(lower) ?? control(lower) { return [c] }
+        if let c = navigation(lower) { return [c] }
+        return []
+    }
+
+    // MARK: - Tasks and notes
+
+    private static let taskPrefixes = ["add task ", "new task ", "task ", "todo ", "to-do ", "to do ", "remind me to ", "remind me "]
+    private static let listPrefixes = ["tasks:", "todos:", "todo:", "to-do:", "task:", "list:", "checklist:"]
+
+    private static func tasks(_ q: String, _ lower: String) -> [Command]? {
+        // "tasks: milk, eggs; call mom" → one task per item.
+        if let prefix = listPrefixes.first(where: lower.hasPrefix) {
+            let items = q.dropFirst(prefix.count)
+                .split(whereSeparator: { $0 == "," || $0 == ";" || $0 == "\n" })
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            guard !items.isEmpty else { return [template(for: "tasks: ")] }
+            return [addTasks(items)]
+        }
+        guard let prefix = taskPrefixes.first(where: lower.hasPrefix) else { return nil }
+        let title = q.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty else { return nil }
+        // "task milk, eggs, bread" reads as a list too.
+        let items = title.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return [addTasks(items.count > 1 ? items : [title])]
+    }
+
+    static func addTasks(_ items: [String]) -> Command {
+        if items.count == 1 {
+            let (title, due) = DueDateParser.extract(from: items[0])
+            return Command(action: .addTasks(items), title: "Add task “\(title)”",
+                           subtitle: due.map { "Due " + dueText($0) } ?? "To today's tasks", icon: "checklist", verb: "Add")
+        }
+        return Command(action: .addTasks(items), title: "Add \(items.count) tasks",
+                       subtitle: items.map { DueDateParser.extract(from: $0).title }.joined(separator: " · "), icon: "checklist", verb: "Add")
+    }
+
+    static func dueText(_ date: Date) -> String {
+        let cal = Calendar.current
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if cal.isDateInToday(date) { return "today \(time)" }
+        if cal.isDateInTomorrow(date) { return "tomorrow \(time)" }
+        return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()) + " " + time
+    }
+
+    private static let notePrefixes = ["note ", "note:", "jot ", "jot:", "jot down ", "write down ", "remember "]
+
+    private static func note(_ q: String, _ lower: String) -> [Command]? {
+        guard let prefix = notePrefixes.sorted(by: { $0.count > $1.count }).first(where: lower.hasPrefix) else { return nil }
+        let text = q.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return nil }
+        return [Command(action: .appendNote(text), title: "Jot down “\(text)”", subtitle: "Adds a line to Notes", icon: "note.text", verb: "Jot")]
+    }
+
+    /// "done call mom" ticks off matching open tasks.
+    private static func complete(_ q: String, _ lower: String) -> [Command]? {
+        guard let prefix = ["done ", "complete ", "finish ", "check off ", "tick off "].first(where: lower.hasPrefix) else { return nil }
+        let needle = lower.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return nil }
+        let matches = TaskStore.shared.open.filter { $0.title.lowercased().contains(needle) }.prefix(3)
+        guard !matches.isEmpty else {
+            return [Command(action: .show(.tasks, pane: TasksPane.tasks.rawValue), title: "No open task matches “\(needle)”",
+                            subtitle: "Show Tasks", icon: "checklist", verb: "Show")]
+        }
+        return matches.map { Command(action: .completeTask($0.id), title: "Complete “\($0.title)”",
+                                     subtitle: $0.due.map { "Due " + dueText($0) }, icon: "checkmark.circle", verb: "Done") }
+    }
+
+    /// "quit spot" → Quit Spotify, matching running apps by name.
+    private static func quit(_ lower: String) -> [Command]? {
+        guard let prefix = ["quit ", "close app ", "kill "].first(where: lower.hasPrefix) else { return nil }
+        let needle = lower.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return nil }
+        let me = ProcessInfo.processInfo.processIdentifier
+        let apps = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.processIdentifier != me && !$0.isTerminated }
+            .compactMap { app in app.localizedName.map { (app, $0) } }
+            .filter { $0.1.lowercased().contains(needle) }
+            // Names that start with what was typed first, then shorter names.
+            .sorted { ($0.1.lowercased().hasPrefix(needle) ? 0 : 1, $0.1.count) < ($1.1.lowercased().hasPrefix(needle) ? 0 : 1, $1.1.count) }
+            .prefix(3)
+        guard !apps.isEmpty else {
+            return [Command(action: .template("quit "), title: "No running app matches “\(needle)”", icon: "xmark.app", verb: "Edit")]
+        }
+        return apps.map { app, name in
+            Command(action: .quitApp(app.processIdentifier), title: "Quit \(name)",
+                    subtitle: app.isActive ? "Frontmost app" : "Running", icon: "xmark.app", verb: "Quit")
+        }
+    }
+
+    // MARK: - Timer, keep awake, controls
+
+    private static func timer(_ lower: String) -> Command? {
+        switch lower {
+        case "pomodoro", "focus", "start focus", "focus session", "start pomodoro":
+            let m = TimerStore.shared.focusMinutes
+            return Command(action: .startPomodoro, title: "Start a Pomodoro", subtitle: "\(m) min focus", icon: "brain.head.profile", verb: "Start")
+        case "stopwatch", "start stopwatch":
+            return Command(action: .startStopwatch, title: "Start the stopwatch", icon: "stopwatch", verb: "Start")
+        case "pause", "pause timer":
+            return Command(action: .pauseTimer, title: "Pause the timer", icon: "pause.fill", verb: "Pause")
+        case "resume", "resume timer":
+            return Command(action: .resumeTimer, title: "Resume the timer", icon: "play.fill", verb: "Resume")
+        case "stop timer", "cancel timer", "reset timer":
+            return Command(action: .stopTimer, title: "Stop the timer", icon: "stop.fill", verb: "Stop")
+        default: break
+        }
+        for prefix in ["timer ", "set timer ", "set a timer for ", "timer for ", "focus for ", "start timer "] where lower.hasPrefix(prefix) {
+            guard let minutes = minutes(in: String(lower.dropFirst(prefix.count))), minutes > 0, minutes <= 600 else { return nil }
+            return Command(action: .startTimer(minutes: minutes), title: "Start a \(durationText(minutes)) timer", icon: "timer", verb: "Start")
+        }
+        return nil
+    }
+
+    private static func awake(_ lower: String) -> Command? {
+        if ["stop keep awake", "keep awake off", "let sleep", "allow sleep", "stop caffeinate"].contains(lower) {
+            return Command(action: .stopKeepAwake, title: "Let your Mac sleep again", icon: "moon.zzz", verb: "Stop")
+        }
+        for prefix in ["keep awake", "caffeinate", "stay awake", "awake"] where lower.hasPrefix(prefix) {
+            let rest = lower.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+            let m = rest.isEmpty ? nil : minutes(in: rest.replacingOccurrences(of: "for ", with: ""))
+            if !rest.isEmpty && m == nil { return nil }
+            return Command(action: .keepAwake(minutes: m), title: "Keep your Mac awake",
+                           subtitle: m.map { "For \(durationText($0))" } ?? "Until you turn it off", icon: "cup.and.saucer.fill", verb: "Start")
+        }
+        return nil
+    }
+
+    private static func control(_ lower: String) -> Command? {
+        let controls = ControlsService.shared
+        switch lower {
+        case "dark mode", "light mode", "toggle dark mode", "appearance":
+            return Command(action: .toggleDarkMode, title: controls.darkMode ? "Switch to light mode" : "Switch to dark mode",
+                           icon: "circle.lefthalf.filled", verb: "Switch")
+        case "wifi", "wi-fi", "toggle wifi", "wifi on", "wifi off":
+            return Command(action: .toggleWiFi, title: controls.wifiOn ? "Turn Wi-Fi off" : "Turn Wi-Fi on", icon: "wifi", verb: "Toggle")
+        case "mute mic", "unmute mic", "mic", "microphone", "toggle mic":
+            return Command(action: .toggleMic, title: controls.micMuted ? "Unmute the microphone" : "Mute the microphone",
+                           icon: controls.micMuted ? "mic.fill" : "mic.slash.fill", verb: "Toggle")
+        case "lock", "lock screen", "lock mac":
+            return Command(action: .lockScreen, title: "Lock screen", icon: "lock.fill", verb: "Lock")
+        case "screenshot", "take screenshot", "screen shot":
+            return Command(action: .screenshot, title: "Take a screenshot", icon: "camera.viewfinder", verb: "Capture")
+        case "color picker", "colour picker", "pick color", "pick colour", "eyedropper":
+            return Command(action: .pickColor, title: "Pick a colour from the screen", icon: "eyedropper", verb: "Pick")
+        case "mute", "mute volume":
+            return Command(action: .setVolume(0), title: "Mute sound", icon: "speaker.slash.fill", verb: "Mute")
+        default: break
+        }
+        for (prefix, isVolume) in [("volume ", true), ("vol ", true), ("brightness ", false)] where lower.hasPrefix(prefix) {
+            let digits = lower.dropFirst(prefix.count).filter(\.isNumber)
+            guard let n = Int(digits), (0...100).contains(n) else { return nil }
+            return isVolume
+                ? Command(action: .setVolume(Float(n) / 100), title: "Set volume to \(n)%", icon: "speaker.wave.2.fill", verb: "Set")
+                : Command(action: .setBrightness(Float(n) / 100), title: "Set brightness to \(n)%", icon: "sun.max.fill", verb: "Set")
+        }
+        return nil
+    }
+
+    private static func navigation(_ lower: String) -> Command? {
+        let word = lower.hasPrefix("show ") ? String(lower.dropFirst(5)) : lower.hasPrefix("go to ") ? String(lower.dropFirst(6)) : lower
+        let destinations: [(names: [String], title: String, action: Command.Action, icon: String)] = [
+            (["tasks", "todo", "todos"], "Tasks", .show(.tasks, pane: TasksPane.tasks.rawValue), "checklist"),
+            (["notes", "scratchpad"], "Notes", .show(.tasks, pane: TasksPane.notes.rawValue), "note.text"),
+            (["shelf"], "Shelf", .show(.shelf, pane: ShelfPane.shelf.rawValue), "tray.full.fill"),
+            (["downloads"], "Downloads", .show(.shelf, pane: ShelfPane.downloads.rawValue), "arrow.down.circle"),
+            (["timer"], "Timer", .show(.timer), "timer"),
+            (["mixer", "audio"], "Mixer", .show(.mixer), "slider.vertical.3"),
+            (["controls"], "Controls", .show(.controls), "switch.2"),
+            (["stats", "system", "activity"], "Stats", .show(.stats), "gauge.with.dots.needle.50percent"),
+            (["home", "music", "calendar"], "Home", .show(.home), "house.fill"),
+            (["settings", "preferences"], "Settings", .settings, "gearshape.fill"),
+        ]
+        guard let d = destinations.first(where: { $0.names.contains(word) }) else { return nil }
+        return Command(action: d.action, title: "Show \(d.title)", icon: d.icon, verb: "Show")
+    }
+
+    // MARK: - "/" list
+
+    private static func template(for prefix: String) -> Command {
+        templates.first { if case .template(prefix) = $0.action { true } else { false } }!
+    }
+
+    static let templates: [Command] = [
+        Command(action: .template("task "), title: "task …", subtitle: "“task call mom tomorrow 3pm” · or “tasks: milk, eggs” for several",
+                icon: "checklist", verb: "Use"),
+        Command(action: .template("note "), title: "note …", subtitle: "Jot a line into Notes", icon: "note.text", verb: "Use"),
+        Command(action: .template("done "), title: "done …", subtitle: "Tick off a task by name", icon: "checkmark.circle", verb: "Use"),
+        Command(action: .template("timer "), title: "timer 10m", subtitle: "Countdown · or “pomodoro”, “stopwatch”", icon: "timer", verb: "Use"),
+        Command(action: .template("quit "), title: "quit …", subtitle: "Quit a running app by name", icon: "xmark.app", verb: "Use"),
+        Command(action: .template("keep awake "), title: "keep awake 1h", subtitle: "Also: volume 40, brightness, dark mode, wifi, lock, screenshot",
+                icon: "switch.2", verb: "Use"),
+    ]
+
+    // MARK: - Helpers
+
+    /// "10", "10m", "10 min", "1h", "1.5 hours", "1h30" → minutes.
+    static func minutes(in text: String) -> Int? {
+        let t = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: " ", with: "")
+        guard !t.isEmpty else { return nil }
+        var total = 0.0
+        var number = ""
+        var i = t.startIndex
+        while i < t.endIndex {
+            let c = t[i]
+            if c.isNumber || c == "." { number.append(c); i = t.index(after: i); continue }
+            let rest = t[i...]
+            let unit: Double
+            let length: Int
+            if let w = ["hours", "hour", "hrs", "hr", "h"].first(where: { rest.hasPrefix($0) }) { unit = 60; length = w.count }
+            else if let w = ["minutes", "minute", "mins", "min", "m"].first(where: { rest.hasPrefix($0) }) { unit = 1; length = w.count }
+            else if let w = ["seconds", "second", "secs", "sec", "s"].first(where: { rest.hasPrefix($0) }) { unit = 1.0 / 60; length = w.count }
+            else { return nil }
+            guard let n = Double(number) else { return nil }
+            total += n * unit
+            number = ""
+            i = t.index(i, offsetBy: length)
+        }
+        if let n = Double(number) { total += n } // a bare number ("10") or the minutes in "1h30"
+        let m = Int(total.rounded())
+        return m > 0 ? m : nil
+    }
+
+    static func durationText(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes) min" }
+        return minutes % 60 == 0 ? "\(minutes / 60) hr" : "\(minutes / 60) hr \(minutes % 60) min"
+    }
+}
+
+/// Runs commands and remembers the last outcome, shown briefly under the search bar.
+@MainActor
+final class CommandCenter: ObservableObject {
+    static let shared = CommandCenter()
+
+    struct Confirmation: Equatable {
+        let id = UUID()
+        let text: String
+        let icon: String
+        /// Where "Show" goes.
+        var destination: Command.Action?
+    }
+
+    @Published var confirmation: Confirmation?
+
+    /// Runs commands in order and confirms what happened in one line.
+    func run(_ commands: [Command]) {
+        var added = 0, completed = 0, notes = 0
+        var other: Confirmation?
+        for command in commands {
+            switch command.action {
+            case .addTasks(let items):
+                items.forEach { TaskStore.shared.add(title: $0) }
+                added += items.count
+            case .completeTask(let id):
+                TaskStore.shared.setDone(id, true)
+                completed += 1
+            case .appendNote(let text):
+                let store = ScratchpadStore.shared
+                store.text += (store.text.isEmpty || store.text.hasSuffix("\n") ? "" : "\n") + text
+                notes += 1
+            default:
+                other = perform(command)
+            }
+        }
+        var parts: [String] = []
+        if added > 0 { parts.append(added == 1 ? "Added a task" : "Added \(added) tasks") }
+        if completed > 0 { parts.append(completed == 1 ? "Completed a task" : "Completed \(completed) tasks") }
+        if notes > 0 { parts.append(notes == 1 ? "Jotted a note" : "Jotted \(notes) notes") }
+        if !parts.isEmpty {
+            let destination: Command.Action = added + completed > 0 ? .show(.tasks, pane: TasksPane.tasks.rawValue)
+                                                                    : .show(.tasks, pane: TasksPane.notes.rawValue)
+            confirm(Confirmation(text: parts.joined(separator: " · "), icon: "checkmark.circle.fill", destination: destination))
+        } else if let other {
+            confirm(other)
+        }
+    }
+
+    private func confirm(_ c: Confirmation) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { confirmation = c }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            withAnimation(.easeOut(duration: 0.25)) { if self?.confirmation?.id == c.id { self?.confirmation = nil } }
+        }
+    }
+
+    /// Single actions; returns a confirmation for the ones that don't explain themselves.
+    private func perform(_ command: Command) -> Confirmation? {
+        let timer = TimerStore.shared
+        let controls = ControlsService.shared
+        switch command.action {
+        case .startTimer(let minutes):
+            timer.reset(); timer.mode = .timer; timer.timerMinutes = minutes; timer.start()
+            return Confirmation(text: "\(CommandParser.durationText(minutes)) timer started", icon: "timer", destination: .show(.timer))
+        case .startPomodoro:
+            timer.reset(); timer.mode = .pomodoro; timer.start()
+            return Confirmation(text: "Pomodoro started", icon: "brain.head.profile", destination: .show(.timer))
+        case .startStopwatch:
+            timer.reset(); timer.mode = .stopwatch; timer.start()
+            return Confirmation(text: "Stopwatch running", icon: "stopwatch", destination: .show(.timer))
+        case .pauseTimer: timer.pause(); return Confirmation(text: "Timer paused", icon: "pause.fill", destination: .show(.timer))
+        case .resumeTimer: timer.resume(); return Confirmation(text: "Timer resumed", icon: "play.fill", destination: .show(.timer))
+        case .stopTimer: timer.reset(); return Confirmation(text: "Timer stopped", icon: "stop.fill")
+        case .keepAwake(let minutes):
+            KeepAwake.shared.start(minutes.map { .minutes($0) } ?? .indefinitely); return nil
+        case .stopKeepAwake: KeepAwake.shared.stop(); return nil
+        case .toggleDarkMode: controls.toggleDarkMode(); return nil
+        case .toggleWiFi: controls.toggleWiFi(); return nil
+        case .toggleMic: controls.toggleMic(); return nil
+        case .lockScreen: controls.lockScreen(); return nil
+        case .screenshot: NotchPresenter.shared.primary?.close(); controls.screenshot(); return nil
+        case .pickColor: NotchPresenter.shared.primary?.close(); controls.pickColor(); return nil
+        case .setVolume(let v): controls.setVolume(v); return nil
+        case .setBrightness(let v): controls.setBrightness(v); return nil
+        case .quitApp(let pid):
+            guard let app = NSRunningApplication(processIdentifier: pid) else { return nil }
+            let name = app.localizedName ?? "App"
+            app.terminate()
+            return Confirmation(text: "Quit \(name)", icon: "xmark.app")
+        case .show(let tab, let pane): show(tab, pane: pane); return nil
+        case .settings: SettingsWindowController.shared.show(); return nil
+        case .addTasks, .completeTask, .appendNote, .template: return nil
+        }
+    }
+
+    func show(_ tab: NotchTab, pane: String?) {
+        if let pane { UserDefaults.standard.set(pane, forKey: tab == .tasks ? "tasks.pane" : "shelf.pane") }
+        guard let vm = NotchPresenter.shared.primary, vm.tabs.contains(tab) else { return }
+        if vm.isOpen { vm.select(tab) } else { vm.open(tab: tab) }
+    }
+}
+
+/// With a model, turns a plain request into a set of commands the user reviews before running:
+/// "plan my move", "remind me to call mom tomorrow and buy eggs", "jot down the wifi password is …".
+@MainActor
+enum CommandPlanner {
+    struct Plan: Equatable {
+        var summary: String
+        var commands: [Command]
+    }
+
+    static func plan(_ request: String) async throws -> Plan {
+        let now = Date().formatted(date: .complete, time: .shortened)
+        let system = """
+        You turn a request typed into a Mac's command bar into actions for a notch app with a to-do list, \
+        a notes pad, a timer and keep-awake. It is now \(now).
+        Action types:
+        {"type":"task","title":"short imperative task","due":"when, in plain words like 'tomorrow 3pm' or 'friday', or null"}
+        {"type":"note","text":"the text to jot down"}
+        {"type":"timer","minutes":number}
+        {"type":"pomodoro"}
+        {"type":"keep_awake","minutes":number or null}
+        Rules:
+        - Lists, plans, checklists and "break down" requests: 3 to 8 concrete tasks, each under 8 words, in a sensible order.
+        - If the user names items themselves, use their wording and add nothing.
+        - "due" only when the user gave a time for that particular item ("call mom tomorrow"). An event date for a \
+        whole plan ("party on saturday") is context, not a due date for every step: leave those null.
+        - Things to remember or write down are notes, not tasks.
+        Reply with JSON only: {"summary":"one short line saying what you'll do","actions":[...]}
+        """
+        let obj = try await OllamaClient.chatJSON(system: system, user: request)
+        var commands: [Command] = []
+        for case let a as [String: Any] in obj["actions"] as? [Any] ?? [] {
+            switch (a["type"] as? String ?? "").lowercased() {
+            case "task":
+                guard let title = (a["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { continue }
+                let due = (a["due"] as? String).flatMap { $0.isEmpty || $0.lowercased() == "null" ? nil : $0 }
+                commands.append(CommandParser.addTasks([due.map { "\(title) \($0)" } ?? title]))
+            case "note":
+                guard let text = (a["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { continue }
+                commands.append(Command(action: .appendNote(text), title: "Jot down “\(text)”", subtitle: "Notes", icon: "note.text", verb: "Jot"))
+            case "timer":
+                guard let m = (a["minutes"] as? NSNumber)?.intValue, m > 0, m <= 600 else { continue }
+                commands.append(Command(action: .startTimer(minutes: m), title: "Start a \(CommandParser.durationText(m)) timer", icon: "timer", verb: "Start"))
+            case "pomodoro":
+                commands.append(Command(action: .startPomodoro, title: "Start a Pomodoro", icon: "brain.head.profile", verb: "Start"))
+            case "keep_awake":
+                let m = (a["minutes"] as? NSNumber)?.intValue
+                commands.append(Command(action: .keepAwake(minutes: m), title: "Keep your Mac awake",
+                                        subtitle: m.map { "For \(CommandParser.durationText($0))" }, icon: "cup.and.saucer.fill", verb: "Start"))
+            default: continue
+            }
+        }
+        let summary = (obj["summary"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Here's the plan"
+        DebugHooks.log("Planner: \(request) → \(commands.map(\.title))")
+        return Plan(summary: summary, commands: commands)
+    }
+
+    /// Requests that sound like "do something" rather than "find something", for offering the AI row.
+    static func looksLikeRequest(_ q: String) -> Bool {
+        let lower = q.lowercased()
+        guard lower.split(separator: " ").count >= 3 else { return false }
+        let starts = ["plan ", "make ", "create ", "list ", "break down ", "help me ", "remind me ", "prepare ", "organize ",
+                      "organise ", "schedule ", "add ", "jot ", "write down ", "set up ", "i need to ", "i have to ", "todo ",
+                      "to do ", "checklist ", "remember "]
+        return starts.contains { lower.hasPrefix($0) } || lower.contains("to-do") || lower.contains("checklist")
+            || lower.contains("task list") || lower.contains(" tasks for ")
+    }
+}

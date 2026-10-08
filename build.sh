@@ -18,7 +18,7 @@ BIN=".build/release/$APP_NAME"
 echo "▸ Compiling media adapter…"
 mkdir -p build
 clang -dynamiclib -fobjc-arc -O2 -framework Foundation -framework AppKit \
-  -arch arm64 -arch x86_64 -mmacosx-version-min=14.0 -w \
+  -arch arm64 -arch x86_64 -mmacosx-version-min=14.2 -w \
   -o build/MediaAdapter.dylib MediaAdapter/MediaAdapter.m
 
 echo "▸ Assembling bundle…"
@@ -41,9 +41,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSMinimumSystemVersion</key><string>14.2</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSCameraUsageDescription</key><string>NotchApp's camera mirror shows a preview of yourself before a call.</string>
+  <key>NSAppleEventsUsageDescription</key><string>NotchApp's Controls switch Dark Mode and empty the Trash.</string>
+  <key>NSAudioCaptureUsageDescription</key><string>NotchApp's sound mixer adjusts each app's volume by routing its audio through NotchApp.</string>
   <key>NSCalendarsFullAccessUsageDescription</key><string>NotchApp shows today's events and alerts you before meetings.</string>
   <key>NSCalendarsUsageDescription</key><string>NotchApp shows today's events and alerts you before meetings.</string>
   <key>NSDesktopFolderUsageDescription</key><string>NotchApp shows previews of screenshots and files on your shelf.</string>
@@ -53,8 +56,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "▸ Signing (ad-hoc)…"
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1
+echo "▸ Signing…"
+# A stable identity keeps macOS privacy grants (Accessibility, Calendar…) across rebuilds;
+# ad-hoc signatures change every build, so macOS asks again each time.
+IDENTITY=$(security find-identity -v -p codesigning | grep -m1 -oE '"(Apple Development|Developer ID Application)[^"]*"' | tr -d '"' || true)
+codesign --force --deep --sign "${IDENTITY:--}" "$APP" >/dev/null 2>&1
+[ -n "$IDENTITY" ] && echo "  signed as $IDENTITY" || echo "  ad-hoc (permissions will reset on each build)"
 echo "✓ Built $APP"
 
 if [ "${1:-}" = "install" ]; then

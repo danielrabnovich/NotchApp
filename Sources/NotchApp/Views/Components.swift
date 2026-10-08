@@ -142,3 +142,133 @@ struct NotchIconButtonStyle: ButtonStyle {
         }
     }
 }
+
+extension View {
+    /// Lets two-finger horizontal scrolls over this view scroll it instead of switching tabs.
+    func horizontalScrollRegion(_ id: String, in viewModel: NotchViewModel, active: Bool = true) -> some View {
+        background(GeometryReader { geo in
+            let frame = geo.frame(in: .global)
+            Color.clear
+                .onAppear { viewModel.horizontalScrollRegions[id] = active ? frame : nil }
+                .onChange(of: frame) { _, f in viewModel.horizontalScrollRegions[id] = active ? f : nil }
+                .onChange(of: active) { _, a in viewModel.horizontalScrollRegions[id] = a ? frame : nil }
+                .onDisappear { viewModel.horizontalScrollRegions[id] = nil }
+        })
+    }
+}
+
+/// Title-style switcher between the panes that share a tab ("Tasks · Notes", "Shelf · Downloads").
+struct PaneSwitcher<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [(value: Value, title: String)]
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(options, id: \.value) { option in
+                let selected = option.value == selection
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { selection = option.value }
+                } label: {
+                    Text(option.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(selected ? 0.95 : 0.35))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .fixedSize()
+    }
+}
+
+/// An app's Finder icon from its bundle path, or a generic gear for bare processes.
+struct AppIcon: View {
+    let bundlePath: String?
+    var size: CGFloat = 12
+    @MainActor private static var cache: [String: NSImage] = [:]
+
+    var body: some View {
+        if let bundlePath {
+            Image(nsImage: Self.icon(for: bundlePath)).resizable().frame(width: size, height: size)
+        } else {
+            Image(systemName: "gearshape.fill")
+                .font(.system(size: size * 0.66))
+                .foregroundStyle(.white.opacity(0.35))
+                .frame(width: size, height: size)
+        }
+    }
+
+    private static func icon(for path: String) -> NSImage {
+        if let cached = cache[path] { return cached }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        cache[path] = icon
+        return icon
+    }
+}
+
+/// Real system and app icons (AirDrop, Tailscale) rather than look-alike symbols.
+@MainActor
+enum SystemIcons {
+    static let airDrop = NSWorkspace.shared.icon(forFile: "/System/Library/CoreServices/Finder.app/Contents/Applications/AirDrop.app")
+    static let tailscale: NSImage? = FileManager.default.fileExists(atPath: "/Applications/Tailscale.app")
+        ? NSWorkspace.shared.icon(forFile: "/Applications/Tailscale.app") : nil
+}
+
+extension View {
+    /// The shared raised surface: a top-lit fill with a hairline edge that catches the light,
+    /// brighter while `active` (focused, hovered).
+    func notchSurface<S: InsettableShape>(_ shape: S, active: Bool = false) -> some View {
+        background(shape.fill(LinearGradient(colors: [.white.opacity(active ? 0.13 : 0.09), .white.opacity(active ? 0.08 : 0.05)],
+                                             startPoint: .top, endPoint: .bottom)))
+            .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(active ? 0.26 : 0.14), .white.opacity(active ? 0.09 : 0.04)],
+                                                       startPoint: .top, endPoint: .bottom), lineWidth: 1))
+    }
+}
+
+/// A small keyboard key, for shortcut hints ("↩", "⌃⌥G").
+struct KeyCap: View {
+    let text: String
+    var onAccent = false
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white.opacity(onAccent ? 0.95 : 0.55))
+            .padding(.horizontal, 5)
+            .frame(minWidth: 18, minHeight: 17)
+            .background(RoundedRectangle(cornerRadius: 4.5, style: .continuous).fill(.white.opacity(onAccent ? 0.22 : 0.08)))
+            .overlay(RoundedRectangle(cornerRadius: 4.5, style: .continuous).strokeBorder(.white.opacity(onAccent ? 0 : 0.08), lineWidth: 1))
+    }
+}
+
+/// Rounded text button: solid white when primary, a soft fill otherwise.
+struct NotchPillButtonStyle: ButtonStyle {
+    var primary = false
+    var height: CGFloat = 26
+
+    func makeBody(configuration: Configuration) -> some View {
+        HoverBody(configuration: configuration, primary: primary, height: height)
+    }
+
+    private struct HoverBody: View {
+        let configuration: Configuration
+        let primary: Bool
+        let height: CGFloat
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 11.5, weight: primary ? .semibold : .medium))
+                .foregroundStyle(primary ? .black : .white.opacity(0.88))
+                .fixedSize()
+                .padding(.horizontal, 12)
+                .frame(height: height)
+                .background(Capsule().fill(primary ? .white.opacity(hovering ? 1 : 0.92) : .white.opacity(hovering ? 0.16 : 0.1)))
+                .scaleEffect(configuration.isPressed ? 0.96 : 1)
+                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+                .animation(.easeOut(duration: 0.12), value: hovering)
+                .contentShape(Capsule())
+                .onHover { hovering = $0 }
+        }
+    }
+}

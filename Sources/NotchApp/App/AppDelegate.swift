@@ -18,6 +18,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TaskStore.shared.load()
         ScreenshotWatcher.shared.start()
         CalendarManager.shared.start()
+        SystemMonitor.shared.start()
+        AppIndex.shared.refreshIfNeeded()
+        ScratchpadStore.shared.load()
+        DownloadsStore.shared.start()
+        TaildropService.shared.start()
+        HotKeys.shared.start()
+        UpdateChecker.shared.start()
+        MouseUtilities.shared.start()
+        settings.$mixerEnabled.removeDuplicates().sink { enabled in
+            DispatchQueue.main.async { AudioMixer.shared.setEnabled(enabled) }
+        }.store(in: &cancellables)
         AssistantStore.shared.refreshStatus()
         BriefingService.shared.start()
 
@@ -59,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         MediaController.shared.stop()
+        AudioMixer.shared.stop()
+        KeepAwake.shared.stop(announce: false)
     }
 
     // MARK: - Windows

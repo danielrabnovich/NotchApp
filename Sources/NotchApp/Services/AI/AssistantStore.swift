@@ -7,7 +7,7 @@ import SwiftUI
 final class AssistantStore: ObservableObject {
     static let shared = AssistantStore()
 
-    enum Route: String { case files, web, weather }
+    enum Route: String { case files, web, weather, actions }
 
     enum State: Equatable {
         case running(stage: String)
@@ -25,24 +25,49 @@ final class AssistantStore: ObservableObject {
         var answer: String?
         var sources: [WebSource] = []
         var weather: WeatherReport?
+        /// Proposed commands for the user to review (the actions route).
+        var plan: CommandPlanner.Plan?
         let startedAt = Date()
 
         var isRunning: Bool { if case .running = state { true } else { false } }
     }
 
     @Published private(set) var current: Job?
+    /// Results-as-you-type are showing (the notch grows to fit them).
+    @Published var suggesting = false
     @Published private(set) var status: OllamaClient.Status = .unknown
-    @Published private(set) var pullProgress: Double?
+    @Published private(set) var pull: OllamaClient.PullProgress?
+    /// Download speed in bytes per second, smoothed.
+    @Published private(set) var pullSpeed: Double = 0
+    /// The model that most recently finished downloading, shown briefly as a confirmation.
+    @Published private(set) var justPulled: String?
+    var pullProgress: Double? { pull.map { $0.fraction ?? 0 } }
+    private var speedSample: (bytes: Int64, time: Date)?
+    /// The model being downloaded, if any.
+    @Published private(set) var pullingModel: String?
+    @Published private(set) var pullError: String?
+    @Published private(set) var installed: [OllamaClient.InstalledModel] = []
+    private var pullTask: Task<Void, Never>?
 
     private var task: Task<Void, Never>?
 
     var runningCount: Int { current?.isRunning == true ? 1 : 0 }
 
+    /// Without a ready model, search still works: keyword routing, Spotlight matches by name,
+    /// plain web results and weather.
+    var aiAvailable: Bool { status == .ready }
+
     // MARK: - Ollama status
 
     func refreshStatus() {
         Task {
-            let s = await OllamaClient.status()
+            var s = await OllamaClient.status()
+            self.installed = (try? await OllamaClient.installedModelDetails()) ?? []
+            // Earlier versions saved "qwen3:8b" as the default; move to the current default unless it's installed.
+            if case .modelMissing("qwen3:8b") = s, AppSettings.shared.ollamaModel != OllamaModelCatalog.defaultModel {
+                AppSettings.shared.ollamaModel = OllamaModelCatalog.defaultModel
+                s = .modelMissing(OllamaModelCatalog.defaultModel)
+            }
             self.status = s
             if s == .ready { Task.detached { _ = try? await OllamaClient.chat(system: "", user: "hi") } } // warm the model
         }
@@ -60,16 +85,87 @@ final class AssistantStore: ObservableObject {
         }
     }
 
-    func pullModel() {
-        let name = AppSettings.shared.ollamaModel
-        pullProgress = 0
+    func isInstalled(_ name: String) -> Bool {
+        installed.contains { OllamaClient.matches(installed: $0.name, wanted: name) }
+    }
+
+    /// Switches the Ask tab to an installed model.
+    func use(_ name: String) {
+        AppSettings.shared.ollamaModel = name
+        refreshStatus()
+    }
+
+    /// Downloads a model (the selected one by default) and, once it's in, switches to it.
+    func pullModel(_ requested: String? = nil, switchWhenDone: Bool = true) {
+        let name = OllamaClient.cleanModelName(requested ?? AppSettings.shared.ollamaModel)
+        guard pullingModel == nil else { return }
+        guard OllamaClient.isPlausibleModelName(name) else {
+            pullError = "“\(name)” isn't a valid model name. Use a name like qwen3.5:9b."
+            return
+        }
+        pullingModel = name
+        pull = OllamaClient.PullProgress()
+        pullSpeed = 0
+        speedSample = nil
+        pullError = nil
+        failedPull = nil
+        justPulled = nil
+        pullTask = Task {
+            do {
+                try await OllamaClient.pull(name) { p in Task { @MainActor in AssistantStore.shared.updatePull(p) } }
+                if switchWhenDone { AppSettings.shared.ollamaModel = name }
+                self.justPulled = name
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                    if AssistantStore.shared.justPulled == name { AssistantStore.shared.justPulled = nil }
+                }
+            } catch is CancellationError {
+            } catch let error as URLError where error.code == .cancelled {
+            } catch {
+                self.pullError = error.localizedDescription
+                self.failedPull = name
+            }
+            self.pullingModel = nil
+            self.pull = nil
+            self.pullTask = nil
+            self.refreshStatus()
+        }
+    }
+
+    /// The model whose download last failed, for "Try again".
+    @Published private(set) var failedPull: String?
+
+    func cancelPull() {
+        pullTask?.cancel()
+    }
+
+    func dismissPullError() {
+        pullError = nil
+        failedPull = nil
+    }
+
+    private func updatePull(_ p: OllamaClient.PullProgress) {
+        guard pullingModel != nil else { return }
+        pull = p
+        let now = Date()
+        if let last = speedSample {
+            let dt = now.timeIntervalSince(last.time)
+            if dt >= 0.5 {
+                let instant = Double(p.completed - last.bytes) / dt
+                pullSpeed = pullSpeed == 0 ? instant : pullSpeed * 0.7 + instant * 0.3
+                speedSample = (p.completed, now)
+            }
+        } else {
+            speedSample = (p.completed, now)
+        }
+    }
+
+    func deleteModel(_ name: String) {
         Task {
             do {
-                try await OllamaClient.pull(name) { p in Task { @MainActor in AssistantStore.shared.pullProgress = p } }
+                try await OllamaClient.delete(name)
             } catch {
-                NSLog("NotchApp: pull failed: \(error)")
+                self.pullError = error.localizedDescription
             }
-            self.pullProgress = nil
             self.refreshStatus()
         }
     }
@@ -80,6 +176,12 @@ final class AssistantStore: ObservableObject {
     func run(_ query: String, route forced: Route? = nil) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        // "open spotify" launches the app instead of searching for files about it.
+        let (appName, explicit) = AppIndex.stripLaunchPrefix(trimmed)
+        if explicit, let app = AppIndex.shared.search(appName, limit: 1).first, app.score >= 45 {
+            NSWorkspace.shared.openApplication(at: app.app.url, configuration: .init())
+            return
+        }
         task?.cancel()
         let job = Job(query: trimmed, route: forced)
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
@@ -90,20 +192,30 @@ final class AssistantStore: ObservableObject {
                 await MainActor.run { AssistantStore.shared.update(id) { $0.state = .running(stage: stage) } }
             }
             do {
-                let understanding = try await Router.understand(trimmed)
+                let useAI = self.aiAvailable
+                var understanding = Router.understandWithoutAI(trimmed)
+                if useAI, let smart = try? await Router.understand(trimmed) { understanding = smart }
+                understanding.dayOffset = Router.weekendAdjusted(trimmed, dayOffset: understanding.dayOffset)
                 let route = forced ?? understanding.route
                 update(id) { $0.route = route }
                 switch route {
                 case .files:
-                    let (hits, confident) = try await FileFinder.find(trimmed, plan: understanding.plan, progress: progress)
+                    let (hits, confident) = try await FileFinder.find(trimmed, plan: understanding.plan, useAI: useAI, progress: progress)
                     try Task.checkCancellation()
                     update(id) { $0.files = hits; $0.confident = confident; $0.state = .done }
                 case .web:
-                    let (answer, sources) = try await WebSearcher.answer(trimmed, searchQuery: understanding.webQuery, progress: progress) { soFar, sources in
+                    let (answer, sources) = try await WebSearcher.answer(trimmed, searchQuery: understanding.webQuery, useAI: useAI,
+                                                                         progress: progress) { soFar, sources in
                         await MainActor.run { AssistantStore.shared.update(id, animated: false) { $0.answer = soFar; $0.sources = sources } }
                     }
                     try Task.checkCancellation()
                     update(id) { $0.answer = answer; $0.sources = sources; $0.state = .done }
+                case .actions:
+                    await progress("Planning")
+                    let plan = try await CommandPlanner.plan(trimmed)
+                    try Task.checkCancellation()
+                    guard !plan.commands.isEmpty else { throw OllamaClient.OllamaError(message: "Couldn’t turn that into tasks or notes. Try rewording it.") }
+                    update(id) { $0.plan = plan; $0.state = .done }
                 case .weather:
                     await progress("Checking the forecast")
                     let report = try await WeatherService.report(location: understanding.location, dayOffset: understanding.dayOffset)
@@ -123,7 +235,7 @@ final class AssistantStore: ObservableObject {
 
     /// Same question, the other way (files ↔ web).
     func switchRoute() {
-        guard let job = current, let route = job.route else { return }
+        guard let job = current, let route = job.route, route != .actions else { return }
         // Files ↔ web; a weather answer switches to a full web search.
         run(job.query, route: route == .files || route == .weather ? .web : .files)
     }
@@ -145,7 +257,7 @@ final class AssistantStore: ObservableObject {
 
     /// If the notch is closed, drop down a peek (and a system notification) saying it's done.
     private func announce(_ job: Job) {
-        guard NotchPresenter.shared.primary?.isOpen != true else { return }
+        guard NotchPresenter.shared.primary?.isOpen != true, job.route != .actions else { return }
         let title: String
         let detail: String
         switch (job.state, job.route) {
@@ -187,10 +299,13 @@ enum Router {
         document is a file, even without the word "file": "my resume", "the lego case study for marketing", \
         "slides from chapter 8", "screenshot of the receipt", "the pdf Sarah sent", "my notes on pricing".
         - "weather": weather, forecast, temperature or rain questions.
+        - "actions": they want this app to DO something for them rather than find something: add tasks or a to-do \
+        list, plan or break down a project into steps, remind them to do things, jot down or remember a note, start \
+        a timer. "plan my move next month", "remind me to call mom and buy eggs", "jot down the door code is 4471".
         - "web": questions and information from the internet: facts, news, sports, prices, places, hours, how-to, \
         definitions, recommendations.
         Reply with JSON only:
-        {"route": "files" or "web" or "weather",
+        {"route": "files" or "web" or "weather" or "actions",
          "web_query": "concise search-engine query; keep time words like latest/last/this as written, don't add years",
          "location": "city for weather, or null if none given",
          "day_offset": 0 for today, 1 for tomorrow, etc. (weather only),
@@ -217,5 +332,61 @@ enum Router {
         let dayOffset = (obj["day_offset"] as? NSNumber)?.intValue ?? 0
         DebugHooks.log("Router: \(query) → \(route.rawValue) | web_query=\(webQuery) location=\(location ?? "-") day=\(dayOffset)")
         return Understanding(route: route, webQuery: webQuery, plan: plan, location: location, dayOffset: dayOffset)
+    }
+}
+
+extension Router {
+    /// "This weekend" means the coming Saturday (or today, at the weekend), whatever the model said.
+    static func weekendAdjusted(_ query: String, dayOffset: Int) -> Int {
+        guard query.lowercased().contains("weekend") else { return dayOffset }
+        let weekday = Calendar.current.component(.weekday, from: Date()) // 1 = Sunday … 7 = Saturday
+        return weekday == 7 || weekday == 1 ? 0 : 7 - weekday
+    }
+
+    /// Keyword routing for when no model is available.
+    static func understandWithoutAI(_ query: String) -> Understanding {
+        let lower = query.lowercased()
+        let words = Set(lower.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+
+        let weatherWords: Set<String> = ["weather", "forecast", "rain", "raining", "snow", "temperature", "sunny", "umbrella", "humid", "humidity"]
+        if !words.isDisjoint(with: weatherWords) {
+            var location: String?
+            for marker in [" in ", " for ", " at "] {
+                if let r = lower.range(of: marker, options: .backwards) {
+                    let place = query[r.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+                    let skip: Set<String> = ["today", "tomorrow", "tonight", "the week", "this week", "the weekend"]
+                    if !place.isEmpty, !skip.contains(place.lowercased()) { location = place; break }
+                }
+            }
+            let day = words.contains("tomorrow") ? 1 : 0
+            return Understanding(route: .weather, webQuery: query, plan: .init(), location: location, dayOffset: day)
+        }
+
+        let kindWords: [String: String] = [
+            "pdf": "pdf", "doc": "word", "docx": "word", "word": "word", "excel": "excel", "spreadsheet": "excel",
+            "xlsx": "excel", "csv": "excel", "slides": "powerpoint", "deck": "powerpoint", "powerpoint": "powerpoint",
+            "pptx": "powerpoint", "keynote": "powerpoint", "image": "image", "photo": "image", "picture": "image",
+            "png": "image", "jpg": "image", "screenshot": "screenshot", "video": "video", "mp4": "video", "movie": "video",
+            "recording": "audio", "mp3": "audio", "audio": "audio", "folder": "folder", "zip": "archive",
+        ]
+        let fileWords: Set<String> = ["file", "files", "document", "doc", "resume", "cv", "notes", "invoice", "receipt",
+                                      "report", "essay", "assignment", "homework", "contract", "draft", "downloaded", "saved"]
+        let kinds = Array(Set(words.compactMap { kindWords[$0] }))
+        let questionStarts = ["who", "what", "when", "where", "why", "how", "is", "are", "does", "do", "can", "should", "which"]
+        let looksLikeQuestion = lower.hasSuffix("?") || questionStarts.contains { lower.hasPrefix($0 + " ") }
+        let mentionsMine = lower.hasPrefix("my ") || lower.contains(" my ") || lower.hasPrefix("find ") || lower.hasPrefix("open ")
+        let isFile = !kinds.isEmpty || !words.isDisjoint(with: fileWords) || (mentionsMine && !looksLikeQuestion)
+
+        var plan = FileFinder.Plan()
+        plan.kinds = kinds
+        // Name/text keywords: what's left once type, date and filler words are removed.
+        let filler: Set<String> = ["the", "and", "for", "from", "with", "that", "this", "my", "find", "open", "where", "what",
+                                   "file", "files", "document", "last", "week", "month", "yesterday", "today", "sent", "about"]
+        let ordered = lower.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        plan.keywords = ordered.filter { ($0.count > 2 || $0.allSatisfy(\.isNumber)) && !filler.contains($0) && kindWords[$0] == nil }
+        if words.contains("yesterday") { plan.daysAgoMax = 3 }
+        else if lower.contains("last week") || lower.contains("this week") { plan.daysAgoMax = 14 }
+        else if lower.contains("last month") || lower.contains("this month") { plan.daysAgoMax = 45 }
+        return Understanding(route: isFile ? .files : .web, webQuery: query, plan: plan, location: nil, dayOffset: 0)
     }
 }

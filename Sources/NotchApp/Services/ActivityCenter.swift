@@ -8,21 +8,26 @@ enum SneakPeek: Equatable {
     case charging(level: Int)
     case meeting(title: String, minutes: Int, color: NSColor)
     case screenshot(count: Int)
+    case timer(message: String)
+    case download(name: String)
     case assistant(title: String, detail: String, isWeb: Bool)
+    case taildrop(title: String, detail: String, received: Bool)
+    /// A general confirmation: an icon, a title and a detail line.
+    case notice(title: String, detail: String, icon: String)
 
     enum Kind: Equatable {
-        case volume, brightness, charging, meeting, screenshot, assistant
+        case volume, brightness, charging, meeting, screenshot, timer, download, assistant, taildrop, notice
 
         func sideWidth(notchHeight h: CGFloat) -> CGFloat {
             switch self {
             case .volume, .brightness: 74
             case .charging: 78
-            case .meeting, .screenshot: h + 14
+            case .meeting, .screenshot, .timer, .download, .taildrop, .notice: h + 14
             case .assistant: 72
             }
         }
 
-        var hasSubtitle: Bool { self == .meeting || self == .screenshot || self == .assistant }
+        var hasSubtitle: Bool { [.meeting, .screenshot, .timer, .download, .assistant, .taildrop, .notice].contains(self) }
     }
 
     var kind: Kind {
@@ -32,7 +37,11 @@ enum SneakPeek: Equatable {
         case .charging: .charging
         case .meeting: .meeting
         case .screenshot: .screenshot
+        case .timer: .timer
+        case .download: .download
         case .assistant: .assistant
+        case .taildrop: .taildrop
+        case .notice: .notice
         }
     }
 }

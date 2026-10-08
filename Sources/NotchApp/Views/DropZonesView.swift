@@ -35,7 +35,7 @@ struct DropZonesView: View {
                     return true
                 }
                 if settings.airDropZone {
-                    DropBin(icon: "dot.radiowaves.left.and.right", title: "AirDrop",
+                    DropBin(icon: "dot.radiowaves.left.and.right", image: SystemIcons.airDrop, title: "AirDrop",
                             detail: preview?.hasFiles == true ? "Send nearby" : "Files only",
                             detailIcon: nil, tint: .blue,
                             enabled: preview?.hasFiles == true) {
@@ -44,6 +44,20 @@ struct DropZonesView: View {
                         guard !urls.isEmpty else { return false }
                         DispatchQueue.main.async { ShelfStore.airDrop(urls) }
                         viewModel.isDragActive = false
+                        return true
+                    }
+                    .frame(width: 120)
+                }
+                if settings.taildropZone && TaildropService.cli != nil {
+                    DropBin(icon: "paperplane.fill", image: SystemIcons.tailscale, title: "Taildrop",
+                            detail: preview?.hasFiles == true ? "Send to your devices" : "Files only",
+                            detailIcon: nil, tint: TaildropPalette.accent,
+                            enabled: preview?.hasFiles == true) {
+                        let urls = NSPasteboard(name: .drag)
+                            .readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+                        guard !urls.isEmpty else { return false }
+                        TaildropService.shared.offer(urls)
+                        finish(on: .shelf)
                         return true
                     }
                     .frame(width: 120)
@@ -64,6 +78,8 @@ struct DropZonesView: View {
 
 private struct DropBin: View {
     let icon: String
+    /// A real app icon to show instead of the symbol (AirDrop, Tailscale).
+    var image: NSImage? = nil
     let title: String
     let detail: String
     let detailIcon: String?
@@ -83,10 +99,18 @@ private struct DropBin: View {
             )
             .overlay {
                 VStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(targeted ? tint : .white.opacity(enabled ? 0.85 : 0.3))
-                        .symbolEffect(.bounce, value: targeted)
+                    Group {
+                        if let image {
+                            Image(nsImage: image).resizable().frame(width: 30, height: 30)
+                                .opacity(enabled ? 1 : 0.4)
+                                .scaleEffect(targeted ? 1.1 : 1)
+                        } else {
+                            Image(systemName: icon)
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(targeted ? tint : .white.opacity(enabled ? 0.85 : 0.3))
+                                .symbolEffect(.bounce, value: targeted)
+                        }
+                    }
                     Text(title)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white.opacity(enabled ? 1 : 0.35))

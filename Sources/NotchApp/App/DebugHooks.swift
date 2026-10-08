@@ -43,7 +43,34 @@ enum DebugHooks {
         case "brief": BriefingService.shared.maybeShowBrief(force: true)
         case "clear": AssistantStore.shared.clear()
         case "ask": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "))
+        case "plan": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "), route: .actions)
+        case "cmd": CommandCenter.shared.run(Array(CommandParser.parse(parts.dropFirst().joined(separator: " ")).prefix(1)))
+        case "applyplan": if let plan = AssistantStore.shared.current?.plan { CommandCenter.shared.run(plan.commands); AssistantStore.shared.clear() }
         case "fakeplay": MediaController.shared.debugSetPlaying(parts[safe: 1] != "0")
+        case "expand": SystemMonitor.shared.debugExpand = "\(parts[safe: 1] ?? "")#\(Date().timeIntervalSince1970)"
+        case "timer":
+            switch parts[safe: 1] {
+            case "start": TimerStore.shared.start()
+            case "pause": TimerStore.shared.pause()
+            case "skip": TimerStore.shared.skip()
+            default: TimerStore.shared.reset()
+            }
+        case "pane": // pane notes|tasks|downloads|shelf
+            let p = parts[safe: 1] ?? ""
+            UserDefaults.standard.set(p, forKey: ["notes", "tasks"].contains(p) ? "tasks.pane" : "shelf.pane")
+        case "peek":
+            ActivityCenter.shared.show(parts[safe: 1] == "download" ? .download(name: "Report-final.pdf")
+                                                                    : .timer(message: "Short break · 5 min"), for: 5)
+        case "settings": SettingsWindowController.shared.show(pane: SettingsPane(rawValue: parts.dropFirst().joined(separator: " ")))
+        case "pull": AssistantStore.shared.pullModel(parts[safe: 1])
+        case "cancelpull": AssistantStore.shared.cancelPull()
+        case "suggest": SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
+        case "taildrop": TaildropService.shared.offer([URL(fileURLWithPath: parts.dropFirst().joined(separator: " "))])
+        case "mirror": c.viewModel.mirror = parts[safe: 1] != "0"
+        case "updates":
+            if parts[safe: 1] == "list" { UpdateChecker.shared.listOpen = true } else { UpdateChecker.shared.check() }
+        case "awake":
+            if let m = Int(parts[safe: 1] ?? "") { KeepAwake.shared.start(.minutes(m)) } else { KeepAwake.shared.stop() }
         case "close": c.viewModel.close()
         case "hover": c.viewModel.isHovering = parts.count > 1 ? parts[1] == "1" : true
         case "volume": ActivityCenter.shared.show(.volume(level: Float(parts[safe: 1] ?? "0.6") ?? 0.6, muted: false), for: 5)

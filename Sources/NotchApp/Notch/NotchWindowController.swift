@@ -41,6 +41,15 @@ final class NotchWindowController {
             .environmentObject(TaskStore.shared)
             .environmentObject(AssistantStore.shared)
             .environmentObject(AudioOutputManager.shared)
+            .environmentObject(SystemMonitor.shared)
+            .environmentObject(TimerStore.shared)
+            .environmentObject(ScratchpadStore.shared)
+            .environmentObject(DownloadsStore.shared)
+            .environmentObject(TaildropService.shared)
+            .environmentObject(ControlsService.shared)
+            .environmentObject(KeepAwake.shared)
+            .environmentObject(UpdateChecker.shared)
+            .environmentObject(AudioMixer.shared)
         let host = FirstMouseHostingView(rootView: AnyView(root))
         host.sizingOptions = []
         host.frame = NSRect(origin: .zero, size: frame.size)
@@ -50,6 +59,11 @@ final class NotchWindowController {
 
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             MainActor.assumeIsolated { self?.handleScroll(event) ?? event }
+        }
+
+        vm.takeKeyFocus = { [weak self] in
+            guard let self, self.viewModel.isOpen else { return }
+            self.panel.makeKey()
         }
 
         // Hand keyboard focus back to the previous app once the notch closes.
@@ -82,13 +96,19 @@ final class NotchWindowController {
 
     // MARK: - Hit testing
 
+    /// A rect hanging from the top of the screen. It reaches a few points past the top edge:
+    /// a pointer pushed against the top reports y == screen maxY, which `NSRect.contains`
+    /// treats as outside, so the notch used to close (and clicks fell through to the menu bar).
     private func rect(width: CGFloat, height: CGFloat) -> NSRect {
-        NSRect(x: screen.notchCenterX - width / 2, y: screen.frame.maxY - height, width: width, height: height)
+        let overshoot: CGFloat = 4
+        return NSRect(x: screen.notchCenterX - width / 2, y: screen.frame.maxY - height,
+                      width: width, height: height + overshoot)
     }
 
     private var hotRect: NSRect {
         let size = viewModel.shapeSize
-        if viewModel.isOpen { return rect(width: size.width, height: size.height) }
+        // A small margin so brushing the open notch's edge doesn't snap it shut.
+        if viewModel.isOpen { return rect(width: size.width + 12, height: size.height + 6) }
         // A little forgiveness around the collapsed notch.
         return rect(width: size.width + 16, height: size.height + 4)
     }
@@ -106,6 +126,10 @@ final class NotchWindowController {
         let dragging = MouseTracker.isExternalDrag && (settings.tasksEnabled || settings.shelfEnabled)
         let inside = hotRect.contains(p) || (dragging && dragHotRect.contains(p))
         let buttonDown = NSEvent.pressedMouseButtons & 1 != 0
+        // Did the pointer itself move? When the notch shrinks under a still pointer (results
+        // cleared, a tab with less content), that shouldn't count as leaving.
+        let pointerMoved = p != lastPointer
+        lastPointer = p
 
         panel.ignoresMouseEvents = !inside
 
@@ -156,12 +180,14 @@ final class NotchWindowController {
             } else if dragging && viewModel.isDragActive {
                 // Dragged past the notch without dropping: tuck it away again.
                 scheduleClose(after: 0.3)
-            } else if settings.openMode == .hover, !buttonDown, !viewModel.isEditing {
+            } else if settings.openMode == .hover, !buttonDown, !viewModel.isEditing, pointerMoved {
                 // Short grace period so brushing past the edge doesn't snap it shut.
                 scheduleClose(after: 0.15)
             }
         }
     }
+
+    private var lastPointer = NSPoint(x: -1, y: -1)
 
     private func scheduleClose(after delay: TimeInterval) {
         guard closeWork == nil else { return }
@@ -241,9 +267,9 @@ final class NotchWindowController {
     private var rawOffset: CGFloat = 0
 
     private func isInHorizontalScrollRegion(_ e: NSEvent) -> Bool {
-        guard let region = viewModel.horizontalScrollRegion, let host = panel.contentView else { return false }
+        guard let host = panel.contentView else { return false }
         let p = CGPoint(x: e.locationInWindow.x, y: host.bounds.height - e.locationInWindow.y)
-        return region.contains(p)
+        return viewModel.horizontalScrollRegions.values.contains { $0.contains(p) }
     }
 
     /// Resists dragging past the first/last tab, like iOS scroll views.

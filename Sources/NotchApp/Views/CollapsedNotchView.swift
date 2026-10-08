@@ -52,6 +52,9 @@ struct CollapsedNotchView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.75))
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
+        case .timer:
+            TimerRing(clock: TimerStore.shared.clock)
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .peek:
             if let peek = activity.peek { peekLeading(peek).transition(.opacity) }
         }
@@ -68,6 +71,9 @@ struct CollapsedNotchView: View {
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .tasks:
             TaskCountBadge(count: viewModel.taskBadgeCount ?? 0)
+                .transition(.scale(scale: 0.4).combined(with: .opacity))
+        case .timer:
+            TimerReadout(clock: TimerStore.shared.clock)
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .music:
             HStack(spacing: 6) {
@@ -124,6 +130,27 @@ struct CollapsedNotchView: View {
             Image(systemName: "camera.viewfinder")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
+        case .timer:
+            Image(systemName: "timer")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(TimerPalette.accent)
+                .symbolEffect(.pulse)
+        case .download:
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.blue)
+        case let .notice(_, _, icon):
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+        case .taildrop:
+            if let icon = SystemIcons.tailscale {
+                Image(nsImage: icon).resizable().frame(width: 18, height: 18)
+            } else {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(TaildropPalette.accent)
+            }
         case let .assistant(_, _, isWeb):
             Image(systemName: isWeb ? "globe" : "doc.text.magnifyingglass")
                 .font(.system(size: 13, weight: .semibold))
@@ -160,6 +187,22 @@ struct CollapsedNotchView: View {
             Image(systemName: "tray.and.arrow.down.fill")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.85))
+        case .timer:
+            Image(systemName: "bell.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(TimerPalette.accent)
+        case .download:
+            Image(systemName: "checkmark")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white.opacity(0.85))
+        case .notice:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.green)
+        case let .taildrop(title, _, _):
+            Image(systemName: title.hasPrefix("Couldn't") ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(title.hasPrefix("Couldn't") ? Color.orange : Color.green)
         case let .assistant(title, _, _):
             Image(systemName: title.hasPrefix("No") || title.hasSuffix("failed") ? "questionmark.circle.fill" : "checkmark.circle.fill")
                 .font(.system(size: 13, weight: .semibold))
@@ -177,6 +220,21 @@ struct CollapsedNotchView: View {
                 .lineLimit(1)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 6)
+        case let .notice(title, detail, _):
+            (Text(title).fontWeight(.semibold) + Text(" · " + detail).foregroundColor(.white.opacity(0.7)))
+                .font(.system(size: 12))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+        case let .taildrop(title, detail, _):
+            (Text(title).fontWeight(.semibold) + Text(" · " + detail).foregroundColor(.white.opacity(0.7)))
+                .font(.system(size: 12))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
         case let .assistant(title, detail, _):
             (Text(title).fontWeight(.semibold) + Text(" · " + detail).foregroundColor(.white.opacity(0.7)))
                 .font(.system(size: 12))
@@ -190,6 +248,21 @@ struct CollapsedNotchView: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.9))
                 .lineLimit(1)
+                .padding(.bottom, 6)
+        case let .timer(message):
+            Text(message)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 6)
+        case let .download(name):
+            Text("Downloaded \(name)")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 16)
                 .padding(.bottom, 6)
         default:
             EmptyView()
@@ -215,5 +288,43 @@ struct CollapsedNotchView: View {
         if level < 0.34 { return "speaker.wave.1.fill" }
         if level < 0.67 { return "speaker.wave.2.fill" }
         return "speaker.wave.3.fill"
+    }
+}
+
+/// Phase icon inside a ring that fills as the countdown runs (beside the notch).
+private struct TimerRing: View {
+    @ObservedObject var clock: TimerClock
+    @EnvironmentObject private var store: TimerStore
+
+    var body: some View {
+        let color = TimerPalette.color(for: store)
+        let icon = store.runningMode == .pomodoro ? store.phase.icon : store.runningMode.icon
+        ZStack {
+            Circle().stroke(.white.opacity(0.15), lineWidth: 2)
+            if store.runningMode != .stopwatch {
+                Circle()
+                    .trim(from: 0, to: store.progress)
+                    .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            Image(systemName: icon)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(color)
+        }
+        .frame(width: 18, height: 18)
+        .opacity(store.state == .paused ? 0.5 : 1)
+    }
+}
+
+private struct TimerReadout: View {
+    @ObservedObject var clock: TimerClock
+    @EnvironmentObject private var store: TimerStore
+
+    var body: some View {
+        Text(store.displayTime)
+            .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+            .foregroundStyle(store.state == .paused ? .white.opacity(0.5) : TimerPalette.color(for: store))
+            .lineLimit(1)
+            .fixedSize()
     }
 }

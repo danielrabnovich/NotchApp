@@ -1,7 +1,24 @@
 import SwiftUI
 
+/// The Tasks tab: the task list, plus the Notes scratchpad when it's turned on.
+struct TasksTab: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @EnvironmentObject private var settings: AppSettings
+    @AppStorage("tasks.pane") private var pane: TasksPane = .tasks
+
+    var body: some View {
+        if settings.notesEnabled && pane == .notes {
+            NotesView(viewModel: viewModel, pane: $pane)
+        } else {
+            TasksView(viewModel: viewModel, pane: settings.notesEnabled ? $pane : nil)
+        }
+    }
+}
+
 struct TasksView: View {
     @ObservedObject var viewModel: NotchViewModel
+    /// Shows the Tasks · Notes switcher in place of the title when set.
+    var pane: Binding<TasksPane>?
     @EnvironmentObject private var store: TaskStore
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var media: MediaController
@@ -44,8 +61,12 @@ struct TasksView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text("Today")
-                .font(.system(size: 13, weight: .semibold))
+            if let pane {
+                PaneSwitcher(selection: pane, options: TasksPane.options)
+            } else {
+                Text("Today")
+                    .font(.system(size: 13, weight: .semibold))
+            }
             Text(store.openCount == 0 ? "all clear" : "\(store.openCount) open")
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                 .foregroundStyle(.white.opacity(0.45))
@@ -64,7 +85,7 @@ struct TasksView: View {
                 .foregroundStyle(.white.opacity(addFocused ? 0.9 : 0.45))
             TextField("", text: $draft, prompt: Text("Add a task").foregroundStyle(.white.opacity(0.35)))
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(.system(size: 12.5))
                 .focused($addFocused)
                 .onSubmit {
                     store.add(title: draft)
@@ -76,11 +97,16 @@ struct TasksView: View {
                     addFocused = false
                 }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 24)
-        .background(Capsule().fill(.white.opacity(addFocused ? 0.14 : 0.07)))
-        .overlay(Capsule().strokeBorder(.white.opacity(addFocused ? 0.25 : 0), lineWidth: 1))
+        .padding(.leading, 10)
+        .padding(.trailing, 4)
+        .frame(height: 26)
+        .notchSurface(Capsule(), active: addFocused)
+        .overlay(alignment: .trailing) {
+            if !draft.isEmpty { KeyCap(text: "↩").padding(.trailing, 4).transition(.opacity) }
+        }
+        .shadow(color: .white.opacity(addFocused ? 0.05 : 0), radius: 10)
         .animation(.easeOut(duration: 0.15), value: addFocused)
+        .animation(.easeOut(duration: 0.15), value: draft.isEmpty)
         .onChange(of: addFocused) { _, focused in viewModel.isEditing = focused }
     }
 

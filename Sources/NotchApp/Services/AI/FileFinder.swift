@@ -11,7 +11,7 @@ struct FileHit: Identifiable, Equatable, Sendable {
 /// 1. the router has already turned the request into keywords + soft hints (type, date, people),
 /// 2. several narrow Spotlight queries over the user's own folders gather candidates,
 /// 3. candidates are scored locally (name matches, type/date hints), then
-/// 4. the model reads a short description of the best dozen and picks the matches.
+/// 4. the model reads a short description of the best dozen and picks the matches (skipped without a model).
 enum FileFinder {
     struct Plan: Sendable {
         var keywords: [String] = []
@@ -26,12 +26,13 @@ enum FileFinder {
         var info = ""
     }
 
-    static func find(_ description: String, plan: Plan,
+    static func find(_ description: String, plan: Plan, useAI: Bool = true,
                      progress: @escaping @Sendable (String) async -> Void) async throws -> (hits: [FileHit], confident: Bool) {
         let clock = ContinuousClock.now
         DebugHooks.log("FileFinder plan: keywords=\(plan.keywords) kinds=\(plan.kinds) days=\(String(describing: plan.daysAgoMax)) people=\(plan.people)")
 
         await progress("Looking through your files")
+        await FolderAccess.shared.ensure()
         var plan = plan
         if plan.keywords.isEmpty {
             plan.keywords = description.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
@@ -40,6 +41,9 @@ enum FileFinder {
         let candidates = gather(plan)
         DebugHooks.log("FileFinder spotlight (\(ContinuousClock.now - clock)): \(candidates.count) candidates; top: \(candidates.prefix(8).map { "\($0.url.lastPathComponent)=\(String(format: "%.1f", $0.score))" })")
         guard !candidates.isEmpty else { return ([], false) }
+
+        // Without a model, the Spotlight score (name matches, type and date hints) is the ranking.
+        guard useAI else { return (candidates.prefix(6).map { FileHit(url: $0.url, reason: nil) }, false) }
 
         let top = Array(candidates.prefix(12))
         await progress("Reading \(top.count) likely matches")
@@ -50,6 +54,27 @@ enum FileFinder {
         DebugHooks.log("FileFinder ranked (\(ContinuousClock.now - clock)): \(ranked?.map(\.url.lastPathComponent) ?? [])")
         if let ranked, !ranked.isEmpty { return (ranked, true) }
         return (described.prefix(5).map { FileHit(url: $0.url, reason: nil) }, false)
+    }
+
+    /// Fast name-only matches for results-as-you-type: every word must be in the file name.
+    /// Recently used files first.
+    static func quickMatches(_ text: String, limit: Int) -> [URL] {
+        let words = text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init).filter { $0.count >= 2 && !stopWords.contains($0) }
+        guard !words.isEmpty else { return [] }
+        let query = words.prefix(4).map { "kMDItemDisplayName == \"*\($0)*\"cd" }.joined(separator: " && ")
+        let urls = mdfind(query, limit: 40)
+        func lastUsed(_ url: URL) -> Date {
+            let item = NSMetadataItem(url: url)
+            return item?.value(forAttribute: "kMDItemLastUsedDate") as? Date
+                ?? item?.value(forAttribute: "kMDItemContentModificationDate") as? Date ?? .distantPast
+        }
+        // Names that start with the first word rank above names that merely contain it.
+        let first = words[0]
+        return urls.map { ($0, lastUsed($0), $0.lastPathComponent.lowercased().hasPrefix(first)) }
+            .sorted { $0.2 != $1.2 ? $0.2 : $0.1 > $1.1 }
+            .prefix(limit)
+            .map(\.0)
     }
 
     private static let stopWords: Set<String> = ["the", "and", "for", "from", "with", "that", "this", "my", "file", "files",
@@ -159,7 +184,9 @@ enum FileFinder {
     private static func isInteresting(_ path: String) -> Bool {
         // The user's own files only: skip app data (but keep iCloud Drive), code checkouts and caches.
         let library = NSHomeDirectory() + "/Library/"
-        if path.hasPrefix(library), !path.contains("/Mobile Documents/com~apple~CloudDocs/") { return false }
+        // …except iCloud Drive and cloud folders (Dropbox, Google Drive, OneDrive, Nextcloud…).
+        if path.hasPrefix(library), !path.contains("/Mobile Documents/com~apple~CloudDocs/"),
+           !path.hasPrefix(library + "CloudStorage/") { return false }
         let skip = ["/node_modules/", "/.git/", "/.build/", "/DerivedData/", ".app/", "/Caches/", "/__pycache__/",
                     "/venv/", "/.venv/", "/site-packages/", "/.npm/", "/.cache/", "/Pods/", "/vendor/", "/dist/", "/build/"]
         let name = URL(fileURLWithPath: path).lastPathComponent

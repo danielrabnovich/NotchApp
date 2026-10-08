@@ -2,14 +2,18 @@ import AppKit
 import SwiftUI
 
 enum NotchTab: String, CaseIterable, Identifiable {
-    case ask, home, shelf, tasks
+    case ask, home, shelf, tasks, timer, mixer, controls, stats
     var id: String { rawValue }
     var icon: String {
         switch self {
         case .home: "house.fill"
         case .shelf: "tray.full.fill"
         case .tasks: "checklist"
+        case .timer: "timer"
+        case .mixer: "slider.vertical.3"
+        case .stats: "gauge.with.dots.needle.50percent"
         case .ask: "sparkle.magnifyingglass"
+        case .controls: "switch.2"
         }
     }
 }
@@ -19,6 +23,7 @@ enum CollapsedActivity: Equatable {
     case none
     case music
     case tasks
+    case timer
     case working
     case peek(SneakPeek.Kind)
 }
@@ -45,11 +50,17 @@ final class NotchViewModel: ObservableObject {
     /// A text field inside the notch has keyboard focus – don't auto-close.
     @Published var isEditing = false
 
+    /// Makes the notch window key so a text field can take typing (set by the window controller).
+    var takeKeyFocus: () -> Void = {}
+
     /// Brief or nudge the app opened by itself; stays until acted on.
     @Published var overlay: NotchOverlay?
+    /// The camera mirror is showing in place of the tabs.
+    @Published var mirror = false
 
-    /// Area (in hosting-view coordinates, top-left origin) that scrolls horizontally on its own.
-    var horizontalScrollRegion: CGRect?
+    /// Areas (in hosting-view coordinates, top-left origin) that scroll horizontally on their own,
+    /// keyed by whoever registered them.
+    var horizontalScrollRegions: [String: CGRect] = [:]
 
     /// Corner radii for the black shape (top flare / bottom rounding).
     var topRadius: CGFloat { isOpen ? 14 : 6 }
@@ -62,12 +73,16 @@ final class NotchViewModel: ObservableObject {
 
     /// The Ask tab grows taller once it has results so they never feel cramped.
     var openSize: CGSize {
-        let roomy = tab == .ask && AssistantStore.shared.current != nil && overlay == nil && !isDragActive
-        return CGSize(width: max(640, notchSize.width + 420), height: notchSize.height + (roomy ? 258 : 168))
+        let assistant = AssistantStore.shared
+        let roomy = tab == .ask && (assistant.current != nil || assistant.suggesting) && overlay == nil && !isDragActive
+        return CGSize(width: openWidth, height: notchSize.height + (roomy || mirror ? 258 : 168))
     }
 
     /// Largest size the open notch can reach (sizes the window).
-    var maxOpenSize: CGSize { CGSize(width: max(640, notchSize.width + 420), height: notchSize.height + 258) }
+    var maxOpenSize: CGSize { CGSize(width: openWidth, height: notchSize.height + 258) }
+
+    /// Wide enough for every tab button beside the notch.
+    private var openWidth: CGFloat { max(680, notchSize.width + 460) }
 
     var tabs: [NotchTab] {
         let s = AppSettings.shared
@@ -76,6 +91,10 @@ final class NotchViewModel: ObservableObject {
         t.append(.home)
         if s.shelfEnabled { t.append(.shelf) }
         if s.tasksEnabled { t.append(.tasks) }
+        if s.timerEnabled { t.append(.timer) }
+        if s.mixerEnabled { t.append(.mixer) }
+        if s.controlsEnabled { t.append(.controls) }
+        if s.statsEnabled { t.append(.stats) }
         return t
     }
 
@@ -92,6 +111,7 @@ final class NotchViewModel: ObservableObject {
         if let peek = ActivityCenter.shared.peek { return .peek(peek.kind) }
         let s = AppSettings.shared
         let media = MediaController.shared
+        if s.timerEnabled, s.timerLiveActivity, TimerStore.shared.isActive { return .timer }
         if s.assistantEnabled, AssistantStore.shared.runningCount > 0 { return .working }
         if s.musicEnabled, s.musicLiveActivity, media.hasTrack, media.isPlaying { return .music }
         if taskBadgeCount != nil { return .tasks }
@@ -104,6 +124,7 @@ final class NotchViewModel: ObservableObject {
         case .none: 0
         case .music: notchSize.height + 6 + (taskBadgeCount != nil ? 22 : 0)
         case .tasks: notchSize.height
+        case .timer: 54
         case .working: notchSize.height + 4
         case .peek(let kind): kind.sideWidth(notchHeight: notchSize.height)
         }
@@ -142,6 +163,7 @@ final class NotchViewModel: ObservableObject {
             isEditing = false
             pageOffset = 0
             overlay = nil
+            mirror = false
         }
     }
 
