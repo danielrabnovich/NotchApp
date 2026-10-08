@@ -16,7 +16,7 @@ final class DownloadsStore: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     /// Browsers write to these first and rename once the download completes.
-    private static let partialExtensions: Set<String> = ["crdownload", "download", "part", "partial", "opdownload", "tmp"]
+    nonisolated private static let partialExtensions: Set<String> = ["crdownload", "download", "part", "partial", "opdownload", "tmp"]
 
     func start() {
         AppSettings.shared.$downloadsEnabled
@@ -27,18 +27,31 @@ final class DownloadsStore: ObservableObject {
             .store(in: &cancellables)
     }
 
+    private var opening = false
+
     private func begin() {
-        guard source == nil else { return }
-        let fd = open(folder.path, O_EVTONLY)
-        guard fd >= 0 else { return }
-        let s = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
-        s.setEventHandler { [weak self] in
-            MainActor.assumeIsolated { self?.scheduleRescan() }
+        guard source == nil, !opening else { return }
+        opening = true
+        let path = folder.path
+        // Opening ~/Downloads can block until the user answers macOS's folder-access prompt,
+        // so never do it on the main thread (it froze the whole notch).
+        DispatchQueue.global(qos: .utility).async {
+            let fd = open(path, O_EVTONLY)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let me = DownloadsStore.shared
+                    me.opening = false
+                    guard fd >= 0 else { return }
+                    guard AppSettings.shared.downloadsEnabled, me.source == nil else { close(fd); return }
+                    let s = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
+                    s.setEventHandler { MainActor.assumeIsolated { DownloadsStore.shared.scheduleRescan() } }
+                    s.setCancelHandler { close(fd) }
+                    s.resume()
+                    me.source = s
+                    me.rescan(initial: true)
+                }
+            }
         }
-        s.setCancelHandler { close(fd) }
-        s.resume()
-        source = s
-        rescan(initial: true)
     }
 
     private func end() {
@@ -60,16 +73,25 @@ final class DownloadsStore: ObservableObject {
     }
 
     private func rescan(initial: Bool) {
-        let keys: [URLResourceKey] = [.addedToDirectoryDateKey, .creationDateKey]
-        guard let urls = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys,
-                                                                      options: [.skipsHiddenFiles]) else { return }
-        let finished = urls.filter { !Self.partialExtensions.contains($0.pathExtension.lowercased()) }
-        let dated = finished.map { url -> (URL, Date) in
-            let values = try? url.resourceValues(forKeys: Set(keys))
-            return (url, values?.addedToDirectoryDate ?? values?.creationDate ?? .distantPast)
+        let folder = folder
+        // Directory reads happen off the main thread; only the results are applied here.
+        DispatchQueue.global(qos: .utility).async {
+            let keys: [URLResourceKey] = [.addedToDirectoryDateKey, .creationDateKey]
+            guard let urls = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys,
+                                                                          options: [.skipsHiddenFiles]) else { return }
+            let finished = urls.filter { !Self.partialExtensions.contains($0.pathExtension.lowercased()) }
+            let dated = finished.map { url -> (URL, Date) in
+                let values = try? url.resourceValues(forKeys: Set(keys))
+                return (url, values?.addedToDirectoryDate ?? values?.creationDate ?? .distantPast)
+            }
+            let recent = Array(dated.sorted { $0.1 > $1.1 }.prefix(24).map(\.0))
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { DownloadsStore.shared.apply(recent: recent, finished: finished, initial: initial) }
+            }
         }
-        let recent = dated.sorted { $0.1 > $1.1 }.prefix(24).map(\.0)
+    }
 
+    private func apply(recent: [URL], finished: [URL], initial: Bool) {
         let existing = Dictionary(items.map { ($0.url, $0) }, uniquingKeysWith: { a, _ in a })
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
             items = recent.map { existing[$0] ?? ShelfItem(url: $0) }

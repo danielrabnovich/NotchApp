@@ -251,8 +251,26 @@ enum OllamaClient {
         return final
     }
 
+    /// Models whose runner rejects Ollama's JSON mode ("structured output is unavailable",
+    /// e.g. some MLX-backed models); for those, JSON is asked for in the prompt instead.
+    @MainActor private static var noJSONMode: Set<String> = []
+
     static func chatJSON(system: String, user: String) async throws -> [String: Any] {
-        let text = try await chat(system: system, user: user, json: true, temperature: 0.1)
+        let name = await model
+        let text: String
+        if await noJSONMode.contains(name) {
+            text = try await chat(system: system + "\nReply with ONLY the JSON object: no prose, no code fences.",
+                                  user: user, json: false, temperature: 0.1)
+        } else {
+            do {
+                text = try await chat(system: system, user: user, json: true, temperature: 0.1)
+            } catch let error as OllamaError where error.message.localizedCaseInsensitiveContains("structured output") {
+                // Without this fallback every routing call failed and search quietly fell back to keywords.
+                await MainActor.run { _ = noJSONMode.insert(name) }
+                DebugHooks.log("OllamaClient: \(name) has no JSON mode; asking for JSON in the prompt instead")
+                return try await chatJSON(system: system, user: user)
+            }
+        }
         if let obj = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] { return obj }
         // Models occasionally wrap JSON in prose; grab the outermost object.
         if let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"),

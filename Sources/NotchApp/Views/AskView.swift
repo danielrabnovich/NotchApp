@@ -50,15 +50,26 @@ struct AskView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentShape(Rectangle())
-        .onTapGesture { if idle { focused = true } }
+        .onTapGesture {
+            guard idle else { return }
+            viewModel.wantsKeyboard = true // after a hover-open, a click is the cue to start typing
+            focused = true
+        }
         .onAppear {
-            assistant.refreshStatus()
+            assistant.refreshStatusIfStale()
+            // Hidden tabs aren't rendered, so restore the query when this page comes back.
+            if let q = assistant.current?.query { query = q }
             focusIfShown()
         }
         .onChange(of: viewModel.tab) { _, _ in focusIfShown() }
-        .onChange(of: viewModel.isOpen) { _, _ in focusIfShown() }
+        .onChange(of: viewModel.isSettled) { _, _ in focusIfShown() }
+        .onChange(of: viewModel.wantsKeyboard) { _, _ in focusIfShown() }
         .onChange(of: assistant.current?.id) { _, _ in
             if let q = assistant.current?.query { query = q }
+        }
+        .onChange(of: commands.confirmation?.id) { _, new in
+            // An action that ran straight from the bar: clear it for the next thing.
+            if new != nil, assistant.current == nil { query = ""; suggestions.clear() }
         }
         .onChange(of: query) { _, q in
             // Typing something new replaces the last result with live suggestions.
@@ -116,7 +127,7 @@ struct AskView: View {
 
     /// Puts the cursor in the search bar whenever the notch shows this tab.
     private func focusIfShown() {
-        guard viewModel.isOpen, viewModel.tab == .ask else { return }
+        guard viewModel.isOpen, viewModel.wantsKeyboard, viewModel.tab == .ask else { return }
         viewModel.takeKeyFocus()
         // The window has to be key before the field can take focus.
         DispatchQueue.main.async { focused = true }
@@ -192,7 +203,18 @@ struct AskView: View {
         .frame(height: compact ? 38 : 48)
         .frame(maxWidth: compact ? .infinity : 500)
         .notchSurface(Capsule(), active: focused)
-        .overlay { if running { SweepingEdge() } }
+        .overlay {
+            // Above results the bar spans the page: keep the glow to the bar plus a 7pt bloom.
+            if compact {
+                RainbowGlow(focused: focused, running: running, compact: true, pager: viewModel.pager, onScreen: viewModel.tab == .ask)
+                    .mask { Capsule().padding(-7) }
+            } else {
+                RainbowGlow(focused: focused, running: running, pager: viewModel.pager, onScreen: viewModel.tab == .ask)
+            }
+        }
+        // Room for the glow's bloom when the bar spans the page, so it isn't cut off at the edges.
+        .padding(.horizontal, compact ? 8 : 0)
+        .padding(.top, compact ? 7 : 0)
         .shadow(color: .white.opacity(focused ? 0.06 : 0), radius: 16)
         .animation(.easeOut(duration: 0.18), value: focused)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: compact)
@@ -209,12 +231,73 @@ struct AskView: View {
         case .web?: "globe"
         case .weather?: "cloud.sun"
         case .actions?: "sparkles"
+        case .calendar?: "calendar"
         case nil: "magnifyingglass"
         }
     }
 }
 
 // MARK: - Results
+
+private struct CalendarResult: View {
+    let answer: CalendarAnswer
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(answer.headline)
+                    .font(.system(size: 17, weight: .semibold))
+                    .lineLimit(2)
+                if let detail = answer.detail {
+                    Text(detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                Button("Open Calendar") { CalendarManager.shared.openCalendar() }
+                    .buttonStyle(NotchPillButtonStyle())
+            }
+            .frame(width: 220, alignment: .leading)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(answer.events) { event in
+                        HStack(spacing: 10) {
+                            RoundedRectangle(cornerRadius: 1.5).fill(.white.opacity(0.35)).frame(width: 3, height: 26)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(event.title).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
+                                Text(CommandParser.eventText(event.start, event.end, allDay: event.allDay)
+                                     + (event.location.map { " · \($0)" } ?? ""))
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.white.opacity(0.45))
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    if !answer.free.isEmpty {
+                        let t = Date.FormatStyle(date: .omitted, time: .shortened)
+                        ForEach(answer.free, id: \.start) { slot in
+                            HStack(spacing: 10) {
+                                Image(systemName: "circle.dashed").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
+                                Text("\(slot.start.formatted(.dateTime.weekday(.abbreviated))) \(slot.start.formatted(t)) – \(slot.end.formatted(t))")
+                                    .font(.system(size: 12.5, weight: .medium).monospacedDigit())
+                                Text(BriefingService.duration(slot.duration))
+                                    .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.4))
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.vertical, 5)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+}
 
 private struct WeatherCard: View {
     let report: WeatherReport
@@ -301,6 +384,7 @@ private struct ResultView: View {
                 ShimmerText(text: stage)
                 Text(job.route == .web ? "Searching the web" : job.route == .files ? "Searching your Mac"
                      : job.route == .weather ? "Getting the weather" : job.route == .actions ? "Turning that into actions"
+                     : job.route == .calendar ? "Reading your calendar"
                      : "Working out where to look")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.3))
@@ -325,6 +409,7 @@ private struct ResultView: View {
                 switch job.route {
                 case .files?: FileResults(job: job, accent: accent)
                 case .weather?: if let report = job.weather { WeatherCard(report: report, accent: accent) }
+                case .calendar?: if let answer = job.calendar { CalendarResult(answer: answer) }
                 default: WebResults(job: job, accent: accent)
                 }
                 RouteFooter(job: job)
@@ -439,7 +524,7 @@ private struct BestFile: View {
                 HStack(spacing: 6) {
                     button("Open", primary: true) { NSWorkspace.shared.open(hit.url) }
                     button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([hit.url]) }
-                    button("Add to Shelf") { ShelfStore.shared.add([hit.url]) }
+                    ShelfButton(url: hit.url)
                 }
                 .padding(.top, 8)
             }
@@ -457,6 +542,36 @@ private struct BestFile: View {
     private func button(_ title: String, primary: Bool = false, action: @escaping () -> Void) -> some View {
         Button(title, action: action)
             .buttonStyle(NotchPillButtonStyle(primary: primary, height: 24))
+    }
+}
+
+/// "Add to Shelf" that turns into a checkmark once the file is on the shelf.
+private struct ShelfButton: View {
+    let url: URL
+    @EnvironmentObject private var shelf: ShelfStore
+
+    var body: some View {
+        let added = shelf.items.contains { $0.url.standardizedFileURL == url.standardizedFileURL }
+        Button {
+            guard !added else { return }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { ShelfStore.shared.add([url]) }
+        } label: {
+            HStack(spacing: 4) {
+                if added {
+                    Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).transition(.scale.combined(with: .opacity))
+                }
+                Text(added ? "On Shelf" : "Add to Shelf")
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(.white.opacity(added ? 1 : 0.85))
+            .fixedSize()
+            .padding(.horizontal, 10)
+            .frame(height: 24)
+            .background(RoundedRectangle(cornerRadius: 5).fill(.white.opacity(added ? 0.18 : 0.1)))
+            .contentTransition(.opacity)
+        }
+        .buttonStyle(.plain)
+        .help(added ? "Already on your shelf" : "Keep it on the shelf")
     }
 }
 
@@ -494,7 +609,7 @@ private struct FileRow: View {
         .contextMenu {
             Button("Open") { NSWorkspace.shared.open(hit.url) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([hit.url]) }
-            Button("Add to Shelf") { ShelfStore.shared.add([hit.url]) }
+            Button(ShelfStore.shared.items.contains { $0.url == hit.url } ? "On Shelf ✓" : "Add to Shelf") { ShelfStore.shared.add([hit.url]) }
         }
     }
 }
@@ -525,6 +640,11 @@ private struct WebResults: View {
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.35))
                     Spacer()
+                    if job.state == .done {
+                        ShelfIconButton(file: ShelfStore.answerFile(for: job.query), help: "Save the answer to the shelf") {
+                            ShelfStore.shared.addAnswer(question: job.query, answer: job.answer ?? "", sources: job.sources)
+                        }
+                    }
                     Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(job.answer ?? "", forType: .string)
@@ -589,6 +709,8 @@ private struct LinkRow: View {
                         .lineLimit(1)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .trailing) { LinkShelfButton(source: source, hovering: hovering) }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -598,6 +720,46 @@ private struct LinkRow: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help(source.url.absoluteString)
+    }
+}
+
+/// A small shelf button for a web link: shows on hover, and stays as a checkmark once it's on the shelf.
+private struct LinkShelfButton: View {
+    let source: WebSource
+    let hovering: Bool
+
+    var body: some View {
+        ShelfIconButton(file: ShelfStore.linkFile(for: source.url, title: source.title), help: "Save the link to the shelf",
+                        visible: hovering) {
+            ShelfStore.shared.addLink(source.url, title: source.title)
+        }
+    }
+}
+
+/// Tray icon that saves something to the shelf and turns into a checkmark once it's there.
+private struct ShelfIconButton: View {
+    let file: URL
+    let help: String
+    var visible = true
+    let add: () -> Void
+    @EnvironmentObject private var shelf: ShelfStore
+
+    var body: some View {
+        let added = shelf.contains(file)
+        if visible || added {
+            Button {
+                guard !added else { return }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { add() }
+            } label: {
+                Image(systemName: added ? "checkmark" : "tray.and.arrow.down")
+                    .font(.system(size: 10, weight: added ? .bold : .regular))
+                    .foregroundStyle(.white.opacity(added ? 0.9 : 0.6))
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(NotchIconButtonStyle(size: 20))
+            .help(added ? "On your shelf" : help)
+            .transition(.opacity)
+        }
     }
 }
 
@@ -677,6 +839,7 @@ private struct SourceRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
+                LinkShelfButton(source: source, hovering: hovering)
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 5)
@@ -808,9 +971,16 @@ private struct ConfirmationLine: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: confirmation.icon)
-                .foregroundStyle(.green)
+                .foregroundStyle(confirmation.failed ? .orange : .green)
             Text(confirmation.text)
                 .foregroundStyle(.white.opacity(0.8))
+                .lineLimit(1)
+            if let undo = confirmation.undo {
+                Text("·").foregroundStyle(.white.opacity(0.3))
+                Button("Undo") { CommandCenter.shared.undo(undo) }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.55))
+            }
             if let destination = confirmation.destination, case .show(let tab, let pane) = destination {
                 Text("·").foregroundStyle(.white.opacity(0.3))
                 Button("Show") { CommandCenter.shared.show(tab, pane: pane) }
@@ -820,6 +990,101 @@ private struct ConfirmationLine: View {
         }
         .font(.system(size: 11.5, weight: .medium))
         .frame(height: 18)
+    }
+}
+
+/// An Apple Intelligence–style glow around the search bar: three layered strokes of an angular
+/// gradient in Apple Intelligence's palette (a crisp core, a soft bloom and a faint wash that tints
+/// the bar's inside), slowly rotating while you type or a search runs.
+///
+/// Blurring a rotating gradient live would re-blur every frame and bring back dropped frames, so
+/// 16 rotation steps are rendered once and the view crossfades between neighbouring steps.
+private struct RainbowGlow: View {
+    let focused: Bool
+    let running: Bool
+    /// The bar spans the page above results: keep the glow tight to the bar (edge, inner tint and a
+    /// small bloom) so it isn't clipped by the page or spill onto the list below.
+    var compact = false
+    /// Paused while pages slide or another tab is showing: the animation then only costs frames.
+    @ObservedObject var pager: PagerState
+    var onScreen = true
+
+    /// How far the glow spreads past the bar on each side.
+    static let spread: CGFloat = 56
+    private static let steps = 16
+
+    var body: some View {
+        let still = pager.isSwiping || pager.isSettling || !onScreen
+        let animate = (focused || running) && !still && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        Group {
+            if animate {
+                TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                    // One full turn every 6s (3s while searching), like Siri's slow drift.
+                    let period: Double = running ? 3 : 6
+                    let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+                    let position = phase * Double(Self.steps)
+                    let i = Int(position) % Self.steps
+                    let mix = position - Double(Int(position))
+                    ZStack {
+                        frame(i).opacity(1 - mix)
+                        frame((i + 1) % Self.steps).opacity(mix)
+                    }
+                }
+            } else {
+                frame(0)
+            }
+        }
+        .padding(-Self.spread)
+        .opacity(running ? 1 : focused ? 0.9 : 0.55)
+        .animation(.easeOut(duration: 0.3), value: focused)
+        .animation(.easeOut(duration: 0.3), value: running)
+        .allowsHitTesting(false)
+    }
+
+    private var barHeight: CGFloat { compact ? 38 : 48 }
+
+    /// Stretches only the straight middle of the glow, so the rounded ends (and the ring along the
+    /// edge) stay exactly on the bar whatever its width.
+    private func frame(_ i: Int) -> some View {
+        let cap = Self.spread + barHeight / 2
+        return Image(nsImage: Self.frames(height: barHeight)[i])
+            .resizable(capInsets: EdgeInsets(top: 0, leading: cap, bottom: 0, trailing: cap), resizingMode: .stretch)
+    }
+
+    private static func hex(_ v: UInt32) -> Color {
+        Color(red: Double((v >> 16) & 0xFF) / 255, green: Double((v >> 8) & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
+    }
+
+    /// Apple Intelligence's palette: lilac/violet, periwinkle, sky, pink, coral and peach.
+    private static let colors: [Color] = [0xBC82F3, 0x8D9FFF, 0x79C4FB, 0xF5B9EA, 0xFF6778, 0xFFBA71, 0xFFA1F3, 0xBC82F3].map(hex)
+
+    /// The glow at each rotation step for a bar of the given height, drawn once per height.
+    @MainActor private static var cache: [CGFloat: [NSImage]] = [:]
+
+    @MainActor private static func frames(height: CGFloat) -> [NSImage] {
+        if let cached = cache[height] { return cached }
+        let made = (0..<steps).map { render(step: $0, height: height) }
+        cache[height] = made
+        return made
+    }
+
+    @MainActor private static func render(step: Int, height: CGFloat) -> NSImage {
+        let bar = CGSize(width: 500, height: height)
+        let gradient = AngularGradient(colors: colors, center: .center,
+                                       angle: .degrees(Double(step) * 360 / Double(steps)))
+        let ring = Capsule().frame(width: bar.width, height: bar.height)
+        let content = ZStack {
+            ring.overlay(Capsule().stroke(gradient, lineWidth: 26)).foregroundStyle(.clear)
+                .blur(radius: 22).opacity(0.45)                     // faint wash, tints the inside
+            ring.overlay(Capsule().stroke(gradient, lineWidth: 9)).foregroundStyle(.clear)
+                .blur(radius: 9).opacity(0.85)                      // bloom
+            ring.overlay(Capsule().stroke(gradient, lineWidth: 2.5)).foregroundStyle(.clear)
+                .blur(radius: 1.2)                                  // crisp core along the edge
+        }
+        .frame(width: bar.width + spread * 2, height: bar.height + spread * 2)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = 2
+        return renderer.nsImage ?? NSImage()
     }
 }
 

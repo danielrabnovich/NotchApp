@@ -180,7 +180,11 @@ private struct ShelfTile: View {
             }
         }
         .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
-        .onDrag { NSItemProvider(object: item.url as NSURL) }
+        .onDrag {
+            // A saved web link drops as the link itself (into a browser, Messages, a doc…).
+            if let web = ShelfStore.webLink(in: item.url) { return NSItemProvider(object: web as NSURL) }
+            return NSItemProvider(object: item.url as NSURL)
+        }
         .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
         .contextMenu {
             Button("Open") { NSWorkspace.shared.open(item.url) }

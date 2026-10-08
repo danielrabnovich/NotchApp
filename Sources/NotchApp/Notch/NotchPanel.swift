@@ -19,6 +19,11 @@ final class NotchPanel: NSPanel {
         hidesOnDeactivate = false
         acceptsMouseMovedEvents = true
         ignoresMouseEvents = true
+        // Re-applying the style after init is what actually registers the panel as non-activating
+        // with the window server; without it, focusing the search bar activated the whole app,
+        // and every open/close became an app switch (menu bar redraw and all) that dropped frames.
+        styleMask = [.borderless, .nonactivatingPanel]
+        becomesKeyOnlyIfNeeded = false
     }
 
     override var canBecomeKey: Bool { true }

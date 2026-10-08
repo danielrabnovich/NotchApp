@@ -7,7 +7,7 @@ import SwiftUI
 final class AssistantStore: ObservableObject {
     static let shared = AssistantStore()
 
-    enum Route: String { case files, web, weather, actions }
+    enum Route: String { case files, web, weather, actions, calendar }
 
     enum State: Equatable {
         case running(stage: String)
@@ -25,6 +25,7 @@ final class AssistantStore: ObservableObject {
         var answer: String?
         var sources: [WebSource] = []
         var weather: WeatherReport?
+        var calendar: CalendarAnswer?
         /// Proposed commands for the user to review (the actions route).
         var plan: CommandPlanner.Plan?
         let startedAt = Date()
@@ -59,7 +60,19 @@ final class AssistantStore: ObservableObject {
 
     // MARK: - Ollama status
 
+    private var lastStatusCheck = Date.distantPast
+    private var lastWarm = Date.distantPast
+
+    /// For views that appear often (the Search tab on every open): checks at most every 30s, and
+    /// waits for the open animation to finish so the request doesn't compete with it.
+    func refreshStatusIfStale() {
+        guard Date().timeIntervalSince(lastStatusCheck) > 30 else { return }
+        lastStatusCheck = Date()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.refreshStatus() }
+    }
+
     func refreshStatus() {
+        lastStatusCheck = Date()
         Task {
             var s = await OllamaClient.status()
             self.installed = (try? await OllamaClient.installedModelDetails()) ?? []
@@ -69,7 +82,12 @@ final class AssistantStore: ObservableObject {
                 s = .modelMissing(OllamaModelCatalog.defaultModel)
             }
             self.status = s
-            if s == .ready { Task.detached { _ = try? await OllamaClient.chat(system: "", user: "hi") } } // warm the model
+            // Load the model ahead of the first search, but not on every check: a warm-up runs the
+            // model on the GPU, which made the notch's animations stutter when done on each open.
+            if s == .ready, Date().timeIntervalSince(self.lastWarm) > 600 {
+                self.lastWarm = Date()
+                Task.detached(priority: .background) { _ = try? await OllamaClient.chat(system: "", user: "hi") }
+            }
         }
     }
 
@@ -182,6 +200,20 @@ final class AssistantStore: ObservableObject {
             NSWorkspace.shared.openApplication(at: app.app.url, configuration: .init())
             return
         }
+        // Exact commands ("timer 10m", "volume 40", "event lunch friday 1pm") run instantly, no model needed.
+        if forced == nil {
+            let instant = CommandParser.parse(trimmed).filter {
+                if case .template = $0.action { return false }
+                if case .show = $0.action { return $0.title.hasPrefix("Show") }
+                return true
+            }
+            if instant.count == 1, instant[0].runsWithoutReview {
+                task?.cancel()
+                CommandCenter.shared.run(instant)
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = nil }
+                return
+            }
+        }
         task?.cancel()
         let job = Job(query: trimmed, route: forced)
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
@@ -214,8 +246,21 @@ final class AssistantStore: ObservableObject {
                     await progress("Planning")
                     let plan = try await CommandPlanner.plan(trimmed)
                     try Task.checkCancellation()
-                    guard !plan.commands.isEmpty else { throw OllamaClient.OllamaError(message: "Couldn’t turn that into tasks or notes. Try rewording it.") }
+                    guard !plan.commands.isEmpty else { throw OllamaClient.OllamaError(message: "Couldn’t turn that into an action. Try rewording it.") }
+                    // One safe action ("add lunch with Sam friday 1pm", "timer 10 min") just happens, with Undo;
+                    // several actions, or moving/deleting something, are shown for review first.
+                    if plan.commands.count == 1, plan.commands[0].runsWithoutReview {
+                        CommandCenter.shared.run(plan.commands)
+                        DebugHooks.log("JOB [actions] \(trimmed) → ran \(plan.commands.map(\.title))")
+                        clear()
+                        return
+                    }
                     update(id) { $0.plan = plan; $0.state = .done }
+                case .calendar:
+                    await progress("Checking your calendar")
+                    let answer = try await CalendarQuery.answer(trimmed, useAI: useAI)
+                    try Task.checkCancellation()
+                    update(id) { $0.calendar = answer; $0.state = .done }
                 case .weather:
                     await progress("Checking the forecast")
                     let report = try await WeatherService.report(location: understanding.location, dayOffset: understanding.dayOffset)
@@ -235,7 +280,7 @@ final class AssistantStore: ObservableObject {
 
     /// Same question, the other way (files ↔ web).
     func switchRoute() {
-        guard let job = current, let route = job.route, route != .actions else { return }
+        guard let job = current, let route = job.route, route != .actions, route != .calendar else { return }
         // Files ↔ web; a weather answer switches to a full web search.
         run(job.query, route: route == .files || route == .weather ? .web : .files)
     }
@@ -272,6 +317,8 @@ final class AssistantStore: ObservableObject {
             }
         case (_, .weather?):
             title = "Forecast"; detail = job.weather?.summary ?? job.query
+        case (_, .calendar?):
+            title = job.calendar?.headline ?? "Calendar"; detail = job.calendar?.detail ?? job.query
         default:
             title = "Answer ready"; detail = job.query
         }
@@ -301,11 +348,16 @@ enum Router {
         - "weather": weather, forecast, temperature or rain questions.
         - "actions": they want this app to DO something for them rather than find something: add tasks or a to-do \
         list, plan or break down a project into steps, remind them to do things, jot down or remember a note, start \
-        a timer. "plan my move next month", "remind me to call mom and buy eggs", "jot down the door code is 4471".
+        a timer or stopwatch, add/move/cancel a calendar event, play/pause/skip music, set volume or brightness, toggle \
+        dark mode/Wi-Fi/mic, lock the screen, take a screenshot, open or quit an app, tick off a task. "plan my move next month", "remind me to \
+        call mom and buy eggs", "jot down the door code is 4471", "lunch with sam friday at 1", "push my 3pm to 4", \
+        "add dentist appointment tuesday 10am", "cancel tomorrow's standup", "skip this song".
+        - "calendar": questions about their own schedule: "what's on today", "my schedule tomorrow", "am I free \
+        friday at 3", "when is my dentist appointment", "next meeting", "what do I have this week".
         - "web": questions and information from the internet: facts, news, sports, prices, places, hours, how-to, \
         definitions, recommendations.
         Reply with JSON only:
-        {"route": "files" or "web" or "weather" or "actions",
+        {"route": "files" or "web" or "weather" or "actions" or "calendar",
          "web_query": "concise search-engine query; keep time words like latest/last/this as written, don't add years",
          "location": "city for weather, or null if none given",
          "day_offset": 0 for today, 1 for tomorrow, etc. (weather only),
@@ -360,6 +412,12 @@ extension Router {
             }
             let day = words.contains("tomorrow") ? 1 : 0
             return Understanding(route: .weather, webQuery: query, plan: .init(), location: location, dayOffset: day)
+        }
+
+        let calendarPhrases = ["my calendar", "my schedule", "what's on", "whats on", "what do i have", "am i free", "am i busy",
+                               "next meeting", "next event", "when am i free", "my day", "my week", "my agenda", "agenda"]
+        if calendarPhrases.contains(where: { lower.contains($0) }) {
+            return Understanding(route: .calendar, webQuery: query, plan: .init(), location: nil, dayOffset: 0)
         }
 
         let kindWords: [String: String] = [

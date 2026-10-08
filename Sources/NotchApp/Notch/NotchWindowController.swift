@@ -87,10 +87,15 @@ final class NotchWindowController {
 
     private func relinquishKeyFocus() {
         guard panel.isKeyWindow else { return }
+        // Stop being key right away (animating a key window is far costlier), but re-activate
+        // the previous app only after the close animation, since that's a window-server round trip.
         panel.resignKey()
-        if let front = NSWorkspace.shared.frontmostApplication,
-           front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-            front.activate()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+            guard let self, !self.viewModel.isOpen else { return }
+            if let front = NSWorkspace.shared.frontmostApplication,
+               front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                front.activate()
+            }
         }
     }
 
@@ -131,7 +136,8 @@ final class NotchWindowController {
         let pointerMoved = p != lastPointer
         lastPointer = p
 
-        panel.ignoresMouseEvents = !inside
+        // Each change is a window-server round trip, so only set it when it differs.
+        if panel.ignoresMouseEvents == inside { panel.ignoresMouseEvents = !inside }
 
         if kind == .up, viewModel.isDragActive {
             // Give the drop handler a moment to run, then return to normal.
@@ -154,12 +160,12 @@ final class NotchWindowController {
                     viewModel.dragPreview = TaskStore.preview(of: NSPasteboard(name: .drag))
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { viewModel.isDragActive = true }
                 }
-                viewModel.open()
+                viewModel.open(takeKeyboard: false) // a file drag: the drop bins, not typing
             } else if !viewModel.isOpen, settings.openMode == .hover, openWork == nil, !buttonDown {
                 let work = DispatchWorkItem { [weak self] in
                     guard let self else { return }
                     self.openWork = nil
-                    if self.viewModel.isHovering { self.viewModel.open() }
+                    if self.viewModel.isHovering { self.viewModel.open(takeKeyboard: AppSettings.shared.focusSearchOnHover) }
                 }
                 openWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + settings.hoverDelay, execute: work)
@@ -266,6 +272,28 @@ final class NotchWindowController {
 
     private var rawOffset: CGFloat = 0
 
+    /// Debug: drives the same code path as a two-finger swipe (for profiling).
+    func simulateSwipe(left: Bool) {
+        guard viewModel.isOpen else { return }
+        FrameProbe.mark("drag")
+        swipe = SwipeState()
+        swipe.axis = .horizontal
+        viewModel.isSwiping = true
+        rawOffset = 0
+        var step = 0
+        Timer.scheduledTimer(withTimeInterval: 1.0 / 120, repeats: true) { [weak self] t in
+            MainActor.assumeIsolated {
+                guard let self else { return t.invalidate() }
+                step += 1
+                let dx: CGFloat = left ? -9 : 9
+                self.swipe.velocity = dx * 120
+                self.rawOffset += dx
+                self.viewModel.pageOffset = self.rubberBanded(self.rawOffset)
+                if step == 30 { t.invalidate(); self.finishSwipe() }
+            }
+        }
+    }
+
     private func isInHorizontalScrollRegion(_ e: NSEvent) -> Bool {
         guard let host = panel.contentView else { return false }
         let p = CGPoint(x: e.locationInWindow.x, y: host.bounds.height - e.locationInWindow.y)
@@ -286,6 +314,7 @@ final class NotchWindowController {
     }
 
     private func finishSwipe() {
+        FrameProbe.mark("settle")
         let tabs = viewModel.tabs
         var index = viewModel.tabIndex
         let w = viewModel.pageWidth
@@ -303,11 +332,8 @@ final class NotchWindowController {
         // Carry the finger's speed into the snap so it feels continuous.
         let remaining = changed ? (w - abs(offset)) : abs(offset)
         let initialVelocity = remaining > 1 ? min(abs(swipe.velocity) / remaining, 12) : 0
-        withAnimation(.interpolatingSpring(stiffness: 260, damping: 28, initialVelocity: initialVelocity)) {
-            viewModel.tab = tabs[index]
-            viewModel.pageOffset = 0
-            viewModel.isSwiping = false
-        }
+        viewModel.slide(to: tabs[index],
+                        animation: .interpolatingSpring(stiffness: 260, damping: 28, initialVelocity: initialVelocity))
         if changed {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }

@@ -9,7 +9,7 @@ final class CalendarManager: ObservableObject {
     @Published private(set) var events: [EKEvent] = []
     @Published private(set) var status: EKAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
 
-    private let store = EKEventStore()
+    let store = EKEventStore()
     private var timer: Timer?
     private var alerted = Set<String>()
     private var cancellables = Set<AnyCancellable>()

@@ -16,26 +16,32 @@ struct NotchRootView: View {
         let body = vm.bodySize
 
         ZStack(alignment: .top) {
+            // The shadow is only drawn once the shape has settled: re-rendering a large blurred
+            // shadow on every frame of the spring is what made opening feel heavy.
             shape
                 .fill(Color.black)
-                .shadow(color: .black.opacity(vm.isOpen && settings.showShadow ? 0.6 : 0),
-                        radius: vm.isOpen ? 14 : 0, y: 6)
+                .shadow(color: .black.opacity(vm.isSettled && settings.showShadow ? 0.6 : 0), radius: 14, y: 6)
+                .animation(.easeOut(duration: 0.2), value: vm.isSettled)
 
+            // Content is laid out once at its final size and revealed by the growing shape,
+            // instead of being re-laid out on every animation frame.
             Group {
                 if vm.isOpen {
                     OpenNotchView(viewModel: vm)
+                        .frame(width: vm.openSize.width, height: vm.openSize.height, alignment: .top)
                         .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.88, anchor: .top))
-                                .animation(settings.openAnimation.delay(0.05)),
-                            removal: .opacity.animation(.easeOut(duration: 0.12))))
+                            // A fade, not a scale: scaling would resize every AppKit-backed control
+                            // inside on each frame of the opening animation.
+                            insertion: .opacity.animation(.easeOut(duration: 0.22).delay(0.04)),
+                            removal: .opacity.animation(.easeOut(duration: 0.1))))
                 } else {
                     CollapsedNotchView(viewModel: vm)
+                        .frame(width: body.width, height: body.height, alignment: .top)
                         .transition(.opacity.animation(.easeInOut(duration: 0.18)))
                 }
             }
-            .frame(width: body.width, height: body.height, alignment: .top)
-            .clipped()
-
+            .frame(width: vm.shapeSize.width, height: vm.shapeSize.height, alignment: .top)
+            .clipShape(shape)
         }
         .frame(width: vm.shapeSize.width, height: vm.shapeSize.height)
         .contentShape(shape)

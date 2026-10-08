@@ -35,6 +35,8 @@ final class NotchViewModel: ObservableObject {
     let hasPhysicalNotch: Bool
 
     @Published var isOpen = false
+    /// True once the open animation has finished (used for effects too costly to animate).
+    @Published var isSettled = false
     @Published var isHovering = false
     @Published var tab: NotchTab = AppSettings.shared.assistantEnabled ? .ask : .home
 
@@ -43,9 +45,26 @@ final class NotchViewModel: ObservableObject {
     @Published var dragPreview: DragPreview?
 
     /// Live horizontal offset while two-finger swiping between tabs.
-    @Published var pageOffset: CGFloat = 0
-    @Published var isSwiping = false
-    var pageWidth: CGFloat = 600
+    /// Swipe state lives in its own object: it changes every frame of a swipe, and only the
+    /// pager and tab indicator should re-render for it (not every page that observes this model).
+    let pager = PagerState()
+    var pageOffset: CGFloat {
+        get { pager.offset }
+        set { pager.offset = newValue }
+    }
+    var isSwiping: Bool {
+        get { pager.isSwiping }
+        set { pager.isSwiping = newValue }
+    }
+    /// A tab change is still animating into place; keep the neighbouring pages rendered.
+    var isSettling: Bool {
+        get { pager.isSettling }
+        set { pager.isSettling = newValue }
+    }
+    var pageWidth: CGFloat {
+        get { pager.width }
+        set { pager.width = newValue }
+    }
 
     /// A text field inside the notch has keyboard focus – don't auto-close.
     @Published var isEditing = false
@@ -88,7 +107,7 @@ final class NotchViewModel: ObservableObject {
         let s = AppSettings.shared
         var t: [NotchTab] = []
         if s.assistantEnabled { t.append(.ask) }
-        t.append(.home)
+        if s.musicEnabled || s.calendarEnabled { t.append(.home) }
         if s.shelfEnabled { t.append(.shelf) }
         if s.tasksEnabled { t.append(.tasks) }
         if s.timerEnabled { t.append(.timer) }
@@ -147,16 +166,33 @@ final class NotchViewModel: ObservableObject {
     /// Size of the full shape including the top flares.
     var shapeSize: CGSize { CGSize(width: bodySize.width + 2 * topRadius, height: bodySize.height) }
 
-    func open(tab: NotchTab? = nil) {
+    /// The search bar should take the keyboard when the notch opens (on hover too, unless that's
+    /// turned off in Settings).
+    @Published var wantsKeyboard = false
+
+    func open(tab: NotchTab? = nil, takeKeyboard: Bool = true) {
+        if takeKeyboard { wantsKeyboard = true }
         // Search is the default view each time the notch opens.
         let target = tab ?? (tabs.contains(.ask) ? .ask : nil)
         if let target, tabs.contains(target) { self.tab = target }
         guard !isOpen else { return }
-        withAnimation(AppSettings.shared.openAnimation) { isOpen = true }
+        // Take the keyboard as the open begins (before the content is built), so typing can start
+        // straight away; doing it after the animation re-rendered the whole panel and dropped frames.
+        if wantsKeyboard { takeKeyFocus() }
+        withAnimation(AppSettings.shared.openAnimation, completionCriteria: .logicallyComplete) {
+            isOpen = true
+        } completion: { [weak self] in
+            guard let self, self.isOpen else { return }
+            self.isSettled = true
+            self.prepareNeighbors()
+        }
     }
 
     func close() {
         guard isOpen else { return }
+        isSettled = false
+        wantsKeyboard = false
+        pager.neighborsReady = false
         withAnimation(AppSettings.shared.closeAnimation) {
             isOpen = false
             isDragActive = false
@@ -168,10 +204,54 @@ final class NotchViewModel: ObservableObject {
     }
 
     func select(_ tab: NotchTab) {
+        wantsKeyboard = true
         guard tab != self.tab else { return }
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+        slide(to: tab, animation: .spring(response: 0.42, dampingFraction: 0.84))
+    }
+
+    /// Moves to a tab. The page row's resting position switches instantly (it's real layout, and
+    /// animating it would re-frame every AppKit control inside on each frame); the visible slide is
+    /// the render-only swipe offset, set so nothing jumps and then animated back to zero.
+    func slide(to tab: NotchTab, animation: Animation) {
+        let old = tabIndex
+        let new = tabs.firstIndex(of: tab) ?? old
+        pager.fromIndex = old
+        isSettling = true
+        var instant = Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) {
             self.tab = tab
+            pageOffset += CGFloat(new - old) * pageWidth
+            isSwiping = false
+        }
+        withAnimation(animation, completionCriteria: .logicallyComplete) {
             pageOffset = 0
+        } completion: { [weak self] in
+            self?.isSettling = false
+            FrameProbe.mark("settled")
+            self?.prepareNeighbors()
         }
     }
+
+    private func prepareNeighbors() {
+        pager.neighborsReady = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self, self.isOpen, !self.isSettling, !self.isSwiping else { return }
+            FrameProbe.mark("neighbors")
+            self.pager.neighborsReady = true
+        }
+    }
+}
+
+@MainActor
+final class PagerState: ObservableObject {
+    @Published var offset: CGFloat = 0
+    @Published var isSwiping = false
+    @Published var isSettling = false
+    /// The tab a change started from, kept rendered until the slide settles.
+    var fromIndex: Int?
+    /// Neighbouring tabs are built while nothing is moving, so a swipe never has to build them
+    /// on its first frame (a visible hitch); building them mid-animation slowed the opening.
+    @Published var neighborsReady = false
+    var width: CGFloat = 600
 }

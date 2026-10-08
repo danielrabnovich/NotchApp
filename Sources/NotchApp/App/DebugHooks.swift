@@ -31,7 +31,8 @@ enum DebugHooks {
         guard let verb = parts.first, let c = controllers.first else { return }
         switch verb {
         case "pin": pinned = parts[safe: 1] != "0"
-        case "open": c.viewModel.open(tab: parts.count > 1 ? NotchTab(rawValue: parts[1]) : nil)
+        case "open": c.viewModel.open(tab: parts.count > 1 ? NotchTab(rawValue: parts[1]) : nil, takeKeyboard: false)
+        case "openkey": c.viewModel.open(tab: parts.count > 1 ? NotchTab(rawValue: parts[1]) : nil)
         case "addtask": TaskStore.shared.add(title: parts.dropFirst().joined(separator: " "))
         case "done": if let t = TaskStore.shared.open.first { TaskStore.shared.setDone(t.id, true) }
         case "page": c.viewModel.pageOffset = CGFloat(Double(parts[safe: 1] ?? "0") ?? 0)
@@ -41,6 +42,16 @@ enum DebugHooks {
         case "duesoon":
             TaskStore.shared.add(TaskItem(title: "Send updated deck to Sarah", due: Date().addingTimeInterval(95 * 60)))
         case "brief": BriefingService.shared.maybeShowBrief(force: true)
+        case "state":
+            log("STATE appActive=\(NSApp.isActive) panelKey=\(c.panelContentView?.window?.isKeyWindow ?? false) frontmost=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "-")")
+        case "frames":
+            if parts[safe: 1] == "stop" { FrameProbe.shared.stop() } else { FrameProbe.shared.start(view: c.panelContentView) }
+        case "swipe": c.simulateSwipe(left: parts[safe: 1] != "right")
+        case "webshelf":
+            if let job = AssistantStore.shared.current, let first = job.sources.first {
+                ShelfStore.shared.addLink(first.url, title: first.title)
+                ShelfStore.shared.addAnswer(question: job.query, answer: job.answer ?? "", sources: job.sources)
+            }
         case "clear": AssistantStore.shared.clear()
         case "ask": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "))
         case "plan": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "), route: .actions)
@@ -107,5 +118,52 @@ extension NotchWindowController {
            let png = bmp.representation(using: .png, properties: [:]) {
             try? png.write(to: url)
         }
+    }
+}
+
+/// Debug: records time between display-link frames to find dropped frames.
+@MainActor
+final class FrameProbe: NSObject {
+    static let shared = FrameProbe()
+    private var link: CADisplayLink?
+    private var last: CFTimeInterval = 0
+    private var gaps: [Double] = []
+
+    func start(view: NSView?) {
+        guard let view else { return }
+        gaps = []
+        last = 0
+        link = view.displayLink(target: self, selector: #selector(tick(_:)))
+        link?.add(to: .main, forMode: .common)
+    }
+
+    nonisolated(unsafe) static var marks: [(String, CFTimeInterval)] = []
+    nonisolated static func mark(_ name: String) { marks.append((name, CACurrentMediaTime())) }
+    private var slow: [String] = []
+
+    @objc private func tick(_ link: CADisplayLink) {
+        if last > 0 {
+            let gap = (link.timestamp - last) * 1000
+            gaps.append(gap)
+            if gap > 20, let m = Self.marks.last(where: { $0.1 <= link.timestamp }) {
+                slow.append(String(format: "%.0fms@%@+%.0fms", gap, m.0, (link.timestamp - m.1) * 1000))
+            }
+        }
+        last = link.timestamp
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+        if !slow.isEmpty { DebugHooks.log("SLOW " + slow.joined(separator: " ")) }
+        slow = []
+        guard !gaps.isEmpty else { return }
+        let sorted = gaps.sorted()
+        let budget = sorted[sorted.count / 2] // the display's normal frame interval
+        let dropped = gaps.filter { $0 > budget * 1.5 }
+        DebugHooks.log(String(format: "FRAMES n=%d median=%.1fms p95=%.1fms max=%.1fms dropped=%d (%.0f%%) worst=%@",
+                              gaps.count, budget, sorted[Int(Double(sorted.count) * 0.95)], sorted.last!, dropped.count,
+                              100 * Double(dropped.count) / Double(gaps.count),
+                              dropped.sorted(by: >).prefix(6).map { String(format: "%.0f", $0) }.joined(separator: ",")))
     }
 }

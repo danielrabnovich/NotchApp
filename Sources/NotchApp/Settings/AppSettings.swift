@@ -118,8 +118,16 @@ final class AppSettings: ObservableObject {
 
     // Calendar
     @Published var calendarEnabled: Bool { didSet { defaults.set(calendarEnabled, forKey: "calendarEnabled") } }
+    /// Put the cursor in the search bar when the notch opens on hover, ready to type.
+    @Published var focusSearchOnHover: Bool { didSet { defaults.set(focusSearchOnHover, forKey: "focusSearchOnHover") } }
+    /// Where events created from the search bar go (empty = the system default calendar).
+    @Published var defaultCalendarID: String { didSet { defaults.set(defaultCalendarID, forKey: "defaultCalendarID") } }
     @Published var meetingAlerts: Bool { didSet { defaults.set(meetingAlerts, forKey: "meetingAlerts") } }
     @Published var meetingAlertMinutes: Int { didSet { defaults.set(meetingAlertMinutes, forKey: "meetingAlertMinutes") } }
+
+    static let addOnKeys = ["musicEnabled", "musicLiveActivity", "calendarEnabled", "timerEnabled", "mixerEnabled",
+                            "controlsEnabled", "statsEnabled", "cameraMirrorEnabled", "volumeHUD", "brightnessHUD",
+                            "chargingAnimation", "morningBrief"]
 
     private init() {
         defaults.register(defaults: [
@@ -132,18 +140,18 @@ final class AppSettings: ObservableObject {
             "customAccentHex": "#0A84FF",
             "animationStyle": AnimationStyle.smooth.rawValue,
             "showShadow": true,
-            "musicEnabled": true,
-            "musicLiveActivity": true,
+            "musicEnabled": false,
+            "musicLiveActivity": false,
             "showVisualizer": true,
-            "volumeHUD": true,
-            "brightnessHUD": true,
-            "chargingAnimation": true,
+            "volumeHUD": false,
+            "brightnessHUD": false,
+            "chargingAnimation": false,
             "shelfEnabled": true,
             "screenshotCatcher": true,
             "airDropZone": true,
             "tasksEnabled": true,
             "showTaskCount": true,
-            "timerEnabled": true,
+            "timerEnabled": false,
             "timerLiveActivity": true,
             "timerSounds": true,
             "pomodoroAutoStart": true,
@@ -153,8 +161,8 @@ final class AppSettings: ObservableObject {
             "taildropZone": TaildropService.cli != nil,
             "taildropReceive": TaildropService.cli != nil,
             "taildropToShelf": true,
-            "mixerEnabled": true,
-            "controlsEnabled": true,
+            "mixerEnabled": false,
+            "controlsEnabled": false,
             "updateChecks": true,
             "updateChecksApps": true,
             "updateAlerts": true,
@@ -162,24 +170,32 @@ final class AppSettings: ObservableObject {
             "keepAwakeBatteryFloor": 20,
             "reverseMouseScroll": false,
             "threeFingerMiddleClick": false,
-            "cameraMirrorEnabled": true,
+            "cameraMirrorEnabled": false,
             "hotKeysEnabled": true,
             "hotKeyModifiers": HotKeys.Modifiers.controlOption.rawValue,
-            "statsEnabled": true,
+            "statsEnabled": false,
             "useFahrenheit": Locale.current.measurementSystem == .us,
             "assistantEnabled": true,
             "ollamaURL": "http://localhost:11434",
             "ollamaModel": OllamaModelCatalog.defaultModel,
             "systemNotifications": true,
             "homeCity": "",
-            "morningBrief": true,
+            "morningBrief": false,
             "briefHour": 6,
             "dueNudges": true,
             "nudgeLeadMinutes": 120,
-            "calendarEnabled": true,
+            "calendarEnabled": false,
+            "defaultCalendarID": "",
+            "focusSearchOnHover": true,
             "meetingAlerts": true,
             "meetingAlertMinutes": 5,
         ])
+        // NotchApp is lean by default: Search, Shelf and Tasks. Everything else is an add-on in
+        // Settings → Add-ons. Applied once to existing installs too.
+        if !defaults.bool(forKey: "leanDefaultsApplied") {
+            for key in Self.addOnKeys { defaults.set(false, forKey: key) }
+            defaults.set(true, forKey: "leanDefaultsApplied")
+        }
         openMode = OpenMode(rawValue: defaults.string(forKey: "openMode") ?? "") ?? .hover
         hoverDelay = defaults.double(forKey: "hoverDelay")
         displayMode = DisplayMode(rawValue: defaults.string(forKey: "displayMode") ?? "") ?? .notched
@@ -235,6 +251,8 @@ final class AppSettings: ObservableObject {
         dueNudges = defaults.bool(forKey: "dueNudges")
         nudgeLeadMinutes = defaults.integer(forKey: "nudgeLeadMinutes")
         calendarEnabled = defaults.bool(forKey: "calendarEnabled")
+        defaultCalendarID = defaults.string(forKey: "defaultCalendarID") ?? ""
+        focusSearchOnHover = defaults.bool(forKey: "focusSearchOnHover")
         meetingAlerts = defaults.bool(forKey: "meetingAlerts")
         meetingAlertMinutes = defaults.integer(forKey: "meetingAlertMinutes")
     }

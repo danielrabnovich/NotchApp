@@ -41,6 +41,7 @@ final class SettingsRouter: ObservableObject {
 /// Raw values are stable identifiers (debug hooks use them); `title` is what's shown.
 enum SettingsPane: String, CaseIterable, Identifiable {
     case general = "General"
+    case addOns = "Add-ons"
     case appearance = "Appearance"
     case assistant = "Assistant"
     case media = "Media"
@@ -63,7 +64,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var group: Group {
         switch self {
-        case .general, .appearance, .shortcuts: .app
+        case .general, .addOns, .appearance, .shortcuts: .app
         case .about: .info
         default: .features
         }
@@ -94,6 +95,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .tasks: "Your list, reminders and a scratchpad."
         case .timer: "Countdowns, Pomodoro and a stopwatch."
         case .stats: "CPU, GPU, memory, temperatures and power."
+        case .addOns: "Search, Shelf and Tasks are always there. Turn on anything else you want."
         case .calendar: "Today's events and heads-ups before meetings."
         case .controls: "Quick toggles, sliders, Keep Awake and a camera mirror."
         case .mouse: "Scroll direction and middle click."
@@ -115,6 +117,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .tasks: "checklist"
         case .timer: "timer"
         case .stats: "gauge.with.dots.needle.50percent"
+        case .addOns: "puzzlepiece.extension.fill"
         case .calendar: "calendar"
         case .controls: "switch.2"
         case .mouse: "computermouse.fill"
@@ -136,6 +139,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .tasks: .teal
         case .timer: Color(red: 1, green: 0.55, blue: 0.15)
         case .stats: .cyan
+        case .addOns: .indigo
         case .calendar: .red
         case .controls: Color(red: 0.35, green: 0.35, blue: 0.4)
         case .mouse: Color(red: 0.4, green: 0.45, blue: 0.55)
@@ -184,6 +188,7 @@ struct SettingsView: View {
                 case .tasks: TasksSettingsPane()
                 case .timer: TimerPane()
                 case .stats: StatsPane()
+                case .addOns: AddOnsPane()
                 case .calendar: CalendarPane()
                 case .controls: ControlsPane()
                 case .mouse: MousePane()
@@ -201,6 +206,32 @@ struct SettingsView: View {
 
 // MARK: - Panes
 
+private struct AddOnsPane: View {
+    @EnvironmentObject private var s: AppSettings
+
+    var body: some View {
+        SettingsPage(pane: .addOns) {
+            Section("Tabs") {
+                ToggleRow("Music", subtitle: "Now playing with controls on a Home tab, plus a live activity beside the notch.",
+                          isOn: Binding(get: { s.musicEnabled }, set: { s.musicEnabled = $0; s.musicLiveActivity = $0 }))
+                ToggleRow("Calendar", subtitle: "Today's events on the Home tab, with meeting alerts. Search can use your calendar either way.",
+                          isOn: $s.calendarEnabled)
+                ToggleRow("Timer", subtitle: "Countdowns, Pomodoro and a stopwatch. “timer 10m” in Search works either way.", isOn: $s.timerEnabled)
+                ToggleRow("Mixer", subtitle: "Per-app volume.", isOn: $s.mixerEnabled)
+                ToggleRow("Controls", subtitle: "Quick toggles: Wi-Fi, dark mode, mic, keep awake.", isOn: $s.controlsEnabled)
+                ToggleRow("Stats", subtitle: "CPU, GPU, memory, temperatures and power.", isOn: $s.statsEnabled)
+            }
+            Section("Extras") {
+                ToggleRow("Camera mirror", subtitle: "A quick look at yourself from the notch.", isOn: $s.cameraMirrorEnabled)
+                ToggleRow("Volume & brightness", subtitle: "Shows them in the notch instead of the system overlay.",
+                          isOn: Binding(get: { s.volumeHUD || s.brightnessHUD }, set: { s.volumeHUD = $0; s.brightnessHUD = $0 }))
+                ToggleRow("Charging animation", subtitle: "When you plug in.", isOn: $s.chargingAnimation)
+                ToggleRow("Morning brief", subtitle: "Your day at a glance on the first unlock of the morning.", isOn: $s.morningBrief)
+            }
+        }
+    }
+}
+
 private struct GeneralPane: View {
     @EnvironmentObject private var s: AppSettings
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
@@ -208,6 +239,8 @@ private struct GeneralPane: View {
     var body: some View {
         SettingsPage(pane: .general) {
             Section("Opening") {
+                ToggleRow("Ready to type when it opens", subtitle: "The cursor is already in the search bar when the notch opens on hover.",
+                          isOn: $s.focusSearchOnHover)
                 Picker(selection: $s.openMode) {
                     ForEach(AppSettings.OpenMode.allCases) { Text($0.label).tag($0) }
                 } label: {
@@ -772,6 +805,19 @@ private struct CalendarPane: View {
                         }
                     }
                 }
+            }
+            Section {
+                Picker("Add new events to", selection: $s.defaultCalendarID) {
+                    Text("System default").tag("")
+                    ForEach(calendar.hasAccess ? calendar.writableCalendars : [], id: \.calendarIdentifier) { cal in
+                        Text(cal.title + (cal.source.map { " · \($0.title)" } ?? "")).tag(cal.calendarIdentifier)
+                    }
+                }
+            } header: {
+                Text("Search bar")
+            } footer: {
+                Text("Type things like “lunch with Sam friday at 1”, “push my 3pm to 4” or “am I free tomorrow afternoon”. Google, Outlook and other calendars work once they're added in System Settings → Internet Accounts.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section("Permission") {
                 PermissionRow(title: "Calendar", state: calendar.hasAccess ? .granted : .unknown) { calendar.requestAccess() }

@@ -22,6 +22,22 @@ struct Command: Identifiable, Equatable {
         case settings
         /// Fills the bar with a command's prefix (from the "/" list).
         case template(String)
+        case createEvent(EventDraft)
+        case moveEvent(id: String, title: String, start: Date, end: Date?)
+        case deleteEvent(id: String, title: String)
+        case media(MediaAction)
+        case openApp(URL)
+    }
+
+    enum MediaAction: String, Equatable { case toggle, play, pause, next, previous }
+
+    /// Safe, easily undone actions run straight away; changing or removing existing things
+    /// (moving or deleting an event, quitting an app) is shown for a quick review first.
+    var runsWithoutReview: Bool {
+        switch action {
+        case .moveEvent, .deleteEvent, .quitApp: false
+        default: true
+        }
     }
 
     let id = UUID()
@@ -51,7 +67,8 @@ enum CommandParser {
             return templates.filter { $0.title.lowercased().contains(rest) || ($0.subtitle ?? "").lowercased().contains(rest) }
         }
 
-        if let c = tasks(q, lower) ?? note(q, lower) ?? complete(q, lower) ?? quit(lower) { return c }
+        if let c = tasks(q, lower) ?? note(q, lower) ?? complete(q, lower) ?? quit(lower) ?? event(q, lower) { return c }
+        if let c = media(lower) { return [c] }
         if let c = timer(lower) ?? awake(lower) ?? control(lower) { return [c] }
         if let c = navigation(lower) { return [c] }
         return []
@@ -140,6 +157,48 @@ enum CommandParser {
         return apps.map { app, name in
             Command(action: .quitApp(app.processIdentifier), title: "Quit \(name)",
                     subtitle: app.isActive ? "Frontmost app" : "Running", icon: "xmark.app", verb: "Quit")
+        }
+    }
+
+    // MARK: - Calendar and media
+
+    private static let eventPrefixes = ["add event ", "new event ", "create event ", "event ", "add to calendar ", "calendar add "]
+
+    /// "event lunch with sam friday 1pm" → a calendar event, without needing the model.
+    private static func event(_ q: String, _ lower: String) -> [Command]? {
+        guard let prefix = eventPrefixes.first(where: lower.hasPrefix) else { return nil }
+        let rest = String(q.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return nil }
+        guard let draft = DueDateParser.event(from: rest) else {
+            return [Command(action: .template(prefix), title: "Add a day and time", subtitle: "“event lunch with Sam friday 1pm”",
+                            icon: "calendar.badge.plus", verb: "Edit")]
+        }
+        return [createEvent(draft)]
+    }
+
+    static func createEvent(_ draft: EventDraft) -> Command {
+        Command(action: .createEvent(draft), title: "Add “\(draft.title)” to your calendar",
+                subtitle: eventText(draft.start, draft.end, allDay: draft.allDay) + (draft.calendarName.map { " · \($0)" } ?? ""),
+                icon: "calendar.badge.plus", verb: "Add")
+    }
+
+    /// "Fri, Oct 9 · 1:00 – 2:00 PM", "Today · 3:00 – 3:30 PM", "Sat, Oct 10 · All day".
+    static func eventText(_ start: Date, _ end: Date, allDay: Bool) -> String {
+        let cal = Calendar.current
+        let day = cal.isDateInToday(start) ? "Today" : cal.isDateInTomorrow(start) ? "Tomorrow"
+            : start.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+        if allDay { return "\(day) · All day" }
+        let t = Date.FormatStyle(date: .omitted, time: .shortened)
+        return "\(day) · \(start.formatted(t)) – \(end.formatted(t))"
+    }
+
+    private static func media(_ lower: String) -> Command? {
+        switch lower {
+        case "play", "play music", "resume music": return Command(action: .media(.play), title: "Play", icon: "play.fill", verb: "Play")
+        case "pause", "pause music", "stop music": return Command(action: .media(.pause), title: "Pause music", icon: "pause.fill", verb: "Pause")
+        case "next", "next song", "skip", "skip song", "next track": return Command(action: .media(.next), title: "Next song", icon: "forward.fill", verb: "Skip")
+        case "previous", "previous song", "last song", "previous track", "back": return Command(action: .media(.previous), title: "Previous song", icon: "backward.fill", verb: "Back")
+        default: return nil
         }
     }
 
@@ -241,6 +300,8 @@ enum CommandParser {
                 icon: "checklist", verb: "Use"),
         Command(action: .template("note "), title: "note …", subtitle: "Jot a line into Notes", icon: "note.text", verb: "Use"),
         Command(action: .template("done "), title: "done …", subtitle: "Tick off a task by name", icon: "checkmark.circle", verb: "Use"),
+        Command(action: .template("event "), title: "event …", subtitle: "“event lunch with Sam friday 1pm for 90 min”",
+                icon: "calendar.badge.plus", verb: "Use"),
         Command(action: .template("timer "), title: "timer 10m", subtitle: "Countdown · or “pomodoro”, “stopwatch”", icon: "timer", verb: "Use"),
         Command(action: .template("quit "), title: "quit …", subtitle: "Quit a running app by name", icon: "xmark.app", verb: "Use"),
         Command(action: .template("keep awake "), title: "keep awake 1h", subtitle: "Also: volume 40, brightness, dark mode, wifi, lock, screenshot",
@@ -250,7 +311,7 @@ enum CommandParser {
     // MARK: - Helpers
 
     /// "10", "10m", "10 min", "1h", "1.5 hours", "1h30" → minutes.
-    static func minutes(in text: String) -> Int? {
+    nonisolated static func minutes(in text: String) -> Int? {
         let t = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: " ", with: "")
         guard !t.isEmpty else { return nil }
         var total = 0.0
@@ -293,12 +354,24 @@ final class CommandCenter: ObservableObject {
         let icon: String
         /// Where "Show" goes.
         var destination: Command.Action?
+        var undo: Undo?
+        var failed = false
+    }
+
+    enum Undo: Equatable {
+        case deleteEvent(id: String)
+        case restoreEvent(id: String, start: Date, end: Date)
+        case recreateEvent(EventDraft)
     }
 
     @Published var confirmation: Confirmation?
 
     /// Runs commands in order and confirms what happened in one line.
     func run(_ commands: [Command]) {
+        if UserDefaults.standard.bool(forKey: "debugDryRun") {
+            DebugHooks.log("DRYRUN " + commands.map { "\($0.title) [\($0.subtitle ?? "")]" }.joined(separator: " + "))
+            return
+        }
         var added = 0, completed = 0, notes = 0
         var other: Confirmation?
         for command in commands {
@@ -332,13 +405,59 @@ final class CommandCenter: ObservableObject {
 
     private func confirm(_ c: Confirmation) {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { confirmation = c }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+        let linger: Double = c.undo != nil || c.failed ? 7 : 4
+        DispatchQueue.main.asyncAfter(deadline: .now() + linger) { [weak self] in
             withAnimation(.easeOut(duration: 0.25)) { if self?.confirmation?.id == c.id { self?.confirmation = nil } }
+        }
+    }
+
+    func undo(_ undo: Undo) {
+        let calendar = CalendarManager.shared
+        do {
+            switch undo {
+            case .deleteEvent(let id): _ = try calendar.delete(id: id)
+            case .restoreEvent(let id, let start, let end): _ = try calendar.move(id: id, to: start, end: end)
+            case .recreateEvent(let draft): _ = try calendar.create(draft)
+            }
+            confirm(Confirmation(text: "Undone", icon: "arrow.uturn.backward"))
+        } catch {
+            confirm(Confirmation(text: error.localizedDescription, icon: "exclamationmark.triangle.fill", failed: true))
         }
     }
 
     /// Single actions; returns a confirmation for the ones that don't explain themselves.
     private func perform(_ command: Command) -> Confirmation? {
+        let calendar = CalendarManager.shared
+        do {
+            switch command.action {
+            case .createEvent(let draft):
+                let id = try calendar.create(draft)
+                return Confirmation(text: "Added “\(draft.title)” · \(CommandParser.eventText(draft.start, draft.end, allDay: draft.allDay))",
+                                    icon: "calendar.badge.checkmark", destination: .show(.home), undo: .deleteEvent(id: id))
+            case .moveEvent(let id, let title, let start, let end):
+                let old = try calendar.move(id: id, to: start, end: end)
+                let newEnd = end ?? start.addingTimeInterval(old.end.timeIntervalSince(old.start))
+                return Confirmation(text: "Moved “\(title)” to \(CommandParser.eventText(start, newEnd, allDay: false))",
+                                    icon: "calendar", destination: .show(.home), undo: .restoreEvent(id: id, start: old.start, end: old.end))
+            case .deleteEvent(let id, let title):
+                let draft = try calendar.delete(id: id)
+                return Confirmation(text: "Deleted “\(title)”", icon: "trash", undo: .recreateEvent(draft))
+            default: break
+            }
+        } catch {
+            return Confirmation(text: error.localizedDescription, icon: "exclamationmark.triangle.fill", failed: true)
+        }
+        if case .media(let m) = command.action {
+            let media = MediaController.shared
+            switch m {
+            case .toggle: media.togglePlayPause()
+            case .play: if !media.isPlaying { media.togglePlayPause() }
+            case .pause: if media.isPlaying { media.togglePlayPause() }
+            case .next: media.nextTrack()
+            case .previous: media.previousTrack()
+            }
+            return nil
+        }
         let timer = TimerStore.shared
         let controls = ControlsService.shared
         switch command.action {
@@ -372,7 +491,11 @@ final class CommandCenter: ObservableObject {
             return Confirmation(text: "Quit \(name)", icon: "xmark.app")
         case .show(let tab, let pane): show(tab, pane: pane); return nil
         case .settings: SettingsWindowController.shared.show(); return nil
-        case .addTasks, .completeTask, .appendNote, .template: return nil
+        case .openApp(let url):
+            NSWorkspace.shared.openApplication(at: url, configuration: .init())
+            NotchPresenter.shared.primary?.close()
+            return nil
+        case .addTasks, .completeTask, .appendNote, .template, .createEvent, .moveEvent, .deleteEvent, .media: return nil
         }
     }
 
@@ -393,11 +516,27 @@ enum CommandPlanner {
     }
 
     static func plan(_ request: String) async throws -> Plan {
-        let now = Date().formatted(date: .complete, time: .shortened)
         let system = """
         You turn a request typed into a Mac's command bar into actions for a notch app with a to-do list, \
-        a notes pad, a timer and keep-awake. It is now \(now).
+        a notes pad, a timer, keep-awake, music controls and the user's calendar.
+        \(DateContext.prompt)
         Action types:
+        {"type":"event","title":"short event name","start":"YYYY-MM-DDTHH:MM, or YYYY-MM-DD for an all-day event","end":"YYYY-MM-DDTHH:MM or null (1 hour)","location":"or null","calendar":"calendar name if the user named one, else null"}
+        {"type":"move_event","event":"words identifying the existing event","on":"YYYY-MM-DD it's currently on, or null","new_start":"YYYY-MM-DDTHH:MM","new_end":"or null to keep its length"}
+        {"type":"delete_event","event":"words identifying the existing event","on":"YYYY-MM-DD or null"}
+        {"type":"media","command":"play|pause|next|previous"}
+        {"type":"complete_task","task":"words from the task's title"}
+        {"type":"stopwatch"}
+        {"type":"timer_control","command":"pause|resume|stop"}
+        {"type":"volume","percent":0-100}
+        {"type":"brightness","percent":0-100}
+        {"type":"toggle","setting":"dark_mode|wifi|mic","state":"on|off|toggle"}
+        {"type":"lock_screen"}
+        {"type":"screenshot"}
+        {"type":"color_picker"}
+        {"type":"open_app","name":"app name"}
+        {"type":"quit_app","name":"app name"}
+        {"type":"show","tab":"tasks|notes|shelf|downloads|timer|mixer|controls|stats|home|settings"}
         {"type":"task","title":"short imperative task","due":"when, in plain words like 'tomorrow 3pm' or 'friday', or null"}
         {"type":"note","text":"the text to jot down"}
         {"type":"timer","minutes":number}
@@ -409,6 +548,9 @@ enum CommandPlanner {
         - "due" only when the user gave a time for that particular item ("call mom tomorrow"). An event date for a \
         whole plan ("party on saturday") is context, not a due date for every step: leave those null.
         - Things to remember or write down are notes, not tasks.
+        - Meetings, appointments, classes, lunches, calls at a set time → "event" (a calendar entry), not a task. \
+        "Remind me to …" without a fixed appointment is a task.
+        - "Move/push/reschedule X to …" → move_event. "Cancel/delete/remove X" → delete_event.
         Reply with JSON only: {"summary":"one short line saying what you'll do","actions":[...]}
         """
         let obj = try await OllamaClient.chatJSON(system: system, user: request)
@@ -425,6 +567,103 @@ enum CommandPlanner {
             case "timer":
                 guard let m = (a["minutes"] as? NSNumber)?.intValue, m > 0, m <= 600 else { continue }
                 commands.append(Command(action: .startTimer(minutes: m), title: "Start a \(CommandParser.durationText(m)) timer", icon: "timer", verb: "Start"))
+            case "event":
+                guard let title = (a["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty,
+                      let start = DateContext.parse(a["start"]) else { continue }
+                let end = DateContext.parse(a["end"])?.date
+                let draft: EventDraft
+                if start.dateOnly {
+                    let day = Calendar.current.startOfDay(for: start.date)
+                    draft = EventDraft(title: title, start: day, end: Calendar.current.date(byAdding: .day, value: 1, to: day)!, allDay: true,
+                                       location: a["location"] as? String, calendarName: a["calendar"] as? String)
+                } else {
+                    draft = EventDraft(title: title, start: start.date,
+                                       end: end.flatMap { $0 > start.date ? $0 : nil } ?? start.date.addingTimeInterval(3600),
+                                       location: (a["location"] as? String).flatMap { $0.isEmpty || $0 == "null" ? nil : $0 },
+                                       calendarName: (a["calendar"] as? String).flatMap { $0.isEmpty || $0 == "null" ? nil : $0 })
+                }
+                commands.append(CommandParser.createEvent(draft))
+            case "move_event":
+                guard let what = a["event"] as? String, let newStart = DateContext.parse(a["new_start"]) else { continue }
+                guard let event = CalendarManager.shared.findEvent(what, near: DateContext.parse(a["on"])?.date) else {
+                    throw CalendarManager.ToolError.notFound(what)
+                }
+                let newEnd = DateContext.parse(a["new_end"])?.date
+                let length = event.endDate.timeIntervalSince(event.startDate)
+                let title = event.title ?? what
+                commands.append(Command(action: .moveEvent(id: event.eventIdentifier, title: title, start: newStart.date, end: newEnd),
+                                        title: "Move “\(title)”",
+                                        subtitle: "\(CommandParser.eventText(event.startDate, event.endDate, allDay: event.isAllDay)) → \(CommandParser.eventText(newStart.date, newEnd ?? newStart.date.addingTimeInterval(length), allDay: false))",
+                                        icon: "calendar", verb: "Move"))
+            case "delete_event":
+                guard let what = a["event"] as? String else { continue }
+                guard let event = CalendarManager.shared.findEvent(what, near: DateContext.parse(a["on"])?.date) else {
+                    throw CalendarManager.ToolError.notFound(what)
+                }
+                let title = event.title ?? what
+                commands.append(Command(action: .deleteEvent(id: event.eventIdentifier, title: title), title: "Delete “\(title)”",
+                                        subtitle: CommandParser.eventText(event.startDate, event.endDate, allDay: event.isAllDay),
+                                        icon: "trash", verb: "Delete"))
+            case "media":
+                let map: [String: Command.MediaAction] = ["play": .play, "pause": .pause, "next": .next, "skip": .next, "previous": .previous]
+                guard let m = map[(a["command"] as? String ?? "").lowercased()] else { continue }
+                commands.append(Command(action: .media(m), title: m == .next ? "Next song" : m == .previous ? "Previous song" : m == .pause ? "Pause music" : "Play music",
+                                        icon: m == .pause ? "pause.fill" : m == .next ? "forward.fill" : m == .previous ? "backward.fill" : "play.fill", verb: "Run"))
+            case "complete_task":
+                let needle = (a["task"] as? String ?? "").lowercased()
+                guard !needle.isEmpty else { continue }
+                let words = needle.split(separator: " ").map(String.init).filter { $0.count > 2 }
+                if let task = TaskStore.shared.open.max(by: { x, y in
+                    words.filter { x.title.lowercased().contains($0) }.count < words.filter { y.title.lowercased().contains($0) }.count
+                }), words.contains(where: { task.title.lowercased().contains($0) }) {
+                    commands.append(Command(action: .completeTask(task.id), title: "Complete “\(task.title)”", icon: "checkmark.circle", verb: "Done"))
+                }
+            case "stopwatch":
+                commands.append(Command(action: .startStopwatch, title: "Start the stopwatch", icon: "stopwatch", verb: "Start"))
+            case "timer_control":
+                switch (a["command"] as? String ?? "").lowercased() {
+                case "pause": commands.append(Command(action: .pauseTimer, title: "Pause the timer", icon: "pause.fill", verb: "Pause"))
+                case "resume": commands.append(Command(action: .resumeTimer, title: "Resume the timer", icon: "play.fill", verb: "Resume"))
+                case "stop": commands.append(Command(action: .stopTimer, title: "Stop the timer", icon: "stop.fill", verb: "Stop"))
+                default: continue
+                }
+            case "volume", "brightness":
+                guard let n = (a["percent"] as? NSNumber)?.intValue, (0...100).contains(n) else { continue }
+                let isVolume = (a["type"] as? String) == "volume"
+                commands.append(isVolume
+                    ? Command(action: .setVolume(Float(n) / 100), title: "Set volume to \(n)%", icon: "speaker.wave.2.fill", verb: "Set")
+                    : Command(action: .setBrightness(Float(n) / 100), title: "Set brightness to \(n)%", icon: "sun.max.fill", verb: "Set"))
+            case "toggle":
+                // "Turn on dark mode" when it's already on does nothing, rather than flipping it off.
+                let state = (a["state"] as? String ?? "toggle").lowercased()
+                let controls = ControlsService.shared
+                func wanted(_ isOn: Bool) -> Bool { state == "on" ? !isOn : state == "off" ? isOn : true }
+                switch (a["setting"] as? String ?? "").lowercased() {
+                case "dark_mode" where wanted(controls.darkMode):
+                    commands.append(Command(action: .toggleDarkMode, title: controls.darkMode ? "Switch to light mode" : "Switch to dark mode",
+                                            icon: "circle.lefthalf.filled", verb: "Switch"))
+                case "wifi" where wanted(controls.wifiOn):
+                    commands.append(Command(action: .toggleWiFi, title: controls.wifiOn ? "Turn Wi-Fi off" : "Turn Wi-Fi on", icon: "wifi", verb: "Toggle"))
+                case "mic" where wanted(!controls.micMuted):
+                    commands.append(Command(action: .toggleMic, title: controls.micMuted ? "Unmute the microphone" : "Mute the microphone",
+                                            icon: "mic.fill", verb: "Toggle"))
+                default: continue
+                }
+            case "lock_screen":
+                commands.append(Command(action: .lockScreen, title: "Lock screen", icon: "lock.fill", verb: "Lock"))
+            case "screenshot":
+                commands.append(Command(action: .screenshot, title: "Take a screenshot", icon: "camera.viewfinder", verb: "Capture"))
+            case "color_picker":
+                commands.append(Command(action: .pickColor, title: "Pick a colour from the screen", icon: "eyedropper", verb: "Pick"))
+            case "open_app":
+                guard let name = a["name"] as? String, let hit = AppIndex.shared.search(name, limit: 1).first else { continue }
+                commands.append(Command(action: .openApp(hit.app.url), title: "Open \(hit.app.name)", icon: "app", verb: "Open"))
+            case "quit_app":
+                guard let name = a["name"] as? String else { continue }
+                commands += CommandParser.parse("quit " + name).filter { if case .quitApp = $0.action { true } else { false } }.prefix(1)
+            case "show":
+                let tab = (a["tab"] as? String ?? "").lowercased()
+                commands += CommandParser.parse("show " + tab).prefix(1)
             case "pomodoro":
                 commands.append(Command(action: .startPomodoro, title: "Start a Pomodoro", icon: "brain.head.profile", verb: "Start"))
             case "keep_awake":
@@ -444,6 +683,7 @@ enum CommandPlanner {
         let lower = q.lowercased()
         guard lower.split(separator: " ").count >= 3 else { return false }
         let starts = ["plan ", "make ", "create ", "list ", "break down ", "help me ", "remind me ", "prepare ", "organize ",
+                      "move ", "reschedule ", "push ", "cancel ", "delete ", "book ", "put ", "block ",
                       "organise ", "schedule ", "add ", "jot ", "write down ", "set up ", "i need to ", "i have to ", "todo ",
                       "to do ", "checklist ", "remember "]
         return starts.contains { lower.hasPrefix($0) } || lower.contains("to-do") || lower.contains("checklist")
