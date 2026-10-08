@@ -9,6 +9,7 @@ struct CollapsedNotchView: View {
     @EnvironmentObject private var battery: BatteryMonitor
     @EnvironmentObject private var tasks: TaskStore
     @EnvironmentObject private var assistant: AssistantStore
+    @EnvironmentObject private var shelf: ShelfStore // the stack of quick drops under the notch
     @ObservedObject private var live = LiveActivities.shared
 
     var body: some View {
@@ -27,6 +28,11 @@ struct CollapsedNotchView: View {
             if let peek = activity.peek, peek.kind.hasSubtitle {
                 subtitle(for: peek)
                     .frame(height: 26)
+                    .transition(.opacity)
+            }
+            if viewModel.showsStack {
+                ShelfStackRow(viewModel: viewModel)
+                    .frame(height: NotchViewModel.stackHeight)
                     .transition(.opacity)
             }
         }

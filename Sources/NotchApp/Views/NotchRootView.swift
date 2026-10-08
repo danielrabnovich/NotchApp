@@ -12,6 +12,7 @@ struct NotchRootView: View {
     @ObservedObject private var live = LiveActivities.shared // …and on the pinned live activities
     @ObservedObject private var speed = SpeedTest.shared // …and on a running speed test
     @ObservedObject private var videos = VideoDownloader.shared // …and on a video download
+    @EnvironmentObject private var shelf: ShelfStore // collapsed height grows for the stack of quick drops
 
     var body: some View {
         let vm = viewModel

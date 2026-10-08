@@ -15,6 +15,9 @@ struct AgentsView: View {
     @AppStorage("agents.pane") private var pane: AgentsPane = .sessions
     @AppStorage("agents.period") private var period: AgentUsageStore.Period = .today
 
+    /// Both panes keep their chart card on the right at this width, so switching panes doesn't flip the layout.
+    static let cardWidth: CGFloat = 236
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -29,6 +32,8 @@ struct AgentsView: View {
                     PeriodPicker(period: $period)
                 }
             }
+            // The period picker's height, on both panes, so the cards below don't shift when switching.
+            .frame(height: 24)
             Group {
                 switch pane {
                 case .sessions:
@@ -36,7 +41,7 @@ struct AgentsView: View {
                         SessionsList()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         TodayCard { pane = .usage }
-                            .frame(width: 222)
+                            .frame(width: AgentsView.cardWidth)
                     }
                 case .usage:
                     UsagePane(period: period)
@@ -256,6 +261,22 @@ private struct UsagePane: View {
     var body: some View {
         let s = store.summary(period)
         HStack(spacing: 10) {
+            if s.tools.isEmpty {
+                Text(store.scanning ? "Reading agent logs…" : "No agent usage in this period")
+                    .font(.system(size: 11.5, weight: .medium)).foregroundStyle(.white.opacity(0.45))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 4) {
+                        ForEach(s.tools) { t in
+                            ToolUsageRow(summary: t, plan: store.plan(for: t.tool), period: period,
+                                         share: s.cost > 0 ? t.cost / s.cost : 0)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(formatDollars(s.cost))
@@ -272,28 +293,12 @@ private struct UsagePane: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .frame(width: 250)
+            .frame(width: AgentsView.cardWidth)
             .frame(maxHeight: .infinity, alignment: .topLeading)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(LinearGradient(colors: [Color.purple.opacity(0.12), .white.opacity(0.035)], startPoint: .top, endPoint: .bottom)))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white.opacity(0.07), lineWidth: 1))
             .help(topModels(s))
-
-            if s.tools.isEmpty {
-                Text(store.scanning ? "Reading agent logs…" : "No agent usage in this period")
-                    .font(.system(size: 11.5, weight: .medium)).foregroundStyle(.white.opacity(0.45))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 4) {
-                        ForEach(s.tools) { t in
-                            ToolUsageRow(summary: t, plan: store.plan(for: t.tool), period: period,
-                                         share: s.cost > 0 ? t.cost / s.cost : 0)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
         }
     }
 

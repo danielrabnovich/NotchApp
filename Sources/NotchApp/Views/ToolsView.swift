@@ -973,7 +973,10 @@ private struct VPNPane: View {
     @EnvironmentObject private var network: NetworkMonitor
 
     var body: some View {
-        HStack(spacing: 10) {
+        // The VPN carrying all traffic also shows where sites see you; the rest only themselves.
+        let carrier = vpn.connections.first { $0.isUp && $0.fullTunnel }?.id
+        let columns = vpn.connections.count > 1 ? 2 : 1
+        VStack(spacing: 6) {
             if vpn.connections.isEmpty {
                 Card {
                     VStack(spacing: 6) {
@@ -986,19 +989,32 @@ private struct VPNPane: View {
                     .foregroundStyle(.white.opacity(0.5))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-            } else if vpn.connections.count == 1, let only = vpn.connections.first {
-                // One VPN: its card matches the height of the card beside it.
-                VPNRow(connection: only, fills: true)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if vpn.connections.count <= 2 {
+                // One or two VPNs: side by side at equal widths, filling the pane.
+                HStack(spacing: 10) {
+                    ForEach(vpn.connections) { VPNRow(connection: $0, showsExit: $0.id == carrier, fills: true) }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 6) {
-                        ForEach(vpn.connections) { VPNRow(connection: $0) }
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10, alignment: .top), count: columns), spacing: 8) {
+                        ForEach(vpn.connections) { VPNRow(connection: $0, showsExit: $0.id == carrier) }
                     }
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            ExitCard().frame(width: 200)
+            if carrier == nil, let exit = vpn.exit {
+                // Nothing tunnels all traffic: say so, with the address sites see.
+                HStack(spacing: 5) {
+                    if !exit.flag.isEmpty { Text(exit.flag).font(.system(size: 10)) }
+                    Text("No VPN carries your traffic · sites see " + exit.ip + (exit.place.isEmpty ? "" : " in " + exit.place))
+                        .lineLimit(1)
+                }
+                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .foregroundStyle(.orange.opacity(0.85))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 4)
+            }
         }
         .onAppear {
             vpn.refresh(exitInfo: vpn.exit == nil)
@@ -1010,8 +1026,11 @@ private struct VPNPane: View {
 
 private struct VPNRow: View {
     let connection: VPNMonitor.Connection
+    /// This VPN carries all traffic: also show where sites see you through it.
+    var showsExit = false
     var fills = false
     @EnvironmentObject private var vpn: VPNMonitor
+    @EnvironmentObject private var network: NetworkMonitor
     @State private var expanded = false
 
     var body: some View {
@@ -1048,16 +1067,7 @@ private struct VPNRow: View {
             }
             if c.isUp {
                 let extra = vpn.extras[c.id]
-                FlowDetails(items: [
-                    c.server.map { ("server.rack", $0, "Server") },
-                    extra?.region.map { ("mappin.and.ellipse", $0, "Region") },
-                    c.tunnelAddresses.first.map { ("number", $0, "Tunnel address") },
-                    c.protocolName.map { ("lock.fill", $0, "Protocol") },
-                    ("arrow.triangle.branch", c.fullTunnel ? "All traffic" : "Split tunnel",
-                     c.fullTunnel ? "Everything goes through the VPN" : "Only some networks go through the VPN"),
-                    extra?.portForward.map { ("arrow.left.arrow.right", "Port " + $0, "Forwarded port") },
-                    c.dns.first.map { ("text.magnifyingglass", "DNS " + $0, "DNS: " + c.dns.joined(separator: ", ")) },
-                ].compactMap { $0 })
+                FlowDetails(items: details(c))
                 if let warning = vpn.dnsWarning(for: c) {
                     Label(warning, systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 9.5)).foregroundStyle(.orange).lineLimit(1)
@@ -1073,6 +1083,41 @@ private struct VPNRow: View {
                                  startPoint: .top, endPoint: .bottom)))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
             .strokeBorder(c.isUp ? statusColor.opacity(0.3) : .white.opacity(0.07), lineWidth: 1))
+        .contextMenu {
+            if showsExit, let ip = vpn.exit?.ip {
+                Button("Copy Public IP") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(ip, forType: .string)
+                }
+            }
+        }
+    }
+
+    /// The tunnel's details, then (for the VPN carrying all traffic) where sites see you through it.
+    private func details(_ c: VPNMonitor.Connection) -> [(icon: String, text: String, help: String)] {
+        let extra = vpn.extras[c.id]
+        let exit = showsExit ? vpn.exit : nil
+        var items: [(icon: String, text: String, help: String)?] = [
+            c.server.map { ("server.rack", $0, "Server") },
+            extra?.region.map { ("mappin.and.ellipse", $0, "Region") },
+            c.tunnelAddresses.first.map { ("number", $0, "Tunnel address" + (c.interface.map { " on " + $0 } ?? "")) },
+            c.protocolName.map { ("lock.fill", $0, "Protocol") },
+            // Showing where sites see you already says everything goes through it.
+            exit == nil ? ("arrow.triangle.branch", c.fullTunnel ? "All traffic" : "Split tunnel",
+                           c.fullTunnel ? "Everything goes through the VPN" : "Only some networks go through the VPN") : nil,
+            extra?.portForward.map { ("arrow.left.arrow.right", "Port " + $0, "Forwarded port") },
+            c.dns.first.map { ("text.magnifyingglass", "DNS " + $0, "DNS: " + c.dns.joined(separator: ", ")) },
+        ]
+        if let exit {
+            let place = exit.city ?? exit.country ?? "Unknown place"
+            items += [
+                ("location.fill", (exit.flag.isEmpty ? "" : exit.flag + " ") + place, "Sites see you in " + (exit.place.isEmpty ? place : exit.place)),
+                ("globe", exit.ip, "Public IP address sites see · right-click to copy"),
+                exit.org.map { ("building.2", $0, "Exit provider") },
+                network.internetPing.map { ("bolt.horizontal", "\(Int($0.rounded())) ms", "Latency") },
+            ]
+        }
+        return items.compactMap { $0 }
     }
 
     private var statusColor: Color {
@@ -1088,7 +1133,6 @@ private struct VPNRow: View {
         if connection.isUp, let since = connection.since {
             parts.append("for " + Self.duration(Date().timeIntervalSince(since)))
         }
-        if let iface = connection.interface, connection.isUp { parts.append(iface) }
         return parts.joined(separator: " · ")
     }
 
@@ -1144,40 +1188,6 @@ private struct WrapLayout: Layout {
             view.place(at: CGPoint(x: x, y: y), proposal: .unspecified)
             x += size.width + spacing
             row = max(row, size.height)
-        }
-    }
-}
-
-/// Where traffic leaves for the internet: the address sites see, its city and provider.
-private struct ExitCard: View {
-    @EnvironmentObject private var vpn: VPNMonitor
-    @EnvironmentObject private var network: NetworkMonitor
-
-    var body: some View {
-        let protected = vpn.connections.contains { $0.isUp && $0.fullTunnel }
-        Card(tint: protected ? ToolsPalette.good : .orange) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 4) {
-                    CardTitle(title: "Seen as", icon: protected ? "lock.shield.fill" : "globe", tint: protected ? ToolsPalette.good : .orange)
-                    Spacer()
-                    Text(protected ? "Via VPN" : "Direct")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundStyle(protected ? ToolsPalette.good : .orange)
-                }
-                if let exit = vpn.exit {
-                    HStack(spacing: 5) {
-                        if !exit.flag.isEmpty { Text(exit.flag).font(.system(size: 16)) }
-                        Text(exit.place.isEmpty ? "Unknown place" : exit.place)
-                            .font(.system(size: 12.5, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                    }
-                    InfoRow(label: "IP", value: exit.ip, copyable: exit.ip)
-                    if let org = exit.org { InfoRow(label: "Provider", value: org) }
-                    InfoRow(label: "Latency", value: network.internetPing.map { "\(Int($0.rounded())) ms" } ?? "–")
-                } else {
-                    Text(vpn.loading ? "Checking…" : "Couldn't look up your address")
-                        .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.45))
-                }
-            }
         }
     }
 }

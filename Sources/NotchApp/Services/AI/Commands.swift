@@ -27,6 +27,8 @@ struct Command: Identifiable, Equatable {
         case deleteEvent(id: String, title: String)
         case media(MediaAction)
         case openApp(URL)
+        /// A System Settings pane or other URL.
+        case openURL(URL)
         case speedTest
         case copyText
         case flushDNS
@@ -79,6 +81,7 @@ enum CommandParser {
 
         if let c = tasks(q, lower) ?? note(q, lower) ?? complete(q, lower) ?? quit(lower) ?? event(q, lower) { return c }
         if let c = port(lower) ?? uninstall(q, lower) ?? clip(q, lower) ?? media(q, lower) { return c }
+        if let c = vpn(lower) { return c }
         if let c = utility(lower) ?? transform(lower) { return [c] }
         if let c = media(lower) { return [c] }
         if let c = timer(lower) ?? awake(lower) ?? control(lower) { return [c] }
@@ -316,6 +319,38 @@ enum CommandParser {
         }
     }
 
+    // MARK: - VPN
+
+    private static let vpnSettingsURL = URL(string: "x-apple.systempreferences:com.apple.NetworkExtensionSettingsUI.NESettingsUIExtension")!
+
+    /// "vpn" → the VPN pane, its System Settings and the VPN apps; "vpn settings" → Settings and the apps.
+    private static func vpn(_ lower: String) -> [Command]? {
+        let word = lower.hasPrefix("show ") ? String(lower.dropFirst(5)) : lower.hasPrefix("go to ") ? String(lower.dropFirst(6)) : lower
+        let config = ["vpn settings", "vpn config", "vpn configuration", "vpn configs", "vpn preferences", "vpn prefs",
+                      "configure vpn", "vpn setup", "set up vpn", "vpn profiles", "my vpn config", "my vpn settings"]
+        guard word == "vpn" || word == "vpns" || config.contains(word) else { return nil }
+        let settings = Command(action: .openURL(vpnSettingsURL), title: "Open VPN settings",
+                               subtitle: "System Settings · profiles, on demand, add a configuration", icon: "gearshape.fill", verb: "Open")
+        var found: [Command] = []
+        // Asking for the config means Settings, not the pane (it'd also keep the highlight off Settings).
+        if AppSettings.shared.toolsEnabled, !config.contains(word) {
+            let up = VPNMonitor.shared.connections.filter(\.isUp).map(\.name)
+            found.append(Command(action: .show(.tools, pane: ToolsPane.vpn.rawValue), title: "Show VPN",
+                                 subtitle: up.isEmpty ? "Not connected" : "Connected · " + up.joined(separator: ", "),
+                                 icon: "lock.shield.fill", verb: "Show"))
+        }
+        found.append(settings)
+        // The VPN apps themselves, for their own server and account settings.
+        let apps = VPNMonitor.shared.connections.compactMap(\.appURL)
+        var seen = Set<URL>()
+        for app in apps where seen.insert(app).inserted {
+            let name = FileManager.default.displayName(atPath: app.path).replacingOccurrences(of: ".app", with: "")
+            found.append(Command(action: .openApp(app), title: "Open \(name)", subtitle: "Servers, account and app settings",
+                                 icon: "arrow.up.forward.app", verb: "Open"))
+        }
+        return found
+    }
+
     // MARK: - Calendar and media
 
     private static let eventPrefixes = ["add event ", "new event ", "create event ", "event ", "add to calendar ", "calendar add "]
@@ -466,7 +501,7 @@ enum CommandParser {
         Command(action: .template("quit "), title: "quit …", subtitle: "Quit a running app by name", icon: "xmark.app", verb: "Use"),
         Command(action: .template("port "), title: "port 3000", subtitle: "See what's listening on a port, and stop it · or “ports”",
                 icon: "point.3.connected.trianglepath.dotted", verb: "Use"),
-        Command(action: .template("speedtest"), title: "speedtest", subtitle: "Internet speed · also: ocr, flush dns, hidden files, night shift",
+        Command(action: .template("speedtest"), title: "speedtest", subtitle: "Internet speed · also: vpn, ocr, flush dns, hidden files, night shift",
                 icon: "speedometer", verb: "Use"),
         Command(action: .template("uninstall "), title: "uninstall …", subtitle: "Remove an app and the files it left behind",
                 icon: "xmark.app", verb: "Use"),
@@ -664,6 +699,10 @@ final class CommandCenter: ObservableObject {
         case .settings: SettingsWindowController.shared.show(); return nil
         case .openApp(let url):
             NSWorkspace.shared.openApplication(at: url, configuration: .init())
+            NotchPresenter.shared.primary?.close()
+            return nil
+        case .openURL(let url):
+            NSWorkspace.shared.open(url)
             NotchPresenter.shared.primary?.close()
             return nil
         case .speedTest:

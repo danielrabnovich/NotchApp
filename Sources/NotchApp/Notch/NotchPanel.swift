@@ -26,6 +26,13 @@ final class NotchPanel: NSPanel {
         becomesKeyOnlyIfNeeded = false
     }
 
+    /// Escape that no text field handled (it travels up the responder chain to here).
+    var onCancel: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) {
+        MainActor.assumeIsolated { onCancel?() }
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 

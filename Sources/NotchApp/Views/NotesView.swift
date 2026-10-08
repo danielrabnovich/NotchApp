@@ -47,6 +47,8 @@ struct NotesView: View {
                     .scrollContentBackground(.hidden)
                     .scrollIndicators(.never)
                     .focused($focused)
+                    // A text view treats Escape as "complete word"; here it means "done editing".
+                    .onKeyPress(.escape) { focused = false; return .handled }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 6)
                 if store.text.isEmpty {

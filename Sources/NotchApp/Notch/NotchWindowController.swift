@@ -79,6 +79,7 @@ final class NotchWindowController {
             guard let self, self.viewModel.isOpen else { return }
             self.panel.makeKey()
         }
+        panel.onCancel = { [weak vm] in vm?.backOut() }
 
         // Hand keyboard focus back to the previous app once the notch closes.
         vm.$isOpen
@@ -132,6 +133,15 @@ final class NotchWindowController {
         return rect(width: size.width + 16, height: size.height + 4)
     }
 
+    /// The stack row hanging under the collapsed notch: hovering it fans the files out rather than
+    /// opening the notch, so they can be dragged straight into another app.
+    private var stackRect: NSRect? {
+        guard !viewModel.isOpen, viewModel.showsStack else { return nil }
+        let size = viewModel.shapeSize
+        return NSRect(x: screen.notchCenterX - size.width / 2, y: screen.frame.maxY - size.height,
+                      width: size.width, height: NotchViewModel.stackHeight + 3)
+    }
+
     private var dragHotRect: NSRect {
         let n = viewModel.notchSize
         return rect(width: n.width + 260, height: n.height + 90)
@@ -161,6 +171,11 @@ final class NotchWindowController {
             }
         }
 
+        let onStack = !dragging && (stackRect?.contains(p) ?? false)
+        if viewModel.stackHovered != onStack {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { viewModel.stackHovered = onStack }
+        }
+
         if inside {
             closeWork?.cancel()
             closeWork = nil
@@ -175,6 +190,10 @@ final class NotchWindowController {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { viewModel.isDragActive = true }
                 }
                 viewModel.open(takeKeyboard: false) // a file drag: the drop bins, not typing
+            } else if onStack {
+                // Resting on the stack is for its files; a click opens the shelf.
+                openWork?.cancel()
+                openWork = nil
             } else if !viewModel.isOpen, settings.openMode == .hover, openWork == nil, !buttonDown {
                 let work = DispatchWorkItem { [weak self] in
                     guard let self else { return }

@@ -31,7 +31,15 @@ final class SearchSuggestions: ObservableObject {
 
     @Published private(set) var items: [Suggestion] = []
     @Published var selected = 0
+    /// File matches are on their way: the list holds placeholder rows for them so they don't pop in.
+    @Published private(set) var loadingFiles = false
     private var fileTask: Task<Void, Never>?
+
+    /// Rows the list shows at most before it scrolls.
+    static let maxRows = 5
+    /// Placeholder rows held while file matches load. Files and screenshots can fill the list, so
+    /// hold all of it: when fewer arrive the list shrinks, which reads better than rows popping in.
+    var placeholderRows: Int { loadingFiles ? max(0, Self.maxRows - items.count) : 0 }
     private var query = ""
     var currentQuery: String { query }
 
@@ -39,6 +47,7 @@ final class SearchSuggestions: ObservableObject {
         let q = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         query = q
         fileTask?.cancel()
+        loadingFiles = false
         guard !q.isEmpty else { set([]); return }
         AppIndex.shared.refreshIfNeeded()
 
@@ -65,6 +74,8 @@ final class SearchSuggestions: ObservableObject {
 
         // File names, after a short pause so every keystroke doesn't hit Spotlight.
         guard q.count >= 3, !acts, QuickAnswers.answer(q) == nil else { return }
+        loadingFiles = true
+        publishRows()
         fileTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(160))
             guard !Task.isCancelled else { return }
@@ -73,6 +84,7 @@ final class SearchSuggestions: ObservableObject {
             guard !Task.isCancelled, let self, self.query == q else { return }
             // Screenshots whose text matches, read on this Mac.
             let shots = AppSettings.shared.screenshotSearch ? ScreenshotText.shared.search(q, limit: 2).filter { !files.contains($0) } : []
+            self.loadingFiles = false
             self.set(Array((head + files.map { .file($0) } + shots.map { .file($0) }).prefix(6)))
         }
     }
@@ -94,6 +106,7 @@ final class SearchSuggestions: ObservableObject {
 
     func clear() {
         fileTask?.cancel()
+        loadingFiles = false
         query = ""
         set([])
     }
@@ -104,5 +117,11 @@ final class SearchSuggestions: ObservableObject {
         // Keep the highlight on the same item when the list refines; otherwise the top one.
         selected = keep.flatMap { k in new.firstIndex(of: k) } ?? 0
         AssistantStore.shared.suggesting = !new.isEmpty
+        publishRows()
+    }
+
+    private func publishRows() {
+        let rows = min(items.count + placeholderRows, Self.maxRows)
+        if AssistantStore.shared.suggestionRows != rows { AssistantStore.shared.suggestionRows = rows }
     }
 }

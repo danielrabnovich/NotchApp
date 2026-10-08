@@ -470,6 +470,19 @@ private struct ShelfSettingsPane: View {
                 }
             }
             if s.shelfEnabled {
+                Section("Quick drops") {
+                    ToggleRow("Stack under the notch",
+                              subtitle: "Dropped files wait under the notch: drag them straight into another app without opening it. Once dropped, they leave the shelf (hold ⌥ to keep them).",
+                              isOn: $s.shelfStack)
+                    Picker(selection: $s.shelfExpiry) {
+                        ForEach(AppSettings.ShelfExpiry.allCases) { Text($0.label).tag($0) }
+                    } label: {
+                        RowLabel(title: "Clear unpinned files",
+                                 subtitle: "Pin a file (right-click it on the shelf) to keep it. Only the shelf entry goes; the file itself isn't touched.")
+                    }
+                }
+            }
+            if s.shelfEnabled {
                 Section {
                     if TaildropService.cli == nil {
                         LabeledContent {

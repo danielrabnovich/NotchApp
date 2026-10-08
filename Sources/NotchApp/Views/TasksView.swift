@@ -93,6 +93,8 @@ struct TasksView: View {
                     addFocused = true
                 }
                 .onExitCommand {
+                    // A second Escape (nothing left to discard) backs out of the notch.
+                    if draft.isEmpty { viewModel.backOut() }
                     draft = ""
                     addFocused = false
                 }

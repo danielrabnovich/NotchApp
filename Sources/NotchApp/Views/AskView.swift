@@ -33,9 +33,10 @@ struct AskView: View {
                     .padding(.horizontal, 4)
                     .transition(.opacity.combined(with: .offset(y: 8)))
             } else if !suggestions.items.isEmpty {
-                SuggestionList(items: suggestions.items, selected: $suggestions.selected, copied: copied, perform: perform)
-                    .padding(5)
-                    .notchSurface(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                SuggestionList(items: suggestions.items, placeholders: suggestions.placeholderRows,
+                               selected: $suggestions.selected, copied: copied, perform: perform)
+                    .padding(SuggestionList.inset)
+                    .notchSurface(RoundedRectangle(cornerRadius: SuggestionList.radius, style: .continuous))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .transition(.opacity.combined(with: .offset(y: -4)))
             } else {
@@ -74,7 +75,12 @@ struct AskView: View {
             resultIndex = 0
             QuickLook.shared.close()
         }
-        .onChange(of: viewModel.isOpen) { _, open in if !open { QuickLook.shared.close() } }
+        .onChange(of: viewModel.isOpen) { _, open in
+            guard !open else { return }
+            QuickLook.shared.close()
+            // Drop focus so the next open focuses the field afresh (and its caret shows).
+            focused = false
+        }
 
         .onChange(of: viewModel.tab) { _, _ in QuickLook.shared.close() }
         .onChange(of: commands.confirmation?.id) { _, new in
@@ -217,7 +223,17 @@ struct AskView: View {
         guard viewModel.isOpen, viewModel.wantsKeyboard, viewModel.tab == .ask else { return }
         viewModel.takeKeyFocus()
         // The window has to be key before the field can take focus.
-        DispatchQueue.main.async { focused = true }
+        DispatchQueue.main.async {
+            focused = true
+            // The field editor can become first responder before the panel is fully key (or while
+            // the open animation is still building the field); it then takes typing but never
+            // starts blinking its caret. Restart the caret once focus has landed.
+            DispatchQueue.main.async {
+                guard let window = NSApp.keyWindow as? NotchPanel,
+                      let editor = window.firstResponder as? NSTextView else { return }
+                editor.updateInsertionPointStateAndRestartTimer(true)
+            }
+        }
     }
 
     private var accent: Color {
@@ -270,7 +286,7 @@ struct AskView: View {
                     } else if assistant.current != nil || !query.isEmpty {
                         assistant.clear(); query = ""; suggestions.clear()
                     } else {
-                        focused = false
+                        viewModel.backOut()
                     }
                 }
 
@@ -288,9 +304,10 @@ struct AskView: View {
                 }
                 .buttonStyle(.plain)
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
-            } else if settings.hotKeysEnabled {
-                // The shortcut that brings the bar back, like Spotlight's ⌘Space.
-                KeyCap(text: settings.hotKeyModifiers.symbol + HotKeys.Action.search.key)
+            } else if settings.hotKeysEnabled, let combo = HotKeys.combo(for: .search) {
+                // The shortcut that brings the bar back, like Spotlight's ⌘Space: whatever it's set to
+                // in Settings (a rebound key, or none when it's turned off).
+                KeyCap(text: combo.display)
                     .transition(.opacity)
             }
         }
@@ -1432,12 +1449,19 @@ private struct ShimmerText: View {
 /// Return acts on the highlighted row.
 private struct SuggestionList: View {
     let items: [Suggestion]
+    /// Rows held for file matches still loading.
+    var placeholders = 0
     @Binding var selected: Int
     let copied: String?
     let perform: (Suggestion) -> Void
     @EnvironmentObject private var assistant: AssistantStore
 
     private let rowHeight: CGFloat = 30
+    /// The list's surface corner and the padding inside it. The highlight sits concentric
+    /// within: its radius is the outer radius minus the inset.
+    static let radius: CGFloat = 16
+    static let inset: CGFloat = 5
+    private static let highlightRadius = radius - inset
 
     var body: some View {
         // Rows are keyed by position and the highlight is one layer behind them: the list changes
@@ -1455,10 +1479,13 @@ private struct SuggestionList: View {
                             .onHover { if $0 { selected = i } }
                             .id(i)
                     }
+                    ForEach(0..<placeholders, id: \.self) { i in
+                        PlaceholderRow(index: i).frame(height: rowHeight)
+                    }
                 }
                 .background(alignment: .top) {
                     if items.indices.contains(selected) {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        RoundedRectangle(cornerRadius: Self.highlightRadius, style: .continuous)
                             .fill(Color.accentColor.gradient)
                             .frame(height: rowHeight)
                             .offset(y: CGFloat(selected) * rowHeight)
@@ -1466,13 +1493,13 @@ private struct SuggestionList: View {
                 }
             }
             .scrollDisabled(items.count <= Self.maxRows)
-            .frame(height: CGFloat(min(items.count, Self.maxRows)) * rowHeight)
+            .frame(height: CGFloat(min(items.count + placeholders, Self.maxRows)) * rowHeight)
             .onChange(of: selected) { _, i in proxy.scrollTo(i) }
         }
         .transaction { $0.animation = nil }
     }
 
-    private static let maxRows = 5
+    private static let maxRows = SearchSuggestions.maxRows
 
     /// One line per result, like Spotlight: icon, name, a dimmer detail, and the action on the selected row.
     @ViewBuilder private func row(_ item: Suggestion, highlighted: Bool) -> some View {
@@ -1578,6 +1605,28 @@ private struct SuggestionList: View {
         case .command(let c): c.verb
         case .plan: "Plan"
         }
+    }
+}
+
+/// A skeleton row held for a file match that's still loading: an icon and a name-length bar,
+/// gently pulsing. Driven by the clock rather than an animation, since the list turns animations off.
+private struct PlaceholderRow: View {
+    let index: Int
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let pulse = 0.5 + 0.5 * sin(t * 2.6 - Double(index) * 0.7)
+            HStack(spacing: 9) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous).frame(width: 20, height: 20)
+                Capsule().frame(width: [150, 110, 170][index % 3], height: 9)
+                Capsule().frame(width: [90, 120, 70][index % 3], height: 7).opacity(0.6)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(.white.opacity(0.06 + 0.05 * pulse))
+            .padding(.horizontal, 9)
+        }
+        .transition(.opacity)
     }
 }
 

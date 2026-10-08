@@ -1,5 +1,6 @@
 import AppKit
 import QuickLookThumbnailing
+import SwiftUI
 import UniformTypeIdentifiers
 
 @MainActor
@@ -7,10 +8,24 @@ final class ShelfItem: ObservableObject, Identifiable {
     let id = UUID()
     let url: URL
     @Published var thumbnail: NSImage
+    /// The file's icon, for places too small for a page preview to read (the stack under the notch).
+    let icon: NSImage
+    /// Images, video and PDFs: a preview says more than the icon, even small.
+    let isVisual: Bool
+    /// When it was dropped (or dropped again): unpinned files expire from then.
+    var added: Date
+    /// Pinned files stay until removed. Unpinned ones are quick drops: they wait in the stack under
+    /// the notch, leave once dragged into another app, and expire.
+    @Published var pinned: Bool
 
-    init(url: URL) {
+    init(url: URL, added: Date = Date(), pinned: Bool = false) {
         self.url = url
-        thumbnail = NSWorkspace.shared.icon(forFile: url.path)
+        self.added = added
+        self.pinned = pinned
+        icon = NSWorkspace.shared.icon(forFile: url.path)
+        thumbnail = icon
+        let type = UTType(filenameExtension: url.pathExtension)
+        isVisual = [UTType.image, .audiovisualContent, .pdf].contains { type?.conforms(to: $0) == true }
         let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: 96, height: 96),
                                                    scale: NSScreen.main?.backingScaleFactor ?? 2,
                                                    representationTypes: .thumbnail)
@@ -23,26 +38,61 @@ final class ShelfItem: ObservableObject, Identifiable {
     var name: String { url.lastPathComponent }
 }
 
-/// Files temporarily parked in the notch. Persisted across launches.
+/// Files parked in the notch. Persisted across launches.
 @MainActor
 final class ShelfStore: ObservableObject {
     static let shared = ShelfStore()
 
     @Published private(set) var items: [ShelfItem] = []
-    private let key = "shelf.paths"
+    private let key = "shelf.items"
+    private var expiryTimer: Timer?
 
-    func load() {
-        let paths = UserDefaults.standard.stringArray(forKey: key) ?? []
-        items = paths.map { URL(fileURLWithPath: $0) }
-            .filter { FileManager.default.fileExists(atPath: $0.path) }
-            .map(ShelfItem.init)
+    private struct Stored: Codable {
+        let path: String
+        let added: Date
+        let pinned: Bool
     }
 
-    func add(_ urls: [URL]) {
-        let existing = Set(items.map(\.url.standardizedFileURL))
-        let fresh = urls.filter { $0.isFileURL && !existing.contains($0.standardizedFileURL) }
-        guard !fresh.isEmpty else { return }
-        items.append(contentsOf: fresh.map(ShelfItem.init))
+    /// Quick drops: the unpinned files, newest first, as the stack under the notch shows them.
+    var stack: [ShelfItem] { items.filter { !$0.pinned }.sorted { $0.added > $1.added } }
+
+    /// Something was dropped in the last few minutes: opening the notch goes to the shelf.
+    var hasFreshDrop: Bool { items.contains { !$0.pinned && Date().timeIntervalSince($0.added) < 5 * 60 } }
+
+    func load() {
+        let defaults = UserDefaults.standard
+        var stored = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode([Stored].self, from: $0) }
+        if stored == nil, let paths = defaults.stringArray(forKey: "shelf.paths") {
+            // From before quick drops: everything already on the shelf was put there to keep.
+            stored = paths.map { Stored(path: $0, added: Date(), pinned: true) }
+            defaults.removeObject(forKey: "shelf.paths")
+        }
+        items = (stored ?? [])
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+            .map { ShelfItem(url: URL(fileURLWithPath: $0.path), added: $0.added, pinned: $0.pinned) }
+        removeExpired()
+        save()
+        expiryTimer?.invalidate()
+        expiryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            MainActor.assumeIsolated { ShelfStore.shared.removeExpired() }
+        }
+    }
+
+    /// Parks files. Dropping one that's already here makes it fresh again (so it doesn't expire).
+    func add(_ urls: [URL], pinned: Bool = false) {
+        var changed = false
+        for url in urls where url.isFileURL {
+            if let existing = items.first(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
+                existing.added = Date()
+                if pinned, !existing.pinned { existing.pinned = true }
+                changed = true
+            } else {
+                items.append(ShelfItem(url: url, pinned: pinned))
+                changed = true
+            }
+        }
+        guard changed else { return }
+        objectWillChange.send()
         save()
     }
 
@@ -60,7 +110,19 @@ final class ShelfStore: ObservableObject {
     }
 
     func remove(_ item: ShelfItem) {
-        items.removeAll { $0.id == item.id }
+        remove([item])
+    }
+
+    func remove(_ gone: [ShelfItem]) {
+        let ids = Set(gone.map(\.id))
+        items.removeAll { ids.contains($0.id) }
+        save()
+    }
+
+    func setPinned(_ item: ShelfItem, _ pinned: Bool) {
+        objectWillChange.send()
+        item.pinned = pinned
+        item.added = Date()
         save()
     }
 
@@ -69,8 +131,26 @@ final class ShelfStore: ObservableObject {
         save()
     }
 
+    /// Drops unpinned files past their time (and anything whose file has gone). The file itself stays put.
+    func removeExpired() {
+        let expiry = AppSettings.shared.shelfExpiry
+        let now = Date()
+        let gone = items.filter { item in
+            if !FileManager.default.fileExists(atPath: item.url.path) { return true }
+            guard !item.pinned else { return false }
+            switch expiry {
+            case .hour: return now.timeIntervalSince(item.added) > 3600
+            case .endOfDay: return !Calendar.current.isDate(item.added, inSameDayAs: now)
+            case .never: return false
+            }
+        }
+        guard !gone.isEmpty else { return }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { remove(gone) }
+    }
+
     private func save() {
-        UserDefaults.standard.set(items.map(\.url.path), forKey: key)
+        let stored = items.map { Stored(path: $0.url.path, added: $0.added, pinned: $0.pinned) }
+        UserDefaults.standard.set(try? JSONEncoder().encode(stored), forKey: key)
     }
 
     // MARK: - Web clippings
@@ -110,7 +190,7 @@ final class ShelfStore: ObservableObject {
         if let data = try? PropertyListSerialization.data(fromPropertyList: ["URL": url.absoluteString], format: .xml, options: 0) {
             try? data.write(to: file)
         }
-        add([file])
+        add([file], pinned: true)
     }
 
     /// Saves a web answer, with its numbered sources, as a text file.
@@ -122,7 +202,7 @@ final class ShelfStore: ObservableObject {
                 .joined(separator: "\n") + "\n"
         }
         try? text.write(to: file, atomically: true, encoding: .utf8)
-        add([file])
+        add([file], pinned: true)
     }
 
     /// The web address inside a .webloc, so dragging it out of the shelf drops a real link.

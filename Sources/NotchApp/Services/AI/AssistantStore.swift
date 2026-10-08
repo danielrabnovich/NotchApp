@@ -39,6 +39,8 @@ final class AssistantStore: ObservableObject {
     @Published private(set) var current: Job?
     /// Results-as-you-type are showing (the notch grows to fit them).
     @Published var suggesting = false
+    /// How many rows the results-as-you-type list shows (placeholders included), so the notch fits it.
+    @Published var suggestionRows = 0
     @Published private(set) var status: OllamaClient.Status = .unknown
     @Published private(set) var pull: OllamaClient.PullProgress?
     /// Download speed in bytes per second, smoothed.

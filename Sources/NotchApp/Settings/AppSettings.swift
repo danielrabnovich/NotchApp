@@ -30,6 +30,19 @@ final class AppSettings: ObservableObject {
         var label: String { self == .albumArt ? "Match album art" : "Custom color" }
     }
 
+    /// When unpinned shelf files (quick drops on their way to another app) leave the shelf.
+    enum ShelfExpiry: String, CaseIterable, Identifiable {
+        case hour, endOfDay, never
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .hour: "After an hour"
+            case .endOfDay: "At the end of the day"
+            case .never: "Never"
+            }
+        }
+    }
+
     enum AnimationStyle: String, CaseIterable, Identifiable {
         case smooth, bouncy
         var id: String { rawValue }
@@ -68,6 +81,9 @@ final class AppSettings: ObservableObject {
     @Published var shelfEnabled: Bool { didSet { defaults.set(shelfEnabled, forKey: "shelfEnabled") } }
     @Published var screenshotCatcher: Bool { didSet { defaults.set(screenshotCatcher, forKey: "screenshotCatcher") } }
     @Published var airDropZone: Bool { didSet { defaults.set(airDropZone, forKey: "airDropZone") } }
+    /// Fresh drops wait in a stack under the collapsed notch, to drag straight out.
+    @Published var shelfStack: Bool { didSet { defaults.set(shelfStack, forKey: "shelfStack") } }
+    @Published var shelfExpiry: ShelfExpiry { didSet { defaults.set(shelfExpiry.rawValue, forKey: "shelfExpiry") } }
 
     // Tasks
     @Published var tasksEnabled: Bool { didSet { defaults.set(tasksEnabled, forKey: "tasksEnabled") } }
@@ -178,6 +194,8 @@ final class AppSettings: ObservableObject {
             "shelfEnabled": true,
             "screenshotCatcher": true,
             "airDropZone": true,
+            "shelfStack": true,
+            "shelfExpiry": ShelfExpiry.hour.rawValue,
             "tasksEnabled": true,
             "showTaskCount": true,
             "timerEnabled": false,
@@ -261,6 +279,8 @@ final class AppSettings: ObservableObject {
         shelfEnabled = defaults.bool(forKey: "shelfEnabled")
         screenshotCatcher = defaults.bool(forKey: "screenshotCatcher")
         airDropZone = defaults.bool(forKey: "airDropZone")
+        shelfStack = defaults.bool(forKey: "shelfStack")
+        shelfExpiry = ShelfExpiry(rawValue: defaults.string(forKey: "shelfExpiry") ?? "") ?? .hour
         tasksEnabled = defaults.bool(forKey: "tasksEnabled")
         showTaskCount = defaults.bool(forKey: "showTaskCount")
         timerEnabled = defaults.bool(forKey: "timerEnabled")

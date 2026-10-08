@@ -158,6 +158,10 @@ enum DebugHooks {
         case "settings": SettingsWindowController.shared.show(pane: SettingsPane(rawValue: parts.dropFirst().joined(separator: " ")))
         case "pull": AssistantStore.shared.pullModel(parts[safe: 1])
         case "cancelpull": AssistantStore.shared.cancelPull()
+        case "shelfadd": // shelfadd <path…>: a quick drop, as if dragged onto the notch
+            ShelfStore.shared.add(parts.dropFirst().map { URL(fileURLWithPath: $0) })
+        case "shelfclearquick": ShelfStore.shared.remove(ShelfStore.shared.stack)
+        case "stackhover": c.viewModel.stackHovered = parts[safe: 1] != "0"
         case "suggest": SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
         case "spectrum":
             let sp = AudioSpectrum.shared

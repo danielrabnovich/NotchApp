@@ -101,7 +101,14 @@ final class NotchViewModel: ObservableObject {
     /// The Ask tab grows taller once it has results so they never feel cramped.
     var openSize: CGSize {
         let assistant = AssistantStore.shared
-        let roomy = tab == .ask && (assistant.current != nil || assistant.suggesting) && overlay == nil && !isDragActive
+        let onAsk = tab == .ask && overlay == nil && !isDragActive && !mirror
+        if onAsk, assistant.current == nil, assistant.suggesting {
+            // Fit the results-as-you-type list: content insets (8 + 16), the compact bar with its
+            // glow room (7 + 38), the gap (6), the list's padding (2 × 5) and its rows.
+            let list = 85 + CGFloat(assistant.suggestionRows) * 30
+            return CGSize(width: openWidth, height: notchSize.height + min(258, max(168, list)))
+        }
+        let roomy = onAsk && assistant.current != nil
         return CGSize(width: openWidth, height: notchSize.height + (roomy || mirror ? 258 : 168))
     }
 
@@ -166,10 +173,27 @@ final class NotchViewModel: ObservableObject {
         }
     }
 
+    /// Quick drops wait in a stack hanging under the collapsed notch.
+    var showsStack: Bool {
+        let s = AppSettings.shared
+        return s.shelfEnabled && s.shelfStack && !ShelfStore.shared.stack.isEmpty
+    }
+
+    /// Height of the stack row under the collapsed notch.
+    static let stackHeight: CGFloat = 32
+
+    /// The pointer is on the stack: it fans out into its files (set by the window controller).
+    @Published var stackHovered = false
+
     var collapsedSize: CGSize {
         var w = notchSize.width + 2 * sideWidth
         var h = notchSize.height
         if case .peek(let kind) = activity, kind.hasSubtitle { h += 26 }
+        if showsStack {
+            h += Self.stackHeight
+            // Room to fan the files out on hover.
+            if stackHovered { w = max(w, notchSize.width + 70) }
+        }
         if isHovering, !isOpen {
             w += 14
             h += 3
@@ -189,8 +213,13 @@ final class NotchViewModel: ObservableObject {
 
     func open(tab: NotchTab? = nil, takeKeyboard: Bool = true) {
         if takeKeyboard { wantsKeyboard = true }
-        // Search is the default view each time the notch opens.
-        let target = tab ?? (tabs.contains(.ask) ? .ask : nil)
+        // Search is the default view each time the notch opens, unless something was just dropped
+        // on the shelf: then it opens where those files are.
+        var target = tab ?? (tabs.contains(.ask) ? .ask : nil)
+        if tab == nil, tabs.contains(.shelf), ShelfStore.shared.hasFreshDrop {
+            target = .shelf
+            UserDefaults.standard.set(ShelfPane.shelf.rawValue, forKey: "shelf.pane")
+        }
         if let target, tabs.contains(target) { self.tab = target }
         guard !isOpen else { return }
         if overlay == nil, let prompt = NotchPresenter.shared.takePendingPrompt() { overlay = .prompt(prompt) }
@@ -218,6 +247,22 @@ final class NotchViewModel: ObservableObject {
             pageOffset = 0
             overlay = nil
             mirror = false
+        }
+    }
+
+    /// Escape: steps back one level — a brief or the camera mirror first, then another tab back to
+    /// search, then closes the notch. Text fields handle their own Escape (clear, stop editing) first.
+    func backOut() {
+        guard isOpen else { return }
+        if overlay != nil || mirror {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                overlay = nil
+                mirror = false
+            }
+        } else if tabs.contains(.ask), tab != .ask {
+            select(.ask)
+        } else {
+            close()
         }
     }
 

@@ -65,7 +65,8 @@ struct ShelfView: View {
                         } else {
                             HStack(spacing: 6) {
                                 ForEach(converter.jobs.filter(\.isActive).prefix(2)) { ConvertJobTile(job: $0) }
-                                TileStrip(items: shelf.items, regionID: "shelf", viewModel: viewModel) {
+                                // Quick drops first (newest first), then what's pinned to stay.
+                                TileStrip(items: shelf.stack + shelf.items.filter(\.pinned), regionID: "shelf", viewModel: viewModel) {
                                     ShelfTile(item: $0, kind: .shelf)
                                 }
                             }
@@ -116,10 +117,15 @@ struct ShelfView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white.opacity(0.5))
             } else if !shelf.items.isEmpty {
-                Button("Clear") { withAnimation(.spring(response: 0.3)) { shelf.clear() } }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.5))
+                // Like the clipboard: Clear keeps pinned files; with only pinned ones left it clears those.
+                let quick = shelf.stack
+                Button(quick.isEmpty ? "Clear All" : "Clear") {
+                    withAnimation(.spring(response: 0.3)) { quick.isEmpty ? shelf.clear() : shelf.remove(quick) }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.5))
+                .help(quick.isEmpty ? "Removes everything from the shelf" : "Clears everything except pinned files")
             }
         }
     }
@@ -207,6 +213,17 @@ private struct ShelfTile: View {
         }
         .padding(6)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(hovering ? 0.1 : 0)))
+        .overlay(alignment: .topLeading) {
+            if kind == .shelf && item.pinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .rotationEffect(.degrees(45))
+                    .shadow(color: .black, radius: 1.5)
+                    .padding(5)
+                    .help("Pinned: stays on the shelf")
+            }
+        }
         .overlay(alignment: .topTrailing) {
             if hovering && kind == .shelf {
                 Button { withAnimation(.spring(response: 0.3)) { ShelfStore.shared.remove(item) } } label: {
@@ -229,6 +246,10 @@ private struct ShelfTile: View {
         .contextMenu {
             Button("Open") { NSWorkspace.shared.open(item.url) }
             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+            if kind == .shelf {
+                // Pinned files stay; unpinned ones are quick drops that leave once used or expired.
+                Button(item.pinned ? "Unpin" : "Pin to Shelf") { ShelfStore.shared.setPinned(item, !item.pinned) }
+            }
             if kind == .download {
                 Button("Add to Shelf") { ShelfStore.shared.add([item.url]) }
             }
