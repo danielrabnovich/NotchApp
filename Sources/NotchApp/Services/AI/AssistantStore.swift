@@ -7,7 +7,7 @@ import SwiftUI
 final class AssistantStore: ObservableObject {
     static let shared = AssistantStore()
 
-    enum Route: String { case files, web, weather, actions, calendar, notes }
+    enum Route: String { case files, web, weather, actions, calendar, notes, screen }
 
     enum State: Equatable {
         case running(stage: String)
@@ -31,6 +31,8 @@ final class AssistantStore: ObservableObject {
         var notes: NotesAnswer?
         /// Proposed commands for the user to review (the actions route).
         var plan: CommandPlanner.Plan?
+        /// What the screen looked like, for a question about it (a small preview; nothing is saved).
+        var screen: NSImage?
         let startedAt = Date()
 
         var isRunning: Bool { if case .running = state { true } else { false } }
@@ -220,7 +222,9 @@ final class AssistantStore: ObservableObject {
             }
         }
         task?.cancel()
-        let job = Job(query: trimmed, route: forced)
+        // "What's the answer to this question": look at the screen now, before anything on it changes.
+        let aboutScreen = forced == .screen || (forced == nil && AppSettings.shared.screenQuestions && Router.isAboutScreen(trimmed))
+        let job = Job(query: trimmed, route: aboutScreen ? .screen : forced)
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
 
         task = Task {
@@ -231,10 +235,15 @@ final class AssistantStore: ObservableObject {
             var pendingMore: FileFinder.More?
             do {
                 let useAI = self.aiAvailable
+                if aboutScreen {
+                    try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
+                    throw Finished()
+                }
                 var understanding = Router.understandWithoutAI(trimmed)
                 if useAI, let smart = try? await Router.understand(trimmed) { understanding = smart }
                 understanding.dayOffset = Router.weekendAdjusted(trimmed, dayOffset: understanding.dayOffset)
-                let route = forced ?? understanding.route
+                var route = forced ?? understanding.route
+                if route == .screen, !AppSettings.shared.screenQuestions { route = .web }
                 update(id) { $0.route = route }
                 switch route {
                 case .files:
@@ -273,6 +282,8 @@ final class AssistantStore: ObservableObject {
                     let answer = await NotesQuery.answer(trimmed, useAI: useAI)
                     try Task.checkCancellation()
                     update(id) { $0.notes = answer; $0.state = .done }
+                case .screen:
+                    try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
                 case .weather:
                     await progress("Checking the forecast")
                     let report = try await WeatherService.report(location: understanding.location, dayOffset: understanding.dayOffset)
@@ -281,6 +292,7 @@ final class AssistantStore: ObservableObject {
                 }
             } catch is CancellationError {
                 return
+            } catch is Finished {
             } catch {
                 update(id) { $0.state = .failed(error.localizedDescription) }
             }
@@ -303,11 +315,30 @@ final class AssistantStore: ObservableObject {
         }
     }
 
+    private struct Finished: Error {}
+
+    private func answerAboutScreen(_ query: String, id: UUID, useAI: Bool,
+                                   progress: @escaping @Sendable (String) async -> Void) async throws {
+        guard useAI else {
+            throw OllamaClient.OllamaError(message: "Questions about your screen need the local model. Start Ollama in Settings → AI.")
+        }
+        await progress("Looking at your screen")
+        let capture = try await ScreenQuestion.capture()
+        try Task.checkCancellation()
+        let preview = ScreenQuestion.thumbnail(capture.image)
+        update(id) { $0.screen = preview; $0.route = .screen }
+        let (answer, sources) = try await ScreenQuestion.answer(query, capture: capture, progress: progress) { soFar, sources in
+            await MainActor.run { AssistantStore.shared.update(id, animated: false) { $0.answer = soFar; $0.sources = sources } }
+        }
+        try Task.checkCancellation()
+        update(id) { $0.answer = answer; $0.sources = sources; $0.state = .done }
+    }
+
     /// Same question, the other way (files ↔ web).
     func switchRoute() {
         guard let job = current, let route = job.route, route != .actions, route != .calendar else { return }
-        // Files ↔ web; a weather answer switches to a full web search.
-        run(job.query, route: route == .files || route == .weather ? .web : .files)
+        // Files ↔ web; a weather or screen answer switches to a full web search.
+        run(job.query, route: [.files, .weather, .screen].contains(route) ? .web : .files)
     }
 
     func clear() {
@@ -386,10 +417,13 @@ enum Router {
         - "notes": questions about what they wrote down in this app's notes or to-do list: "what's in my notes", \
         "what did I note about the palette", "what's the door code I saved", "my tasks about the launch". \
         Not documents on the Mac ("my notes from biology class" is files).
+        - "screen": a question about something on their screen right now, usually pointing at it with "this" \
+        without saying what it is: "what's the answer to this question", "explain this error", "summarize this \
+        page", "is this right", "translate this", "what does this mean", "help me reply to this email".
         - "web": questions and information from the internet: facts, news, sports, prices, places, hours, how-to, \
         definitions, recommendations.
         Reply with JSON only:
-        {"route": "files" or "web" or "weather" or "actions" or "calendar" or "notes",
+        {"route": "files" or "web" or "weather" or "actions" or "calendar" or "notes" or "screen",
          "web_query": "concise search-engine query; keep time words like latest/last/this as written, don't add years",
          "location": "city for weather, or null if none given",
          "day_offset": 0 for today, 1 for tomorrow, etc. (weather only),
@@ -427,6 +461,25 @@ extension Router {
         guard query.lowercased().contains("weekend") else { return dayOffset }
         let weekday = Calendar.current.component(.weekday, from: Date()) // 1 = Sunday … 7 = Saturday
         return weekday == 7 || weekday == 1 ? 0 : 7 - weekday
+    }
+
+    /// Phrasings that clearly point at the screen, so they skip the router (and the screen is
+    /// looked at a moment sooner).
+    static func isAboutScreen(_ query: String) -> Bool {
+        let lower = query.lowercased().replacingOccurrences(of: "’", with: "'")
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        let anywhere = ["on my screen", "on the screen", "what am i looking at", "what i'm looking at",
+                        "answer to this", "answer this", "solve this", "this question", "this problem", "this quiz",
+                        "this error", "this page", "this email", "this message", "this article", "this code", "this chart",
+                        "this graph", "this diagram", "this equation", "this paragraph", "this window",
+                        "explain this", "summarize this", "summarise this", "translate this", "is this right",
+                        "is this correct", "what does this mean", "reply to this", "respond to this"]
+        // "What is this" alone is about the screen; "what is this weekend's forecast" isn't.
+        let whole = ["what's this", "whats this", "what is this", "check this", "fix this", "read this"]
+        if whole.contains(lower) { return true }
+        return anywhere.contains { phrase in
+            lower.range(of: "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b", options: .regularExpression) != nil
+        }
     }
 
     /// Keyword routing for when no model is available.

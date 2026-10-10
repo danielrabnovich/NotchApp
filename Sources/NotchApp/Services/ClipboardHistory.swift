@@ -77,6 +77,11 @@ final class ClipboardHistory: ObservableObject {
         timer = t
     }
 
+    /// The clipboard's current contents are the app's own (a screenshot copied from the shelf).
+    func ignoreCurrent() {
+        ignoreChange = NSPasteboard.general.changeCount
+    }
+
     var pinned: [Clip] { clips.filter(\.pinned) }
 
     // MARK: - Capture

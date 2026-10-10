@@ -147,7 +147,7 @@ struct AskView: View {
     /// suggestion list's files and apps (nil entries for rows that aren't files).
     private var browsable: [URL] {
         guard let job = assistant.current else { return [] }
-        let streaming = job.route == .web && !(job.answer ?? "").isEmpty
+        let streaming = (job.route == .web || job.route == .screen) && !(job.answer ?? "").isEmpty
         guard job.state == .done || streaming else { return [] }
         switch job.route {
         case .files?: return job.files.map(\.url)
@@ -345,6 +345,7 @@ struct AskView: View {
         case .actions?: "sparkles"
         case .calendar?: "calendar"
         case .notes?: "note.text"
+        case .screen?: "macwindow"
         case nil: "magnifyingglass"
         }
     }
@@ -608,6 +609,8 @@ private struct ResultView: View {
         case .running where job.route == .web && !(job.answer ?? "").isEmpty:
             // The answer streams in as it's written.
             WebResults(job: job, accent: accent, selection: $selection)
+        case .running where job.route == .screen && !(job.answer ?? "").isEmpty:
+            ScreenResults(job: job, accent: accent, selection: $selection)
         case .running(let stage):
             VStack(spacing: 10) {
                 Spacer(minLength: 0)
@@ -619,6 +622,7 @@ private struct ResultView: View {
                      : job.route == .weather ? "Getting the weather" : job.route == .actions ? "Turning that into actions"
                      : job.route == .calendar ? "Reading your calendar"
                      : job.route == .notes ? "Looking in your notes"
+                     : job.route == .screen ? "Only on this Mac · nothing is saved"
                      : "Working out where to look")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.3))
@@ -629,10 +633,16 @@ private struct ResultView: View {
             VStack(spacing: 10) {
                 Image(systemName: "exclamationmark.triangle").font(.system(size: 20))
                 Text(message).font(.system(size: 12)).multilineTextAlignment(.center)
-                Button("Try again") { assistant.run(job.query, route: job.route) }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(accent)
+                HStack(spacing: 16) {
+                    // Straight to the right list: "Screen Recording" is easy to confuse with Accessibility.
+                    if job.route == .screen, !ScreenQuestion.hasPermission {
+                        Button("Open Screen Recording settings") { ScreenQuestion.openPrivacySettings() }
+                    }
+                    Button("Try again") { assistant.run(job.query, route: job.route) }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(accent)
             }
             .foregroundStyle(.white.opacity(0.6))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -645,6 +655,7 @@ private struct ResultView: View {
                 case .weather?: if let report = job.weather { WeatherCard(report: report, accent: accent) }
                 case .calendar?: if let answer = job.calendar { CalendarResult(answer: answer) }
                 case .notes?: if let answer = job.notes { NotesResult(answer: answer) }
+                case .screen?: ScreenResults(job: job, accent: accent, selection: $selection)
                 default: WebResults(job: job, accent: accent, selection: $selection)
                 }
                 RouteFooter(job: job)
@@ -664,6 +675,7 @@ private struct RouteFooter: View {
         case .weather?: ("cloud.sun", "Open-Meteo forecast")
         case .calendar?: ("calendar", job.calendar?.tasks.isEmpty == false ? "Your calendar and tasks" : "Your calendar")
         case .notes?: ("note.text", "Your notes and tasks")
+        case .screen?: ("macwindow", job.sources.isEmpty ? "Looked at your screen" : "Your screen and the web")
         default: ("globe", "Searched the web")
         }
     }
@@ -973,6 +985,62 @@ private struct WebResults: View {
                     VStack(spacing: 2) {
                         ForEach(Array(job.sources.prefix(5).enumerated()), id: \.element.id) { i, source in
                             SourceRow(index: i + 1, source: source, selected: i == selection)
+                        }
+                    }
+                }
+            }
+            .frame(width: 200)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// An answer about what's on screen: the answer, and beside it the screen it looked at (plus any
+/// web sources it needed).
+private struct ScreenResults: View {
+    let job: AssistantStore.Job
+    let accent: Color
+    @Binding var selection: Int
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 18) {
+            ScrollView(.vertical, showsIndicators: false) {
+                AnswerText(text: job.answer ?? "", accent: accent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Your screen")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.35))
+                    Spacer()
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(job.answer ?? "", forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc").font(.system(size: 10))
+                    }
+                    .buttonStyle(NotchIconButtonStyle(size: 20))
+                    .help("Copy answer")
+                }
+                .padding(.leading, 6)
+                if let screen = job.screen {
+                    Image(nsImage: screen)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.white.opacity(0.12)))
+                        .frame(maxHeight: job.sources.isEmpty ? 120 : 64, alignment: .top)
+                        .padding(.leading, 6)
+                }
+                if !job.sources.isEmpty {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 2) {
+                            ForEach(Array(job.sources.prefix(3).enumerated()), id: \.element.id) { i, source in
+                                SourceRow(index: i + 1, source: source, selected: i == selection)
+                            }
                         }
                     }
                 }

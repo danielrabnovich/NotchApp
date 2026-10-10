@@ -1,7 +1,9 @@
 import AppKit
 import Combine
 
-/// Drops every new screenshot onto the shelf, wherever macOS saves it.
+/// Drops every new screenshot onto the shelf (and the clipboard), wherever macOS saves it. The
+/// screenshot folder is watched directly so it lands within a moment; Spotlight catches the rest
+/// (screenshots saved somewhere else, or a folder changed later).
 @MainActor
 final class ScreenshotWatcher {
     static let shared = ScreenshotWatcher()
@@ -10,6 +12,9 @@ final class ScreenshotWatcher {
     private var observer: NSObjectProtocol?
     private var cancellables = Set<AnyCancellable>()
     private var startedAt = Date()
+    private var folderWatch: DispatchSourceFileSystemObject?
+    private var watchedFolder: URL?
+    private var seen = Set<String>()
 
     func start() {
         let settings = AppSettings.shared
@@ -32,9 +37,58 @@ final class ScreenshotWatcher {
         }
         q.start()
         query = q
+        watchFolder()
+    }
+
+    /// Where screenshots are saved: the Screenshot app's chosen folder, or the Desktop.
+    private static var screenshotFolder: URL {
+        let custom = UserDefaults(suiteName: "com.apple.screencapture")?.string(forKey: "location")
+            .map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
+        if let custom, FileManager.default.fileExists(atPath: custom.path) { return custom }
+        return FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+    }
+
+    /// Opening the folder can wait on a macOS privacy prompt (the Desktop is protected), so it
+    /// happens off the main thread; the app would freeze at launch otherwise.
+    private func watchFolder() {
+        let folder = Self.screenshotFolder
+        DispatchQueue.global(qos: .utility).async {
+            let fd = open(folder.path, O_EVTONLY)
+            guard fd >= 0 else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let watcher = ScreenshotWatcher.shared
+                    guard watcher.query != nil, watcher.folderWatch == nil else { close(fd); return }
+                    let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: .write, queue: .main)
+                    source.setEventHandler { MainActor.assumeIsolated { ScreenshotWatcher.shared.scanFolder() } }
+                    source.setCancelHandler { close(fd) }
+                    source.resume()
+                    watcher.folderWatch = source
+                    watcher.watchedFolder = folder
+                }
+            }
+        }
+    }
+
+    /// New files in the folder that macOS marked as screen captures.
+    private func scanFolder() {
+        guard let folder = watchedFolder else { return }
+        let keys: [URLResourceKey] = [.creationDateKey]
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: keys,
+                                                                 options: [.skipsHiddenFiles])) ?? []
+        let fresh = files.filter { url in
+            guard !seen.contains(url.path),
+                  let created = try? url.resourceValues(forKeys: [.creationDateKey]).creationDate,
+                  created >= startedAt.addingTimeInterval(-2), Date().timeIntervalSince(created) < 60 else { return false }
+            return getxattr(url.path, "com.apple.metadata:kMDItemIsScreenCapture", nil, 0, 0, 0) > 0
+        }
+        guard !fresh.isEmpty else { return }
+        catchScreenshots(fresh)
     }
 
     private func end() {
+        folderWatch?.cancel()
+        folderWatch = nil
         query?.stop()
         query = nil
         if let observer { NotificationCenter.default.removeObserver(observer) }
@@ -48,7 +102,12 @@ final class ScreenshotWatcher {
             guard created >= startedAt.addingTimeInterval(-2) else { return nil }
             return URL(fileURLWithPath: path)
         }
+        catchScreenshots(urls.filter { !seen.contains($0.path) })
+    }
+
+    private func catchScreenshots(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
+        seen.formUnion(urls.map(\.path))
         ShelfStore.shared.add(urls)
         ActivityCenter.shared.show(.screenshot(count: urls.count), for: 3)
     }

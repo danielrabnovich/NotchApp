@@ -229,20 +229,22 @@ enum OllamaClient {
     }
 
     /// Streams the reply, calling `onText` with the full text so far.
-    static func chatStream(system: String, user: String, temperature: Double = 0.3,
+    static func chatStream(system: String, user: String, images: [Data] = [], temperature: Double = 0.3,
                            onText: @escaping @Sendable (String) async -> Void) async throws -> String {
         do {
-            return try await chatStream(system: system, user: user, temperature: temperature, disableThinking: true, onText: onText)
+            return try await chatStream(system: system, user: user, images: images, temperature: temperature, disableThinking: true, onText: onText)
         } catch let error as OllamaError where error.isThinkingUnsupported {
-            return try await chatStream(system: system, user: user, temperature: temperature, disableThinking: false, onText: onText)
+            return try await chatStream(system: system, user: user, images: images, temperature: temperature, disableThinking: false, onText: onText)
         }
     }
 
-    private static func chatStream(system: String, user: String, temperature: Double, disableThinking: Bool,
+    private static func chatStream(system: String, user: String, images: [Data], temperature: Double, disableThinking: Bool,
                                    onText: @escaping @Sendable (String) async -> Void) async throws -> String {
+        var message: [String: Any] = ["role": "user", "content": user]
+        if !images.isEmpty { message["images"] = images.map { $0.base64EncodedString() } }
         var body: [String: Any] = [
             "model": await model,
-            "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
+            "messages": [["role": "system", "content": system], message],
             "stream": true,
             "keep_alive": "15m",
             "options": ["temperature": temperature, "num_ctx": 16384],

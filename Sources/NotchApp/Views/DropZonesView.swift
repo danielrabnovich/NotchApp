@@ -40,10 +40,7 @@ struct DropZonesView: View {
                         detail: preview?.hasFiles == true ? "Keep it handy" : "Files only",
                         detailIcon: nil, tint: .orange,
                         enabled: preview?.hasFiles == true) {
-                    let urls = NSPasteboard(name: .drag)
-                        .readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-                    guard !urls.isEmpty else { return false }
-                    ShelfStore.shared.add(urls)
+                    guard ShelfStore.shared.addDrop(from: NSPasteboard(name: .drag)) else { return false }
                     finish(on: .shelf)
                     return true
                 }

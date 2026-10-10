@@ -83,6 +83,10 @@ final class AppSettings: ObservableObject {
     @Published var airDropZone: Bool { didSet { defaults.set(airDropZone, forKey: "airDropZone") } }
     /// Fresh drops wait in a stack under the collapsed notch, to drag straight out.
     @Published var shelfStack: Bool { didSet { defaults.set(shelfStack, forKey: "shelfStack") } }
+    /// Whatever was just added to the shelf goes on the clipboard too, ready to paste.
+    @Published var copyShelfAdds: Bool { didSet { defaults.set(copyShelfAdds, forKey: "copyShelfAdds") } }
+    /// Caught screenshots are thrown away 15 minutes after they're taken, or a minute after a paste.
+    @Published var screenshotCleanup: Bool { didSet { defaults.set(screenshotCleanup, forKey: "screenshotCleanup") } }
     @Published var shelfExpiry: ShelfExpiry { didSet { defaults.set(shelfExpiry.rawValue, forKey: "shelfExpiry") } }
 
     // Tasks
@@ -154,6 +158,8 @@ final class AppSettings: ObservableObject {
     @Published var systemNotifications: Bool { didSet { defaults.set(systemNotifications, forKey: "systemNotifications") } }
     @Published var imageIndexing: Bool { didSet { defaults.set(imageIndexing, forKey: "imageIndexing") } }
     @Published var homeCity: String { didSet { defaults.set(homeCity, forKey: "homeCity") } }
+    /// "What's the answer to this question" looks at the screen (captured in memory, never saved).
+    @Published var screenQuestions: Bool { didSet { defaults.set(screenQuestions, forKey: "screenQuestions") } }
 
     // Brief & nudges
     @Published var morningBrief: Bool { didSet { defaults.set(morningBrief, forKey: "morningBrief") } }
@@ -195,6 +201,8 @@ final class AppSettings: ObservableObject {
             "screenshotCatcher": true,
             "airDropZone": true,
             "shelfStack": true,
+            "copyShelfAdds": true,
+            "screenshotCleanup": true,
             "shelfExpiry": ShelfExpiry.hour.rawValue,
             "tasksEnabled": true,
             "showTaskCount": true,
@@ -244,6 +252,7 @@ final class AppSettings: ObservableObject {
             "systemNotifications": true,
             "imageIndexing": true,
             "homeCity": "",
+            "screenQuestions": true,
             "morningBrief": false,
             "briefHour": 6,
             "dueNudges": true,
@@ -280,6 +289,8 @@ final class AppSettings: ObservableObject {
         screenshotCatcher = defaults.bool(forKey: "screenshotCatcher")
         airDropZone = defaults.bool(forKey: "airDropZone")
         shelfStack = defaults.bool(forKey: "shelfStack")
+        copyShelfAdds = defaults.bool(forKey: "copyShelfAdds")
+        screenshotCleanup = defaults.bool(forKey: "screenshotCleanup")
         shelfExpiry = ShelfExpiry(rawValue: defaults.string(forKey: "shelfExpiry") ?? "") ?? .hour
         tasksEnabled = defaults.bool(forKey: "tasksEnabled")
         showTaskCount = defaults.bool(forKey: "showTaskCount")
@@ -331,6 +342,7 @@ final class AppSettings: ObservableObject {
         systemNotifications = defaults.bool(forKey: "systemNotifications")
         imageIndexing = defaults.bool(forKey: "imageIndexing")
         homeCity = defaults.string(forKey: "homeCity") ?? ""
+        screenQuestions = defaults.bool(forKey: "screenQuestions")
         morningBrief = defaults.bool(forKey: "morningBrief")
         briefHour = defaults.integer(forKey: "briefHour")
         dueNudges = defaults.bool(forKey: "dueNudges")

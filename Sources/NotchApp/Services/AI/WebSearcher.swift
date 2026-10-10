@@ -34,7 +34,8 @@ enum WebSearcher {
     }
     private static let gate = Gate()
 
-    static func answer(_ question: String, searchQuery: String, useAI: Bool = true,
+    /// `screenContext` is set when the question is about what's on screen (see `ScreenQuestion`).
+    static func answer(_ question: String, searchQuery: String, useAI: Bool = true, screenContext: String? = nil,
                        progress: @escaping @Sendable (String) async -> Void,
                        partial: @escaping @Sendable (String, [WebSource]) async -> Void) async throws -> (answer: String, sources: [WebSource]) {
         await progress("Searching the web")
@@ -76,9 +77,12 @@ enum WebSearcher {
         Plain text only: no markdown, no headings, no bold. Under 110 words. Cite sources inline like [1] or [2][3]. \
         When sources disagree or the question is about the latest/most recent thing, trust the newest information \
         relative to today's date. If the sources don't answer the question, say so briefly.
-        """
+        """ + (screenContext == nil ? "" : " The question is about what's on the user's screen, described before the sources; " +
+            "use that to understand it. For a quiz or multiple-choice question, start with the right option exactly as " +
+            "it appears on screen, letter included (\"B) Seattle Seahawks\"), then the evidence.")
         let sources = Array(results.prefix(6))
-        let text = try await OllamaClient.chatStream(system: system, user: "Question: \(question)\n\nSources:\n\(context)") { soFar in
+        let screen = screenContext.map { "On the user's screen: \($0)\n\n" } ?? ""
+        let text = try await OllamaClient.chatStream(system: system, user: "Question: \(question)\n\n\(screen)Sources:\n\(context)") { soFar in
             await partial(soFar, sources)
         }
         return (text, sources)

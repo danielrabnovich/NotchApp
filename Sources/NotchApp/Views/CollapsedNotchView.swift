@@ -287,7 +287,8 @@ struct CollapsedNotchView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 6)
         case let .screenshot(count):
-            Text(count == 1 ? "Screenshot added to Shelf" : "\(count) screenshots added to Shelf")
+            Text((count == 1 ? "Screenshot on Shelf" : "\(count) screenshots on Shelf")
+                 + (AppSettings.shared.copyShelfAdds ? " · copied" : ""))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.9))
                 .lineLimit(1)

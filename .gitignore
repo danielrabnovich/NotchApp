@@ -2,3 +2,4 @@
 build/
 *.dylib
 .DS_Store
+backups/

@@ -466,7 +466,13 @@ private struct ShelfSettingsPane: View {
                           isOn: $s.shelfEnabled)
                 if s.shelfEnabled {
                     ToggleRow("Catch new screenshots", subtitle: "New screenshots land on the shelf automatically.", isOn: $s.screenshotCatcher)
+                    if s.screenshotCatcher {
+                        ToggleRow("Throw screenshots away when done",
+                                  subtitle: "15 minutes after you take one, or a minute after you paste it, it moves to the Trash. Pin a screenshot to keep it.",
+                                  isOn: $s.screenshotCleanup)
+                    }
                     ToggleRow("AirDrop drop zone", isOn: $s.airDropZone)
+                    ToggleRow("Copy what you add", subtitle: "The latest thing added to the shelf is also copied, so you can paste it anywhere.", isOn: $s.copyShelfAdds)
                 }
             }
             if s.shelfEnabled {
@@ -761,6 +767,20 @@ private struct AssistantPane: View {
                     Link("Browse the Ollama library", destination: URL(string: "https://ollama.com/library")!)
                 }
                 .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                ToggleRow("Answer questions about your screen",
+                          subtitle: "“What’s the answer to this question” looks at the screen behind the notch. It’s read on this Mac and never saved.",
+                          isOn: $s.screenQuestions)
+                if s.screenQuestions && !ScreenQuestion.hasPermission {
+                    LabeledContent {
+                        Button("Open Settings") { ScreenQuestion.openPrivacySettings() }
+                    } label: {
+                        RowLabel(title: "Screen Recording is off", subtitle: "Needed to see your screen.")
+                    }
+                }
+            } header: {
+                Text("Your screen")
             }
             Section("Weather") {
                 TextField(text: $s.homeCity, prompt: Text("e.g. Chapel Hill, NC")) {
