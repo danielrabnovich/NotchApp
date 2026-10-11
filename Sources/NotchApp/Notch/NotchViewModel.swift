@@ -205,8 +205,10 @@ final class NotchViewModel: ObservableObject {
         let media = MediaController.shared
         // The pinned layout holds; a running timer joins it rather than replacing it.
         if s.speedTestLiveActivity, SpeedTest.shared.phase.isRunning { return .speedTest }
-        if s.downloadLiveActivity, VideoDownloader.shared.current != nil { return .videoDownload }
+        // With the Progress Glance on, a download shows among the Glances; without it, as its own ring.
+        if s.downloadLiveActivity, !s.progressGlance, VideoDownloader.shared.current != nil { return .videoDownload }
         if !LiveActivities.shared.isEmpty { return .live }
+        if s.downloadLiveActivity, VideoDownloader.shared.current != nil { return .videoDownload }
         if s.timerEnabled, s.timerLiveActivity, TimerStore.shared.isActive { return .timer }
         if s.assistantEnabled, AssistantStore.shared.runningCount > 0 { return .working }
         if s.musicEnabled, s.musicLiveActivity, media.hasTrack, media.isPlaying { return .music }

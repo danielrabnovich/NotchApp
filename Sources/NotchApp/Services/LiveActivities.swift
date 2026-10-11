@@ -7,6 +7,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
     case music, timer, cpu, temperature, memory, gpu, power, battery, nextEvent, tasks, network, devices, privacy, agents, vpn, keepAwake, disk
     /// A call in progress: its time and the mic's state (click to mute).
     case meeting
+    /// Anything downloading, copying, converting or exporting: a ring and percent.
+    case progress
     /// Actions: a button beside the notch rather than a reading.
     case askScreen, quickScreenshot, quickCopyText, quickColorPicker, quickLock, quickDarkMode, quickMic, quickWiFi, quickNightShift
     /// The actions starred for the app in front (right-click one under the search bar).
@@ -54,6 +56,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .keepAwake: "Keep Awake"
         case .disk: "Disk Space"
         case .meeting: "Meeting"
+        case .progress: "Progress"
         case .askScreen: "Ask About This"
         case .appAction: "App Actions"
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.title
@@ -80,6 +83,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .keepAwake: "A cup while the Mac is being kept awake, with time left."
         case .disk: "Free space on the startup disk."
         case .meeting: "During a call: how long it's been, and a mute button."
+        case .progress: "Downloads, copies, conversions and exports from Final Cut, HandBrake and more."
         case .askScreen: "Ask the AI about the window in front."
         case .appAction: "Actions you star for an app (right-click one under the search bar), while that app is in front."
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.detail
@@ -106,6 +110,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .keepAwake: "cup.and.saucer.fill"
         case .disk: "internaldrive.fill"
         case .meeting: "phone.fill"
+        case .progress: "circle.dashed"
         case .askScreen: "sparkle.magnifyingglass"
         case .appAction: "star.square.on.square"
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.icon
@@ -132,6 +137,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .keepAwake: .brown
         case .disk: .pink
         case .meeting: .green
+        case .progress: .blue
         case .askScreen: .indigo
         case .appAction: .orange
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.tint
@@ -152,6 +158,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .vpn: "Only while connected"
         case .disk: "Only when low"
         case .meeting: "Only during calls"
+        case .progress: "Only while something runs"
         default: ""
         }
     }
@@ -176,6 +183,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .keepAwake: 52
         case .disk: 58
         case .meeting: 72
+        case .progress: 54
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
         }
@@ -196,6 +204,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .devices, .privacy, .agents, .vpn, .keepAwake: 20
         case .disk: 32
         case .meeting: 46
+        case .progress: 22
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
         }
@@ -300,6 +309,7 @@ final class LiveActivities: ObservableObject {
         KeepAwake.shared.$isActive.sink { _ in refresh() }.store(in: &cancellables)
         AppActions.shared.$glanceActions.sink { _ in refresh() }.store(in: &cancellables)
         MeetingMonitor.shared.$call.sink { _ in refresh() }.store(in: &cancellables)
+        ProgressCenter.shared.$items.sink { _ in refresh() }.store(in: &cancellables)
         Cleaner.shared.$disk.sink { _ in refresh() }.store(in: &cancellables)
         // Network "only while busy" follows the rate, which changes every second.
         NetworkMonitor.shared.$downRate.sink { _ in
@@ -467,6 +477,10 @@ final class LiveActivities: ObservableObject {
         if slot(for: .meeting) == nil, AppSettings.shared.meetingMode, MeetingMonitor.shared.call != nil {
             newLeft.append(.meeting)
         }
+        // So does anything in progress, on the right.
+        if slot(for: .progress) == nil, !ProgressCenter.shared.items.isEmpty {
+            newRight.insert(.progress, at: 0)
+        }
         if newLeft != left || newRight != right {
             withAnimation(.spring(response: 0.36, dampingFraction: 0.8)) {
                 left = newLeft
@@ -526,6 +540,8 @@ final class LiveActivities: ObservableObject {
             return !AppActions.shared.glanceActions.isEmpty
         case .meeting:
             return MeetingMonitor.shared.call != nil
+        case .progress:
+            return !ProgressCenter.shared.items.isEmpty
         case .quickNightShift:
             return NightShift.isAvailable
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi:

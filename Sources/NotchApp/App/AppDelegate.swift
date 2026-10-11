@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { CrashReports.checkAtLaunch() }
         AppUpdater.shared.start()
         MeetingMonitor.shared.start()
+        ProgressCenter.shared.start()
         settings.$screenshotSearch.removeDuplicates().sink { on in
             DispatchQueue.main.async { ScreenshotText.shared.apply(on) }
         }.store(in: &cancellables)

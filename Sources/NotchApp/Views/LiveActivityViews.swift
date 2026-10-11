@@ -123,6 +123,7 @@ enum GlanceActions {
         case .askScreen: "Ask About This Window"
         case .appAction: AppActions.shared.glanceActions.map(\.title).joined(separator: " · ")
         case .meeting: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
+        case .progress: ProgressCenter.shared.items.map { "\($0.title)\($0.fraction.map { " · \(Int($0 * 100))%" } ?? "")" }.joined(separator: "\n")
         case .quickDarkMode: ControlsService.shared.darkMode ? "Turn Dark Mode Off" : "Turn Dark Mode On"
         case .quickMic: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
         case .quickWiFi: ControlsService.shared.wifiOn ? "Turn Wi-Fi Off" : "Turn Wi-Fi On"
@@ -154,6 +155,8 @@ enum GlanceActions {
         case .meeting:
             ControlsService.shared.toggleMic()
             Haptics.tap()
+        case .progress:
+            ProgressCenter.shared.open()
         case .appAction:
             // One glyph: run it. Several: each glyph runs its own (see AppActionGlyphs).
             if let only = AppActions.shared.glanceActions.first, AppActions.shared.glanceActions.count == 1 {
@@ -189,6 +192,7 @@ enum GlanceActions {
         case .disk: defaults.set(ToolsPane.cleaner.rawValue, forKey: "tools.pane"); tab = .tools
         case .askScreen, .appAction: tab = .ask
         case .meeting: tab = .home
+        case .progress: tab = .shelf
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift:
             tab = .controls
         }
@@ -256,6 +260,8 @@ struct LiveItemView: View {
             DiskReading(compact: true)
         case .meeting:
             MeetingReading(compact: true)
+        case .progress:
+            ProgressReading(compact: true)
         case .tasks, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
              .quickWiFi, .quickNightShift, .appAction:
             regularBody
@@ -331,6 +337,8 @@ struct LiveItemView: View {
             DiskReading()
         case .meeting:
             MeetingReading()
+        case .progress:
+            ProgressReading()
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
              .quickWiFi, .quickNightShift:
             ActionGlyph(item: item)
@@ -488,6 +496,43 @@ private struct AppActionGlyphs: View {
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.85))
                         .frame(width: 24)
+                }
+            }
+        }
+    }
+}
+
+/// What's furthest along of everything in progress: a ring (its app's icon inside, when it's an
+/// app exporting) and the percent; a "+1" when more is running.
+private struct ProgressReading: View {
+    var compact = false
+    @ObservedObject private var progress = ProgressCenter.shared
+
+    var body: some View {
+        let lead = progress.lead
+        HStack(spacing: 5) {
+            ZStack {
+                Circle().stroke(.white.opacity(0.15), lineWidth: 2)
+                if let f = lead?.fraction {
+                    Circle().trim(from: 0, to: max(0.03, f))
+                        .stroke(Color.blue, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .animation(.easeOut(duration: 0.4), value: f)
+                } else {
+                    ProgressView().controlSize(.mini).tint(.white).scaleEffect(0.6)
+                }
+                if let path = lead?.bundlePath {
+                    AppIcon(bundlePath: path, size: 11)
+                }
+            }
+            .frame(width: 17, height: 17)
+            if !compact {
+                Text(lead?.fraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "…")
+                    .font(LiveItemView.valueFont)
+                    .foregroundStyle(.white.opacity(0.92))
+                    .fixedSize()
+                if progress.items.count > 1 {
+                    Text("+\(progress.items.count - 1)").font(.system(size: 9.5, weight: .bold, design: .rounded)).foregroundStyle(.white.opacity(0.5))
                 }
             }
         }
@@ -753,6 +798,16 @@ struct LiveActivitiesPane: View {
                 Text("Actions")
             } footer: {
                 FooterText("One click beside the notch: ask about the window in front, take a screenshot, copy text off the screen, pick a color, lock the Mac, or flip Dark Mode, the mic, Wi-Fi or Night Shift.")
+            }
+            Section {
+                ToggleRow("Progress", subtitle: "A ring while anything downloads, copies, converts or exports (Final Cut, Compressor, HandBrake…).",
+                          isOn: $settings.progressGlance)
+                ToggleRow("Meeting", subtitle: "During a call, its time and a mute button; after it, notes or a follow-up.",
+                          isOn: $settings.meetingMode)
+            } header: {
+                Text("Show up by themselves")
+            } footer: {
+                FooterText("These join the notch only while there's something to show, pinned or not.")
             }
             Section {
                 Picker(selection: $settings.glanceDensity) {
