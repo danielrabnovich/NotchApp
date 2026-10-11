@@ -205,7 +205,18 @@ private struct MemoryCard: View {
                 }
             }
         } compactNote: {
-            PressureDot(level: m.pressure, showsLabel: false)
+            // How much is in use, tinted by memory pressure (it was only a coloured dot).
+            let color = PressureDot.color(m.pressure)
+            Text("\(gigabytes(m.used, digits: 1)) GB")
+                .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+                .rollingNumber(gigabytes(m.used, digits: 1))
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.horizontal, 5)
+                .frame(height: 16)
+                .background(Capsule().fill(color.opacity(0.16)))
+                .help("\(gigabytes(m.used, digits: 1)) of \(gigabytes(m.total, digits: 0)) GB in use")
         } detail: {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 0) {
@@ -251,12 +262,19 @@ private struct PowerCard: View {
                 }
             }
         } detail: {
+            // Two columns: where the power goes, then the battery and adapter. (The fans are in
+            // the footer.)
             HStack(alignment: .top, spacing: 10) {
+                breakdown(s)
+                ColumnDivider()
                 VStack(alignment: .leading, spacing: 4) {
                     SectionLabel("Battery")
                     if let battery = s.batteryPower {
                         DetailRow(icon: battery >= 0 ? "arrow.down.to.line" : "arrow.up.to.line",
                                   label: battery >= 0 ? "In" : "Out", value: watts(abs(battery)))
+                    }
+                    if let adapter = s.adapterWatts {
+                        DetailRow(icon: "powerplug.fill", label: "Adapter", value: "\(adapter) W")
                     }
                     if let health = s.batteryHealth {
                         DetailRow(icon: "heart.fill", label: "Health", value: percent(health) + "%")
@@ -266,22 +284,35 @@ private struct PowerCard: View {
                     }
                     TemperatureRow(label: "Temp", celsius: s.batteryTemp)
                 }
-                ColumnDivider()
-                VStack(alignment: .leading, spacing: 4) {
-                    SectionLabel("System")
-                    if let cpu = s.cpuPower { DetailRow(icon: "cpu", label: "CPU", value: watts(cpu)) }
-                    DetailRow(icon: "cube.transparent", label: "GPU", value: s.gpuPower.map(watts) ?? "–")
-                    if let adapter = s.adapterWatts {
-                        DetailRow(icon: "powerplug.fill", label: "Adapter", value: "\(adapter) W")
-                    }
-                    ForEach(s.fans.indices, id: \.self) { i in
-                        MeterRow(label: s.fans.count > 1 ? (i == 0 ? "Left fan" : "Right fan") : "Fan",
-                                 value: s.fans[i] / max(1, s.fanMax[safe: i] ?? 6000),
-                                 color: StatsPalette.power, text: String(format: "%.1fk", s.fans[i] / 1000))
-                    }
-                }
+                .frame(width: 128)
             }
         }
+    }
+
+    /// Where the power goes: CPU, GPU, display, memory and everything else, as bars of the total.
+    @ViewBuilder private func breakdown(_ s: SystemSnapshot) -> some View {
+        let parts: [(label: String, icon: String, watts: Double?, color: Color, approx: Bool)] = [
+            ("CPU", "cpu", s.cpuPower, StatsPalette.cpu, false),
+            ("GPU", "cube.transparent", s.gpuPower, StatsPalette.gpu, false),
+            ("Display", "sun.max.fill", s.displayPower, Color(red: 1, green: 0.85, blue: 0.4), false),
+            ("Memory", "memorychip", s.memoryPower, StatsPalette.memory, true),
+        ]
+        let known = parts.compactMap(\.watts).reduce(0, +)
+        let total = max(s.systemPower ?? known, known, 0.1)
+        let other = s.systemPower.map { max(0, $0 - known) }
+        VStack(alignment: .leading, spacing: 4) {
+            SectionLabel("Where it goes")
+            ForEach(parts.filter { $0.watts != nil }, id: \.label) { part in
+                MeterRow(label: part.label, value: (part.watts ?? 0) / total, color: part.color,
+                         text: (part.approx ? "≈" : "") + watts(part.watts ?? 0))
+                    .help(part.approx ? "Approximate: the memory controller's power, which follows memory traffic" : "")
+            }
+            if let other {
+                MeterRow(label: "Other", value: other / total, color: .white.opacity(0.4), text: watts(other))
+                    .help("Storage, Wi-Fi, fans, speakers, power conversion and the rest")
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder private func batteryRow(_ s: SystemSnapshot, _ battery: Double) -> some View {
@@ -602,12 +633,17 @@ private struct PressureDot: View {
     let level: Int
     var showsLabel = true
 
-    var body: some View {
-        let (label, color): (String, Color) = switch level {
-        case 4: ("Critical", Color(red: 1, green: 0.38, blue: 0.35))
-        case 2: ("Warning", Color(red: 1, green: 0.8, blue: 0.3))
-        default: ("Normal", StatsPalette.memory)
+    static func color(_ level: Int) -> Color {
+        switch level {
+        case 4: Color(red: 1, green: 0.38, blue: 0.35)
+        case 2: Color(red: 1, green: 0.8, blue: 0.3)
+        default: StatsPalette.memory
         }
+    }
+
+    var body: some View {
+        let color = Self.color(level)
+        let label = level == 4 ? "Critical" : level == 2 ? "Warning" : "Normal"
         HStack(spacing: 3) {
             Circle().fill(color).frame(width: 5, height: 5)
             if showsLabel {

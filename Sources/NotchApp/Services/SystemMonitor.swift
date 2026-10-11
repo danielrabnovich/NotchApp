@@ -22,6 +22,13 @@ struct SystemSnapshot {
     var memory = MemoryReading()
 
     var systemPower: Double?
+    /// The whole chip (SMC PHPC: tracks CPU + GPU + the rest of the SoC; CPU is this less the GPU
+    /// where IOReport doesn't report CPU energy, as on M5).
+    var packagePower: Double?
+    /// The display backlight (SMC PDBR: 8 W at full brightness, 0.2 W dim on a 14" MacBook Pro).
+    var displayPower: Double?
+    /// Roughly the memory system (SMC PPMC, which follows memory traffic; not an exact DRAM reading).
+    var memoryPower: Double?
     var batteryPower: Double?
     var adapterWatts: Int?
     var batteryMinutesRemaining: Int?
@@ -206,6 +213,13 @@ private final class Sampler: @unchecked Sendable {
             s.gpuTempMax = gpuTemps.max()
             s.batteryTemp = smc.value("TB0T").flatMap { valid([$0]).first }
             s.systemPower = smc.value("PSTR")
+            s.packagePower = smc.value("PHPC")
+            s.displayPower = smc.value("PDBR")
+            s.memoryPower = smc.value("PPMC")
+            // No CPU energy from IOReport (M5): the package less the GPU.
+            if s.cpuPower == nil, let package = s.packagePower, package > 0 {
+                s.cpuPower = max(0, package - (s.gpuPower ?? 0))
+            }
             s.fans = keys.fans.compactMap { smc.value($0) }
             s.fanMax = keys.fanMax.compactMap { smc.value($0) }
         }

@@ -125,8 +125,31 @@ final class EnergyReader {
         guard let ch = IOReportCopyChannelsInGroup("Energy Model" as CFString, nil, 0, 0, 0)?.takeRetainedValue() else { return nil }
         var subbed: Unmanaged<CFMutableDictionary>?
         guard let sub = IOReportCreateSubscription(nil, ch, &subbed, 0, nil) else { return nil }
-        channels = ch
+        // Sample with the channels the subscription hands back, not the ones asked for: with the
+        // latter, only some channels report (here only the GPU; CPU, memory and display read 0).
+        channels = subbed?.takeRetainedValue() ?? ch
         subscription = sub
+    }
+
+    /// Watts for every channel since the previous call, by channel name (empty on the first call).
+    func sampleAll() -> [String: Double] {
+        guard let now = IOReportCreateSamples(subscription, channels, nil)?.takeRetainedValue() else { return [:] }
+        let time = ProcessInfo.processInfo.systemUptime
+        defer { last = (now, time) }
+        guard let last, time - last.time > 0.05,
+              let delta = IOReportCreateSamplesDelta(last.sample, now, nil)?.takeRetainedValue() as? [String: Any],
+              let items = delta["IOReportChannels"] as? [CFDictionary] else { return [:] }
+        let dt = time - last.time
+        var out: [String: Double] = [:]
+        for item in items {
+            guard let name = IOReportChannelGetChannelName(item)?.takeUnretainedValue() as String? else { continue }
+            let unit = IOReportChannelGetUnitLabel(item)?.takeUnretainedValue() as String? ?? "mJ"
+            let scale: Double = switch unit { case "nJ": 1e-9; case "uJ": 1e-6; default: 1e-3 }
+            let raw = IOReportSimpleGetIntegerValue(item, 0)
+            guard raw > 0 else { continue }
+            out[name, default: 0] += Double(raw) * scale / dt
+        }
+        return out
     }
 
     /// Watts for the CPU and GPU since the previous call (nil on the first call or if not reported).

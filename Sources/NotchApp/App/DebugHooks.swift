@@ -189,6 +189,25 @@ enum DebugHooks {
                       let id = obj["sessionId"] as? String, let cwd = obj["cwd"] as? String else { continue }
                 log("WORDS \((cwd as NSString).lastPathComponent): \(AgentReply.lastWords(sessionID: id, cwd: cwd)?.prefix(140) ?? "nil")")
             }
+        case "energychannels": // every channel in IOReport's Energy Model group, with watts over 1s
+            Task.detached {
+                guard let reader = EnergyReader() else { return }
+                _ = reader.sampleAll()
+                Thread.sleep(forTimeInterval: Double(parts[safe: 1] ?? "") ?? 1)
+                let all = reader.sampleAll().sorted { $0.value > $1.value }
+                log("ENERGY " + all.map { String(format: "%@=%.3fW", $0.key, $0.value) }.joined(separator: " | "))
+            }
+        case "smcpower": // every SMC key starting with P, and its value
+            Task.detached {
+                guard let smc = SMCReader() else { return log("SMC unavailable") }
+                let keys = smc.allKeys().filter { $0.hasPrefix("P") }
+                log("SMCP " + keys.compactMap { k in smc.value(k).map { String(format: "%@=%.2f", k, $0) } }.joined(separator: " "))
+            }
+        case "bright": // bright [value]: logs the display brightness, or sets it (0–1)
+            let controls = ControlsService.shared
+            controls.refresh()
+            if let v = Float(parts[safe: 1] ?? "") { controls.setBrightness(v) }
+            log("BRIGHT \(controls.brightness)")
         case "suggestrun": // runs the highlighted suggestion if it's a command
             if case .command(let command)? = SearchSuggestions.shared.current { CommandCenter.shared.run([command]) }
             log("SUGGESTIONS " + SearchSuggestions.shared.items.map { if case .command(let c) = $0 { c.title } else { $0.id } }.joined(separator: " | "))
