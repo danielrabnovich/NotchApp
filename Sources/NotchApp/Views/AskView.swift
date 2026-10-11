@@ -173,6 +173,9 @@ struct AskView: View {
             suggestions.clear()
             excluded = []
             assistant.run(q, route: .actions)
+        case .doInApp(let q, _):
+            suggestions.clear()
+            assistant.run(q, route: .app)
         }
     }
 
@@ -239,8 +242,8 @@ struct AskView: View {
     }
 
     private func moveSelection(_ delta: Int) {
-        if assistant.current != nil {
-            let count = browsable.count
+        if let job = assistant.current {
+            let count = job.route == .app ? job.appPicks.count : browsable.count
             guard count > 0 else { return }
             resultIndex = min(max(resultIndex + delta, 0), count - 1)
             if showsFiles { QuickLook.shared.follow(browsable, at: resultIndex) }
@@ -361,6 +364,9 @@ struct AskView: View {
                         assistant.run(query) // about the captured window
                     } else if assistant.current == nil, let pick = suggestions.current {
                         perform(pick)
+                    } else if let job = assistant.current, job.route == .app, job.appPicks.indices.contains(resultIndex) {
+                        assistant.runAppPick(job.appPicks[resultIndex])
+                        query = ""
                     } else if let job = assistant.current, job.route == .actions, let plan = job.plan {
                         applyPlan(plan)
                     } else if !openSelected() {
@@ -455,6 +461,7 @@ struct AskView: View {
         case .notes?: "note.text"
         case .screen?: "macwindow"
         case .write?: "character.bubble"
+        case .app?: "wand.and.stars"
         case nil: "magnifyingglass"
         }
     }
@@ -757,6 +764,8 @@ private struct ResultView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .done where job.route == .actions:
             if let plan = job.plan { PlanView(plan: plan, excluded: $excluded, apply: applyPlan) }
+        case .done where job.route == .app:
+            AppPicksView(job: job, selection: $selection)
         case .done:
             VStack(spacing: 10) {
                 switch job.route {
@@ -770,6 +779,60 @@ private struct ResultView: View {
                 RouteFooter(job: job)
             }
         }
+    }
+}
+
+/// "Do it in this app" when it wasn't sure, or the pick would delete or close something: the best
+/// match and alternatives, to run with a click (or ↩ on the highlighted one).
+private struct AppPicksView: View {
+    let job: AssistantStore.Job
+    @Binding var selection: Int
+    @EnvironmentObject private var assistant: AssistantStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "wand.and.stars").font(.system(size: 11, weight: .semibold))
+                Text(AppDo.isRisky(job.appPicks.first!) ? "Check this one first, in \(job.appName ?? "the app")"
+                     : "Did you mean, in \(job.appName ?? "the app")")
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(.white.opacity(0.5))
+            VStack(spacing: 4) {
+                ForEach(Array(job.appPicks.enumerated()), id: \.offset) { i, pick in
+                    Button { assistant.runAppPick(pick) } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: pick.icon)
+                                .font(.system(size: 13, weight: .semibold))
+                                .frame(width: 20)
+                                .foregroundStyle(.white.opacity(0.8))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(pick.title).font(.system(size: 13, weight: .semibold))
+                                if let sub = pick.subtitle {
+                                    Text(sub).font(.system(size: 11)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+                                }
+                            }
+                            Spacer()
+                            if i == selection {
+                                Text(AppDo.isRisky(pick) ? "Run anyway" : "Run")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(AppDo.isRisky(pick) ? .orange : .white.opacity(0.8))
+                                KeyCap(text: "↩")
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(.white.opacity(i == selection ? 0.12 : 0.05)))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { if $0 { selection = i } }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -1897,6 +1960,12 @@ private struct SuggestionList: View {
             }
         case .plan:
             Image(systemName: "sparkles").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white.opacity(highlighted ? 1 : 0.75))
+        case .doInApp:
+            if let icon = AppActions.shared.context.flatMap({ NSRunningApplication(processIdentifier: $0.pid)?.icon }) {
+                Image(nsImage: icon).resizable()
+            } else {
+                Image(systemName: "wand.and.stars").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white.opacity(highlighted ? 1 : 0.75))
+            }
         }
     }
 
@@ -1908,6 +1977,7 @@ private struct SuggestionList: View {
         case .search(let q): "Search for “\(q)”"
         case .command(let c): c.title
         case .plan: "Turn into tasks & notes"
+        case .doInApp(let q, let app): "Do “\(q)” in \(app)"
         }
     }
 
@@ -1921,6 +1991,7 @@ private struct SuggestionList: View {
         case .search: assistant.aiAvailable ? "Files, web and weather, with AI" : "Files, web and weather"
         case .command(let c): c.subtitle
         case .plan: "AI drafts them, you review first"
+        case .doInApp(_, let app): "Picks from \(app)'s menus and actions"
         }
     }
 
@@ -1931,6 +2002,7 @@ private struct SuggestionList: View {
         case .search: "Search"
         case .command(let c): c.verb
         case .plan: "Plan"
+        case .doInApp: "Do it"
         }
     }
 }

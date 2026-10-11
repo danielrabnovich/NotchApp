@@ -10,6 +10,8 @@ enum Suggestion: Identifiable, Equatable {
     case command(Command)
     /// Hand the request to the model to turn into tasks, notes or timers.
     case plan(String)
+    /// Carry out an instruction in the app in front ("export this as a PDF").
+    case doInApp(String, app: String)
 
     var id: String {
         switch self {
@@ -19,6 +21,7 @@ enum Suggestion: Identifiable, Equatable {
         case .search(let q): "search:\(q)"
         case .command(let c): "command:\(c.title)"
         case .plan(let q): "plan:\(q)"
+        case .doInApp(let q, _): "app:do:\(q)"
         }
     }
 }
@@ -93,6 +96,10 @@ final class SearchSuggestions: ObservableObject {
         }
 
         var head: [Suggestion] = commands.map { .command($0) }
+        // "export this as pdf" with an app in front: do it there.
+        if AssistantStore.shared.aiAvailable, AppDo.looksLikeInstruction(q), let app = AppActions.shared.context?.appName {
+            head.append(.doInApp(q, app: app))
+        }
         // What fits the app in front ("summ" in Safari → Summarize page).
         head += AppActions.shared.matches(q, limit: 2).map { .command($0) }
         // With a model, "plan a trip to Lisbon" or "remind me to … and …" can become a set of actions.

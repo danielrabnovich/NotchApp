@@ -115,8 +115,7 @@ enum SelectionText {
     /// Accessibility. The user's clipboard is put back, and clipboard history skips both. The notch
     /// gives the keyboard back first, so the keys reach the app.
     static func copy(completion: @escaping (_ text: String?, _ source: Source?) -> Void) {
-        guard let app = NSWorkspace.shared.frontmostApplication ?? FrontmostTracker.shared.lastOther,
-              app.processIdentifier != getpid() else { return completion(nil, nil) }
+        guard let app = FrontmostTracker.shared.userApp else { return completion(nil, nil) }
         let source = Source(pid: app.processIdentifier, appName: app.localizedName)
         let pasteboard = NSPasteboard.general
         let saved = pasteboard.pasteboardItems?.map { item -> NSPasteboardItem in

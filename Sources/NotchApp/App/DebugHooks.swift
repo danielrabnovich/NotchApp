@@ -56,6 +56,7 @@ enum DebugHooks {
         case "clear": AssistantStore.shared.clear()
         case "ask": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "))
         case "plan": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "), route: .actions)
+        case "doinapp": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "), route: .app)
         case "cmd": CommandCenter.shared.run(Array(CommandParser.parse(parts.dropFirst().joined(separator: " ")).prefix(1)))
         case "applyplan": if let plan = AssistantStore.shared.current?.plan { CommandCenter.shared.run(plan.commands); AssistantStore.shared.clear() }
         case "fakeplay": MediaController.shared.debugSetPlaying(parts[safe: 1] != "0")

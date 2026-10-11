@@ -331,8 +331,7 @@ final class AppActions: ObservableObject {
     }
 
     private static func frontmostOtherApp() -> NSRunningApplication? {
-        if let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() { return app }
-        return FrontmostTracker.shared.lastOther.flatMap { $0.isTerminated ? nil : $0 }
+        FrontmostTracker.shared.userApp
     }
 
     // MARK: - Building the actions

@@ -85,10 +85,7 @@ extension ScreenContext {
 
     /// The app in front, or (when NotchApp itself is, after using Settings) the one you were in before.
     @MainActor private static func frontmostOtherApp() -> NSRunningApplication? {
-        if let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-            return app
-        }
-        return FrontmostTracker.shared.lastOther.flatMap { $0.isTerminated ? nil : $0 }
+        FrontmostTracker.shared.userApp
     }
 
     /// The window by its ID (or the app's largest on-screen window), else the display under the pointer.
@@ -234,13 +231,25 @@ final class FrontmostTracker {
     private(set) var lastOther: NSRunningApplication?
     private var observer: NSObjectProtocol?
 
+    /// The app the user is working in: the one in front, or the last one when NotchApp itself (or
+    /// a system dialog, the Dock, Spotlight) is.
+    var userApp: NSRunningApplication? {
+        if let app = NSWorkspace.shared.frontmostApplication, Self.isUserApp(app) { return app }
+        return lastOther.flatMap { $0.isTerminated ? nil : $0 }
+    }
+
+    /// A regular app, not NotchApp: permission prompts, the Dock and other agents don't count.
+    static func isUserApp(_ app: NSRunningApplication) -> Bool {
+        app.processIdentifier != getpid() && app.activationPolicy == .regular
+    }
+
     func start() {
-        lastOther = NSWorkspace.shared.frontmostApplication.flatMap { $0.processIdentifier == getpid() ? nil : $0 }
+        lastOther = NSWorkspace.shared.frontmostApplication.flatMap { Self.isUserApp($0) ? $0 : nil }
         observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
                                                                      object: nil, queue: .main) { note in
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
             MainActor.assumeIsolated {
-                if let app, app.processIdentifier != getpid() { FrontmostTracker.shared.lastOther = app }
+                if let app, FrontmostTracker.isUserApp(app) { FrontmostTracker.shared.lastOther = app }
             }
         }
     }

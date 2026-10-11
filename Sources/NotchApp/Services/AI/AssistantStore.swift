@@ -7,7 +7,7 @@ import SwiftUI
 final class AssistantStore: ObservableObject {
     static let shared = AssistantStore()
 
-    enum Route: String { case files, web, weather, actions, calendar, notes, screen, write }
+    enum Route: String { case files, web, weather, actions, calendar, notes, screen, write, app }
 
     /// Text work for the model from the command bar.
     enum Writing {
@@ -125,6 +125,9 @@ final class AssistantStore: ObservableObject {
         /// empty and shows this instead, since there's nothing in it to edit and run again.
         var actionTitle: String?
         var actionIcon: String?
+        /// "Do it in this app": what could do it, best first, for a click (the app's name with them).
+        var appPicks: [Command] = []
+        var appName: String?
         let startedAt = Date()
 
         var isRunning: Bool { if case .running = state { true } else { false } }
@@ -395,6 +398,10 @@ final class AssistantStore: ObservableObject {
                     try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
                     throw Finished()
                 }
+                if forced == .app {
+                    try await doInApp(trimmed, id: id, useAI: useAI, progress: progress)
+                    throw Finished()
+                }
                 var understanding = Router.understandWithoutAI(trimmed)
                 if useAI, let smart = try? await Router.understand(trimmed) { understanding = smart }
                 understanding.dayOffset = Router.weekendAdjusted(trimmed, dayOffset: understanding.dayOffset)
@@ -448,8 +455,8 @@ final class AssistantStore: ObservableObject {
                     update(id) { $0.notes = answer; $0.state = .done }
                 case .screen:
                     try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
-                case .write:
-                    break // writing jobs run through write(_:) (run() hands "Try again" back to it)
+                case .write, .app:
+                    break // writing jobs run through write(_:), app ones above (run() is handed them by route)
                 case .weather:
                     await progress("Checking the forecast")
                     let report = try await WeatherService.report(location: understanding.location, dayOffset: understanding.dayOffset)
@@ -513,6 +520,31 @@ final class AssistantStore: ObservableObject {
         try Task.checkCancellation()
         update(id) { $0.answer = answer; $0.sources = sources; $0.state = .done }
         if screenContext != nil { contextHistory.append(.init(question: query, answer: answer)) }
+    }
+
+    /// Carries out an instruction in the app in front: a sure, harmless pick runs straight away (the
+    /// notch steps aside for it); otherwise the picks wait for a click.
+    private func doInApp(_ request: String, id: UUID, useAI: Bool, progress: @escaping @Sendable (String) async -> Void) async throws {
+        guard useAI else {
+            throw AppDo.Failure(message: "Doing things in apps needs an AI model: start Ollama, or add a cloud model's key, in Settings → Search.")
+        }
+        let app = FrontmostTracker.shared.userApp?.localizedName ?? "the app"
+        await progress("Looking through \(app)")
+        let choice = try await AppDo.choose(request)
+        try Task.checkCancellation()
+        if choice.sure, let first = choice.picks.first, !AppDo.isRisky(first) {
+            CommandCenter.shared.run([first])
+            ActivityCenter.shared.show(.notice(title: first.title, detail: "In \(choice.app)", icon: first.icon, tone: .success), for: 2.5)
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { if current?.id == id { current = nil } }
+            return
+        }
+        update(id) { $0.appPicks = choice.picks; $0.appName = choice.app; $0.state = .done }
+    }
+
+    /// Runs one of the picks shown for "do it in this app".
+    func runAppPick(_ command: Command) {
+        CommandCenter.shared.run([command])
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = nil }
     }
 
     /// Same question, the other way (files ↔ web).

@@ -14,6 +14,8 @@ final class MenuSearch {
         let path: [String]
         let shortcut: String?
         let element: AXUIElement
+        /// Can be chosen right now (disabled ones are only read for "do it in this app").
+        var enabled = true
         var searchText: String { (path + [title]).joined(separator: " ").lowercased() }
     }
 
@@ -30,9 +32,7 @@ final class MenuSearch {
 
     /// Reads the menus of the app in front, unless they were read a moment ago.
     func prepare() {
-        guard AXIsProcessTrusted(),
-              let app = NSWorkspace.shared.frontmostApplication ?? FrontmostTracker.shared.lastOther,
-              app.processIdentifier != getpid() else { return }
+        guard AXIsProcessTrusted(), let app = FrontmostTracker.shared.userApp else { return }
         let pid = app.processIdentifier
         if let cache, cache.pid == pid, Date().timeIntervalSince(cache.at) < 15 { return }
         guard loading != pid else { return }
@@ -47,6 +47,15 @@ final class MenuSearch {
                 AppActions.shared.refresh()
             }
         }
+    }
+
+    /// Every menu item of an app, read now (what's enabled follows the selection, so a cached read
+    /// can be stale), disabled ones included and marked; also refreshes the cache.
+    func readNow(pid: pid_t, appName: String) async -> [Ref] {
+        guard AXIsProcessTrusted() else { return [] }
+        let items = await Task.detached(priority: .userInitiated) { Self.read(pid: pid, includeDisabled: true) }.value
+        cache = (pid, appName, Date(), items.filter(\.enabled))
+        return items.map { Ref($0, appName: appName) }
     }
 
     /// Menu items for what's typed: every word somewhere in the item or its menus, items whose
@@ -118,7 +127,7 @@ final class MenuSearch {
 
     // MARK: - Reading
 
-    private nonisolated static func read(pid: pid_t) -> [Item] {
+    private nonisolated static func read(pid: pid_t, includeDisabled: Bool = false) -> [Item] {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.3)
         guard let bar: AXUIElement = value(app, kAXMenuBarAttribute),
@@ -128,27 +137,30 @@ final class MenuSearch {
         // The first menu is the Apple menu: system things, not the app's.
         for menu in menus.dropFirst() {
             guard let title: String = value(menu, kAXTitleAttribute), !title.isEmpty else { continue }
-            walk(menu, path: [title], depth: 0, into: &items, deadline: deadline)
+            walk(menu, path: [title], depth: 0, into: &items, deadline: deadline, includeDisabled: includeDisabled)
             if items.count > 2000 || Date() > deadline { break }
         }
         return items
     }
 
-    private nonisolated static func walk(_ element: AXUIElement, path: [String], depth: Int, into items: inout [Item], deadline: Date) {
+    private nonisolated static func walk(_ element: AXUIElement, path: [String], depth: Int, into items: inout [Item], deadline: Date,
+                                         includeDisabled: Bool) {
         guard depth < 4, Date() < deadline,
               let children: [AXUIElement] = value(element, kAXChildrenAttribute) else { return }
         for child in children {
             let role: String = value(child, kAXRoleAttribute) ?? ""
             if role == "AXMenu" {
-                walk(child, path: path, depth: depth + 1, into: &items, deadline: deadline)
+                walk(child, path: path, depth: depth + 1, into: &items, deadline: deadline, includeDisabled: includeDisabled)
                 continue
             }
             guard role == "AXMenuItem", let title: String = value(child, kAXTitleAttribute), !title.isEmpty else { continue }
             let submenu: [AXUIElement]? = value(child, kAXChildrenAttribute)
             if let submenu, !submenu.isEmpty {
-                walk(child, path: path + [title], depth: depth + 1, into: &items, deadline: deadline)
-            } else if (value(child, kAXEnabledAttribute) as Bool?) ?? true {
-                items.append(Item(title: title, path: path, shortcut: shortcut(child), element: child))
+                walk(child, path: path + [title], depth: depth + 1, into: &items, deadline: deadline, includeDisabled: includeDisabled)
+            } else {
+                let enabled = (value(child, kAXEnabledAttribute) as Bool?) ?? true
+                guard enabled || includeDisabled else { continue }
+                items.append(Item(title: title, path: path, shortcut: shortcut(child), element: child, enabled: enabled))
             }
         }
     }
