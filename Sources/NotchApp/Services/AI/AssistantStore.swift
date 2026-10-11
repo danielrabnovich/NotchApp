@@ -39,6 +39,58 @@ final class AssistantStore: ObservableObject {
     }
 
     @Published private(set) var current: Job?
+
+    /// The window captured by "Ask about this": questions go to it (follow-ups too) until it's
+    /// removed or left unused for a few minutes.
+    enum ContextState {
+        case capturing
+        case ready(ScreenContext, thumbnail: NSImage?)
+        case failed(String)
+    }
+    @Published private(set) var context: ContextState?
+    private var contextHistory: [ScreenQuestion.Exchange] = []
+    private var contextTask: Task<Void, Never>?
+    private var contextExpiry: DispatchWorkItem?
+
+    var screenContext: ScreenContext? {
+        if case .ready(let c, _)? = context { return c }
+        return nil
+    }
+
+    /// Captures what's in front now (the keybind calls this before the notch has even opened).
+    func captureContext() {
+        contextTask?.cancel()
+        contextHistory = []
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { context = .capturing }
+        contextTask = Task {
+            do {
+                let captured = try await ScreenContext.capture()
+                guard !Task.isCancelled else { return }
+                let thumb = captured.image.flatMap(ScreenQuestion.thumbnail)
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { context = .ready(captured, thumbnail: thumb) }
+                touchContext()
+            } catch {
+                guard !Task.isCancelled else { return }
+                withAnimation { context = .failed(error.localizedDescription) }
+            }
+        }
+    }
+
+    func clearContext() {
+        contextTask?.cancel()
+        contextExpiry?.cancel()
+        contextHistory = []
+        guard context != nil else { return }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { context = nil }
+    }
+
+    /// Keeps the capture while it's being used; it goes after five idle minutes (the screen has moved on).
+    private func touchContext() {
+        contextExpiry?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.clearContext() }
+        contextExpiry = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 300, execute: work)
+    }
     /// Results-as-you-type are showing (the notch grows to fit them).
     @Published var suggesting = false
     /// How many rows the results-as-you-type list shows (placeholders included), so the notch fits it.
@@ -223,7 +275,10 @@ final class AssistantStore: ObservableObject {
         }
         task?.cancel()
         // "What's the answer to this question": look at the screen now, before anything on it changes.
-        let aboutScreen = forced == .screen || (forced == nil && AppSettings.shared.screenQuestions && Router.isAboutScreen(trimmed))
+        // With a captured window ("Ask about this"), every question is about it.
+        let hasContext = context != nil && forced == nil
+        let aboutScreen = forced == .screen || hasContext
+            || (forced == nil && AppSettings.shared.screenQuestions && Router.isAboutScreen(trimmed))
         let job = Job(query: trimmed, route: aboutScreen ? .screen : forced)
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
 
@@ -322,16 +377,31 @@ final class AssistantStore: ObservableObject {
         guard useAI else {
             throw OllamaClient.OllamaError(message: "Questions about your screen need the local model. Start Ollama in Settings → AI.")
         }
-        await progress("Looking at your screen")
-        let capture = try await ScreenQuestion.capture()
+        // The window captured by "Ask about this" (waiting for it if it's still being taken), or a fresh look.
+        let captured: ScreenContext
+        var history: [ScreenQuestion.Exchange] = []
+        if context != nil {
+            await progress("Looking at your screen")
+            await contextTask?.value
+            if case .failed(let message)? = context { throw OllamaClient.OllamaError(message: message) }
+            guard let c = screenContext else { throw CancellationError() }
+            captured = c
+            history = contextHistory
+            touchContext()
+        } else {
+            await progress("Looking at your screen")
+            captured = try await ScreenContext.capture()
+        }
         try Task.checkCancellation()
-        let preview = ScreenQuestion.thumbnail(capture.image)
+        let preview = captured.image.flatMap(ScreenQuestion.thumbnail)
         update(id) { $0.screen = preview; $0.route = .screen }
-        let (answer, sources) = try await ScreenQuestion.answer(query, capture: capture, progress: progress) { soFar, sources in
+        let (answer, sources) = try await ScreenQuestion.answer(query, context: captured, history: history,
+                                                                progress: progress) { soFar, sources in
             await MainActor.run { AssistantStore.shared.update(id, animated: false) { $0.answer = soFar; $0.sources = sources } }
         }
         try Task.checkCancellation()
         update(id) { $0.answer = answer; $0.sources = sources; $0.state = .done }
+        if screenContext != nil { contextHistory.append(.init(question: query, answer: answer)) }
     }
 
     /// Same question, the other way (files ↔ web).

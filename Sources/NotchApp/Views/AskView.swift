@@ -41,7 +41,12 @@ struct AskView: View {
                     .transition(.opacity.combined(with: .offset(y: -4)))
             } else {
                 Group {
-                    if let done = commands.confirmation {
+                    if let context = assistant.context {
+                        ContextActions(state: context) { question in
+                            query = question
+                            assistant.run(question)
+                        }
+                    } else if let done = commands.confirmation {
                         ConfirmationLine(confirmation: done)
                     } else {
                         AIStatusLine()
@@ -88,9 +93,12 @@ struct AskView: View {
             if new != nil, assistant.current == nil { query = ""; suggestions.clear() }
         }
         .onChange(of: query) { _, q in
-            // Typing something new replaces the last result with live suggestions.
+            // Typing something new replaces the last result with live suggestions — except while
+            // asking about a captured window, where files and apps would only get in the way.
             if let job = assistant.current, q != job.query { assistant.clear() }
-            if assistant.current == nil { suggestions.update(q) }
+            if assistant.current == nil {
+                if assistant.context == nil { suggestions.update(q) } else { suggestions.clear() }
+            }
         }
     }
 
@@ -268,13 +276,20 @@ struct AskView: View {
             }
             .frame(width: 20)
 
-            TextField("", text: $query, prompt: Text("Search, or type a command")
+            if let context = assistant.context {
+                ContextChip(state: context) { assistant.clearContext() }
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
+            }
+
+            TextField("", text: $query, prompt: Text(placeholder)
                 .foregroundStyle(.white.opacity(0.3)))
                 .textFieldStyle(.plain)
                 .font(.system(size: compact ? 15 : 18, weight: .regular))
                 .focused($focused)
                 .onSubmit {
-                    if assistant.current == nil, let pick = suggestions.current {
+                    if assistant.context != nil, assistant.current == nil || assistant.current?.query != query {
+                        assistant.run(query) // about the captured window
+                    } else if assistant.current == nil, let pick = suggestions.current {
                         perform(pick)
                     } else if let job = assistant.current, job.route == .actions, let plan = job.plan {
                         applyPlan(plan)
@@ -295,6 +310,8 @@ struct AskView: View {
                         QuickLook.shared.close()
                     } else if assistant.current != nil || !query.isEmpty {
                         assistant.clear(); query = ""; suggestions.clear()
+                    } else if assistant.context != nil {
+                        assistant.clearContext() // then back to plain search
                     } else {
                         viewModel.backOut()
                     }
@@ -345,6 +362,14 @@ struct AskView: View {
         // doesn't stop it closing when the pointer leaves.
         .onChange(of: focused) { _, f in viewModel.isEditing = f && !query.isEmpty }
         .onChange(of: query) { _, q in viewModel.isEditing = focused && !q.isEmpty }
+    }
+
+    private var placeholder: String {
+        switch assistant.context {
+        case .ready(let c, _)?: c.hasSelection ? "Ask about the selection" : "Ask about \(c.appName ?? "this window")"
+        case .capturing?: "Ask about what's on screen"
+        default: "Search, or type a command"
+        }
     }
 
     private var routeIcon: String {
@@ -1171,6 +1196,9 @@ private struct AnswerText: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             ForEach(Array(paragraphs.enumerated()), id: \.offset) { i, para in
+                if para.isCode {
+                    CodeBlock(code: para.text)
+                } else {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     if para.isBullet {
                         Circle().fill(.white.opacity(0.5)).frame(width: 3.5, height: 3.5).offset(y: -3)
@@ -1182,25 +1210,54 @@ private struct AnswerText: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
+                }
             }
         }
     }
 
-    private var paragraphs: [(text: String, isBullet: Bool)] {
+    /// Lines as paragraphs and bullets, and ``` fenced code as blocks (kept verbatim, indentation
+    /// and all; a fence still open while the answer streams in is already a block).
+    private var paragraphs: [(text: String, isBullet: Bool, isCode: Bool)] {
+        var out: [(String, Bool, Bool)] = []
+        var code: [String]?
         // Models sometimes put "•" bullets inline; give each its own line.
-        text.replacingOccurrences(of: " • ", with: "\n• ")
-            .split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .map { line in
-                for prefix in ["• ", "- ", "* "] where line.hasPrefix(prefix) {
-                    return (String(line.dropFirst(prefix.count)), true)
+        for raw in text.replacingOccurrences(of: " • ", with: "\n• ").components(separatedBy: .newlines) {
+            if raw.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                if let lines = code {
+                    if !lines.isEmpty { out.append((lines.joined(separator: "\n"), false, true)) }
+                    code = nil
+                } else {
+                    code = []
                 }
-                return (line, false)
+                continue
             }
+            if code != nil { code?.append(raw); continue }
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+            if let prefix = ["• ", "- ", "* "].first(where: line.hasPrefix) {
+                out.append((String(line.dropFirst(prefix.count)), true, false))
+            } else {
+                out.append((line, false, false))
+            }
+        }
+        if let lines = code, !lines.isEmpty { out.append((lines.joined(separator: "\n"), false, true)) }
+        return out
     }
 
+    /// Citations ([1]) as small superscripts, and `inline code` in monospace.
     private func styled(_ s: String) -> Text {
+        var result = Text("")
+        for (i, part) in s.components(separatedBy: "`").enumerated() {
+            if i % 2 == 1, !part.isEmpty {
+                result = result + Text(part).font(.system(size: 12, design: .monospaced)).foregroundColor(.white.opacity(0.92))
+            } else {
+                result = result + cited(part)
+            }
+        }
+        return result
+    }
+
+    private func cited(_ s: String) -> Text {
         var result = Text("")
         var rest = Substring(s)
         while let open = rest.firstIndex(of: "["), let close = rest[open...].firstIndex(of: "]"),
@@ -1211,6 +1268,42 @@ private struct AnswerText: View {
             rest = rest[rest.index(after: close)...]
         }
         return result + Text(String(rest))
+    }
+}
+
+/// Code from an answer: monospaced on a soft panel, with a copy button.
+private struct CodeBlock: View {
+    let code: String
+    @State private var copied = false
+
+    var body: some View {
+        Text(code)
+            .font(.system(size: 11.5, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.9))
+            .lineSpacing(2)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .padding(.trailing, 18)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(0.07)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+            .overlay(alignment: .topTrailing) {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code, forType: .string)
+                    ClipboardHistory.shared.ignoreCurrent()
+                    copied = true
+                    Haptics.tap()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+                } label: {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc").font(.system(size: 9.5, weight: .semibold))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 20))
+                .padding(3)
+                .help("Copy code")
+            }
     }
 }
 
@@ -1741,6 +1834,112 @@ private struct IndexingLine: View {
             .foregroundStyle(.white.opacity(0.32))
             .transition(.opacity)
         }
+    }
+}
+
+/// The window "Ask about this" captured, in the search bar: a thumbnail and the app, or the
+/// selection. ✕ (or Esc on an empty bar) goes back to plain search.
+private struct ContextChip: View {
+    let state: AssistantStore.ContextState
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            switch state {
+            case .capturing:
+                ProgressView().controlSize(.mini).tint(.white)
+                Text("Looking…")
+            case let .ready(context, thumbnail):
+                if context.hasSelection {
+                    Image(systemName: "text.cursor").font(.system(size: 10, weight: .semibold))
+                } else if let thumbnail {
+                    Image(nsImage: thumbnail)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 26, height: 17)
+                        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
+                }
+                Text(context.hasSelection ? "Selection" : context.appName ?? "Screen")
+                    .frame(maxWidth: 120)
+            case .failed:
+                Image(systemName: "eye.slash").foregroundStyle(.orange)
+                Text("Can't see it")
+            }
+            Button(action: remove) {
+                Image(systemName: "xmark").font(.system(size: 7.5, weight: .bold))
+            }
+            .buttonStyle(NotchIconButtonStyle(size: 16))
+            .help("Ask about something else")
+        }
+        .font(.system(size: 11.5, weight: .medium))
+        .foregroundStyle(.white.opacity(0.85))
+        .lineLimit(1)
+        .padding(.leading, 7)
+        .padding(.trailing, 2)
+        .frame(height: 24)
+        .fixedSize()
+        .background(Capsule().fill(.white.opacity(0.12)))
+        .help(helpText)
+    }
+
+    private var helpText: String {
+        guard case let .ready(c, _) = state else { return "" }
+        let source = c.textSource == .accessibility ? "its text as the app reports it" : "its text read from the picture"
+        return "\(c.label)\nAsking about this window and \(source). Only on this Mac; nothing is saved."
+    }
+}
+
+/// One-click questions for the captured window: what you'd most likely ask about a selection, an
+/// error, a page or a question on screen.
+private struct ContextActions: View {
+    let state: AssistantStore.ContextState
+    let ask: (String) -> Void
+
+    var body: some View {
+        switch state {
+        case .capturing:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini).tint(.white)
+                Text("Looking at what's in front…")
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(.white.opacity(0.5))
+        case .failed(let message):
+            VStack(spacing: 6) {
+                Text(message).multilineTextAlignment(.center)
+                if !ScreenQuestion.hasPermission {
+                    Button("Open Screen Recording Settings") { ScreenQuestion.openPrivacySettings() }
+                        .buttonStyle(NotchPillButtonStyle())
+                }
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(.white.opacity(0.6))
+            .padding(.horizontal, 30)
+        case .ready(let context, _):
+            HStack(spacing: 6) {
+                ForEach(Self.suggestions(for: context), id: \.self) { question in
+                    Button(question) { ask(question) }
+                        .buttonStyle(NotchPillButtonStyle())
+                }
+            }
+        }
+    }
+
+    static func suggestions(for c: ScreenContext) -> [String] {
+        if c.hasSelection {
+            return ["Explain this", "Summarize this", "Translate to English", "Fix spelling and grammar"]
+        }
+        let text = c.text.lowercased()
+        var out: [String] = []
+        if ["error", "exception", "failed", "traceback", "fatal", "warning:"].contains(where: text.contains) { out.append("Explain the error") }
+        if text.contains("?") && ["a)", "b)", "a.", "b.", "question", "quiz", "select", "choose"].contains(where: text.contains) {
+            out.append("What's the answer?")
+        }
+        out.append(c.text.count > 1500 ? "Summarize this" : "What's this?")
+        out.append("Key points")
+        if c.location?.hasPrefix("http") == true { out.append("What should I know about this site?") }
+        return Array(out.prefix(4))
     }
 }
 

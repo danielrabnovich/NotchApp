@@ -87,7 +87,8 @@ final class HotKeys: ObservableObject {
     }
 
     enum Action: String, CaseIterable, Identifiable {
-        case toggle, search, home, shelf, downloads, tasks, notes, timer, mixer, controls, camera, stats, tools, agents, clipboard, copyText
+        // New actions go at the end: each one's position is its registered ID.
+        case toggle, search, home, shelf, downloads, tasks, notes, timer, mixer, controls, camera, stats, tools, agents, clipboard, copyText, askScreen
         var id: String { rawValue }
 
         var key: String {
@@ -108,6 +109,7 @@ final class HotKeys: ObservableObject {
             case .agents: "A"
             case .clipboard: "B"
             case .copyText: "X"
+            case .askScreen: "S"
             }
         }
 
@@ -129,6 +131,7 @@ final class HotKeys: ObservableObject {
             case .agents: "Agents"
             case .clipboard: "Clipboard history"
             case .copyText: "Copy text from the screen"
+            case .askScreen: "Ask about what's on screen"
             }
         }
 
@@ -154,6 +157,7 @@ final class HotKeys: ObservableObject {
             case .agents: UInt32(kVK_ANSI_A)
             case .clipboard: UInt32(kVK_ANSI_B)
             case .copyText: UInt32(kVK_ANSI_X)
+            case .askScreen: UInt32(kVK_ANSI_S)
             }
         }
     }
@@ -261,6 +265,20 @@ final class HotKeys: ObservableObject {
         case .copyText:
             vm.close()
             SystemTweaks.shared.copyTextFromScreen()
+            return
+        case .askScreen:
+            let assistant = AssistantStore.shared
+            // Again while it's up: put it away.
+            if vm.isOpen, vm.tab == .ask, assistant.context != nil {
+                vm.close()
+                return
+            }
+            // Capture first, while the window you mean is still the one in front.
+            assistant.clear()
+            assistant.captureContext()
+            vm.mirror = false
+            vm.overlay = nil
+            vm.open(tab: .ask, reason: .keyboard)
             return
         }
         guard let target, vm.tabs.contains(target) else { return }

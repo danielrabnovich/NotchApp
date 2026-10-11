@@ -326,6 +326,8 @@ final class NotchViewModel: ObservableObject {
         guard isOpen else { return }
         isSettled = false
         typeAhead = ""
+        // A captured window is for questions asked now; the next open starts with plain search.
+        AssistantStore.shared.clearContext()
         wantsKeyboard = false
         pager.builtCenter = nil
         withAnimation(AppSettings.shared.closeAnimation) {

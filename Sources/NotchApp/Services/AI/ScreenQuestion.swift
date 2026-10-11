@@ -3,41 +3,49 @@ import ScreenCaptureKit
 import Vision
 
 /// Answers a question about what's on screen ("what's the right answer to this question",
-/// "explain this error"): a silent capture of the display behind the notch (in memory only, never
-/// saved), the text on it read with Vision, then the local model looks at both. When it needs
+/// "explain this error"): a silent capture of the window in front (in memory only, never saved),
+/// its text as the app reports it (or read with Vision), then the local model looks at both. When it needs
 /// facts it doesn't have, it writes a web query and the answer comes from the web instead. Only
 /// that query leaves the Mac; the picture never does.
 enum ScreenQuestion {
-    struct Capture: @unchecked Sendable {
-        let image: CGImage
-        let text: String
+    /// A question already asked about the same capture, so a follow-up ("and the second one?") makes sense.
+    struct Exchange: Sendable {
+        let question: String
+        let answer: String
     }
 
-    struct ScreenError: LocalizedError {
-        let message: String
-        var errorDescription: String? { message }
-    }
-
-    static func answer(_ question: String, capture: Capture,
+    static func answer(_ question: String, context: ScreenContext, history: [Exchange] = [],
                        progress: @escaping @Sendable (String) async -> Void,
                        partial: @escaping @Sendable (String, [WebSource]) async -> Void) async throws -> (answer: String, sources: [WebSource]) {
         let vision = await OllamaClient.supportsVision()
-        await progress(vision ? "Looking at your screen" : "Reading your screen")
-        let images = vision ? [jpeg(capture.image, maxSide: 1600)].compactMap { $0 } : []
-        let screenText = capture.text.isEmpty ? "(no readable text)" : String(capture.text.prefix(6000))
-        let system = """
-        You can see the user's Mac screen as it is right now\(vision ? " (the image)" : ""), and the text read from it, \
-        top to bottom. Answer their question about what's on screen. Today is \(Date().formatted(date: .complete, time: .omitted)).
-        - A quiz, test or multiple-choice question: give the right answer first (the letter and the option), then one short line on why.
-        - An error or code: say what's wrong and how to fix it.
-        - Otherwise answer directly from what's on screen.
-        If answering needs facts that aren't on screen and that you aren't sure of (recent events, scores, prices, \
-        specific figures), don't guess: reply with ONLY these two lines and nothing else:
+        await progress(vision ? "Looking at \(context.appName ?? "your screen")" : "Reading \(context.appName ?? "your screen")")
+        let images = vision ? [context.image.flatMap { jpeg($0, maxSide: 1600) }].compactMap { $0 } : []
+        let screenText = context.text.isEmpty ? "(no readable text)" : String(context.text.prefix(8000))
+        let what = context.image == nil ? "the user's Mac screen" : "the window in front on the user's Mac"
+        // Questions answered from what's there alone don't get the web option at all: small models
+        // reached for it anyway, and a search only made those answers slower and vaguer.
+        let searchRule = isSelfContained(question) ? "" : """
+        Only if the question needs outside facts you aren't sure of (recent events, scores, prices, specific figures), \
+        don't guess: reply with ONLY these two lines and nothing else:
         SEARCH: <a concise search-engine query>
         SCREEN: <one sentence on what's on screen that matters for the question>
-        Plain text only: no markdown, no headings, no bold. Under 110 words.
+
         """
-        let user = "Question: \(question)\n\nText on screen:\n\(screenText)"
+        let system = """
+        You can see \(what) as it is right now\(vision ? " (the image)" : ""), and its text\(context.textSource == .accessibility ? " as the app reports it" : ", read from the picture"), \
+        top to bottom. Answer their question about it. Today is \(Date().formatted(date: .complete, time: .omitted)).
+        - If they selected text, "this" means the selection.
+        - A quiz, test or multiple-choice question: give the right answer first (the letter and the option), then one short line on why.
+        - An error or code: say what's wrong and how to fix it.
+        - Summarize / explain / translate / rewrite: do exactly that, nothing else.
+        - Otherwise answer directly from what's there.
+        \(searchRule)Plain text: no headings, no bold. Code goes in a ``` block. Under 130 words, unless code, rewriting or translating needs more.
+        """
+        var user = ""
+        if !context.header.isEmpty { user += context.header + "\n\n" }
+        if let selection = context.selection, context.hasSelection { user += "Selected text:\n\(selection.prefix(6000))\n\n" }
+        for exchange in history.suffix(3) { user += "Earlier question: \(exchange.question)\nYour answer: \(exchange.answer.prefix(600))\n\n" }
+        user += "Question: \(question)\n\nText in the window:\n\(screenText)"
 
         // Hold the reply back until it's clear it isn't a search request.
         let text = try await OllamaClient.chatStream(system: system, user: user, images: images) { soFar in
@@ -45,13 +53,22 @@ enum ScreenQuestion {
             guard head.count >= 7, !head.hasPrefix("SEARCH:") else { return }
             await partial(soFar, [])
         }
-        DebugHooks.log("Screen: \(question) → \(text.prefix(200))")
+        DebugHooks.log("Screen [\(context.label)] \(context.textSource) \(context.text.count) chars: \(question) → \(text.prefix(200))")
         guard let search = line("SEARCH:", in: text) else { return (text, []) }
 
         let seen = line("SCREEN:", in: text) ?? ""
-        let context = "\(seen)\nText on screen (excerpt): \(capture.text.prefix(1500))"
-        return try await WebSearcher.answer(question, searchQuery: search, screenContext: context,
+        let excerpt = context.hasSelection ? (context.selection ?? "") : context.text
+        let screenContext = "\(seen)\n\(context.header)\nText on screen (excerpt): \(excerpt.prefix(1500))"
+        return try await WebSearcher.answer(question, searchQuery: search, screenContext: screenContext,
                                             progress: progress, partial: partial)
+    }
+
+    /// Explaining, summarizing, translating, rewriting, fixing: all about what's already there.
+    static func isSelfContained(_ question: String) -> Bool {
+        let q = question.lowercased()
+        return ["explain", "summar", "translate", "rewrite", "reword", "fix", "grammar", "spelling", "key points", "tl;dr",
+                "tldr", "simplify", "what's this", "what is this", "error", "code", "reply", "respond", "shorten", "proofread"]
+            .contains(where: q.contains)
     }
 
     private static func line(_ prefix: String, in text: String) -> String? {
@@ -71,51 +88,6 @@ enum ScreenQuestion {
 
     static func openPrivacySettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
-    }
-
-    /// The display the pointer is on, without NotchApp's own windows, then the text on it.
-    static func capture() async throws -> Capture {
-        // Debug: answer about a saved image instead of the live screen.
-        if UserDefaults.standard.bool(forKey: "debugHooks"), let path = UserDefaults.standard.string(forKey: "debugScreenImage"),
-           let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-           let image = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-            return Capture(image: image, text: await recognizeText(in: image))
-        }
-        guard CGPreflightScreenCaptureAccess() else {
-            CGRequestScreenCaptureAccess()
-            throw ScreenError(message: "To see your screen, NotchApp needs Screen Recording (a different list from Accessibility). Turn NotchApp on there, then reopen NotchApp when macOS asks.")
-        }
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        let displayID = (screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
-
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { $0.displayID == displayID }) ?? content.displays.first else {
-            throw ScreenError(message: "Couldn't find a display to look at.")
-        }
-        let mine = content.applications.filter { $0.processID == getpid() }
-        let filter = SCContentFilter(display: display, excludingApplications: mine, exceptingWindows: [])
-        let config = SCStreamConfiguration()
-        config.width = Int(Float(display.width) * filter.pointPixelScale)
-        config.height = Int(Float(display.height) * filter.pointPixelScale)
-        config.showsCursor = false
-        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-        return Capture(image: image, text: await recognizeText(in: image))
-    }
-
-    private static func recognizeText(in image: CGImage) async -> String {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let text = autoreleasepool {
-                    let request = VNRecognizeTextRequest()
-                    request.recognitionLevel = .accurate
-                    request.usesLanguageCorrection = true
-                    try? VNImageRequestHandler(cgImage: image).perform([request])
-                    return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-                }
-                continuation.resume(returning: text)
-            }
-        }
     }
 
     /// A smaller copy for the model: a full Retina screen is more pixels than it needs, and slower.

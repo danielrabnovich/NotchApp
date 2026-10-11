@@ -160,6 +160,19 @@ enum DebugHooks {
                let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
                 try? png.write(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/battery.png"))
             }
+        case "askscreen": // what the "Ask about this" shortcut does
+            AssistantStore.shared.clear()
+            AssistantStore.shared.captureContext()
+            c.viewModel.open(tab: .ask, reason: .keyboard)
+        case "ctx": // what the captured window holds
+            switch AssistantStore.shared.context {
+            case let .ready(x, _)?:
+                log("CTX \(x.label) | src=\(x.textSource) chars=\(x.text.count) sel=\(x.selection?.count ?? 0) loc=\(x.location ?? "-") img=\(x.image.map { "\($0.width)x\($0.height)" } ?? "none")")
+                log("CTX-TEXT " + x.text.prefix(300).replacingOccurrences(of: "\n", with: " ⏎ "))
+            case .capturing?: log("CTX capturing")
+            case .failed(let m)?: log("CTX failed: \(m)")
+            case nil: log("CTX none")
+            }
         case "compact": // compact <item> [0]: a pinned Glance's compact form on or off
             if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { LiveActivities.shared.update(item) { $0.compact = parts[safe: 2] != "0" } }
         case "pins": // pins item,item… (empty clears); saves nothing else
