@@ -89,7 +89,9 @@ final class MenuSearch {
 
     /// The first of `candidates` the app's menus have, each a path ending in the item's title
     /// (["Share", "Master File"]): the title matches, and every menu named before it is above it.
-    func find(pid: pid_t, _ candidates: [[String]]) -> Ref? {
+    /// `shortcut` ("⌃⇧R") finds the item when the app's menus are in another language: titles are
+    /// translated, standard shortcuts aren't.
+    func find(pid: pid_t, _ candidates: [[String]], shortcut: String? = nil) -> Ref? {
         guard let cache, cache.pid == pid else { return nil }
         for candidate in candidates {
             guard let last = candidate.last.map(Self.plain) else { continue }
@@ -99,6 +101,12 @@ final class MenuSearch {
             }) {
                 return Ref(item, appName: cache.appName)
             }
+        }
+        // Only when the menus aren't in English: there the title not matching means the item isn't
+        // there, and a shortcut alone could belong to something else in another version.
+        let english = cache.items.contains { ["File", "Edit", "View", "Window", "Help"].contains($0.path.first ?? "") }
+        if let shortcut, !english, let item = cache.items.first(where: { $0.shortcut == shortcut }) {
+            return Ref(item, appName: cache.appName)
         }
         return nil
     }

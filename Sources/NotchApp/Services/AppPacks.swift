@@ -60,37 +60,37 @@ enum AppPack {
     private static func creative(_ id: String, _ kit: Kit) -> [Command?]? {
         switch id {
         case "com.apple.finalcut", "com.apple.finalcuttrial":
-            return [kit.menu("Export master file", "square.and.arrow.up", [["Share", "Master File"], ["Share", "Export File"]]),
+            return [kit.menu("Export master file", "square.and.arrow.up", [["Share", "Master File"], ["Share", "Export File"]], shortcut: "⌘E"),
                     kit.menu("Save current frame", "photo", [["Share", "Save Current Frame"]]),
-                    kit.menu("Render all", "gearshape.2", [["Render All"]]),
-                    kit.menu("Background tasks", "list.bullet.rectangle", [["Background Tasks"]])]
+                    kit.menu("Render all", "gearshape.2", [["Render All"]], shortcut: "⌃⇧R"),
+                    kit.menu("Background tasks", "list.bullet.rectangle", [["Background Tasks"]], shortcut: "⌘9")]
         case "com.apple.imovieapp":
-            return [kit.menu("Export file", "square.and.arrow.up", [["Share", "File"]]),
+            return [kit.menu("Export file", "square.and.arrow.up", [["Share", "File"]], shortcut: "⌘E"),
                     kit.menu("Save current frame", "photo", [["Share", "Image"]])]
         case _ where id.hasPrefix("com.adobe.premierepro"):
-            return [kit.menu("Export media", "square.and.arrow.up", [["Export", "Media"]]),
+            return [kit.menu("Export media", "square.and.arrow.up", [["Export", "Media"]], shortcut: "⌘M"),
                     kit.menu("Render in to out", "gearshape.2", [["Render In to Out"]])]
         case _ where id.hasPrefix("com.blackmagic-design.davinciresolve"):
             return [kit.menu("Quick export", "square.and.arrow.up", [["Quick Export"]])]
         case "com.apple.logic10", "com.apple.logic.pro":
-            return [kit.menu("Bounce", "waveform", [["Bounce", "Project or Section"]])]
+            return [kit.menu("Bounce", "waveform", [["Bounce", "Project or Section"]], shortcut: "⌘B")]
         case "com.apple.garageband10":
             return [kit.menu("Export song", "waveform", [["Export Song to Disk"]])]
         case _ where id.hasPrefix("com.ableton.live"):
-            return [kit.menu("Export audio", "waveform", [["Export Audio/Video"]])]
+            return [kit.menu("Export audio", "waveform", [["Export Audio/Video"]], shortcut: "⇧⌘R")]
         case _ where id.hasPrefix("com.adobe.photoshop"):
             return [kit.menu("Quick export PNG", "square.and.arrow.up", [["Export", "Quick Export as PNG"]]),
-                    kit.menu("Export as", "square.and.arrow.up.on.square", [["Export", "Export As"]]),
-                    kit.menu("Image size", "arrow.up.left.and.arrow.down.right", [["Image Size"]])]
+                    kit.menu("Export as", "square.and.arrow.up.on.square", [["Export", "Export As"]], shortcut: "⌥⇧⌘W"),
+                    kit.menu("Image size", "arrow.up.left.and.arrow.down.right", [["Image Size"]], shortcut: "⌥⌘I")]
         case _ where id.hasPrefix("com.adobe.illustrator"):
-            return [kit.menu("Export for screens", "square.and.arrow.up", [["Export for Screens"]]),
+            return [kit.menu("Export for screens", "square.and.arrow.up", [["Export for Screens"]], shortcut: "⌥⌘E"),
                     kit.menu("Export as", "square.and.arrow.up.on.square", [["Export", "Export As"]])]
         case _ where id.hasPrefix("com.adobe.lightroom"):
-            return [kit.menu("Export with previous", "square.and.arrow.up", [["Export with Previous"]]),
-                    kit.menu("Export", "square.and.arrow.up.on.square", [["Export"]])]
+            return [kit.menu("Export with previous", "square.and.arrow.up", [["Export with Previous"]], shortcut: "⌥⇧⌘E"),
+                    kit.menu("Export", "square.and.arrow.up.on.square", [["Export"]], shortcut: "⇧⌘E")]
         case "com.figma.desktop":
-            return [kit.menu("Copy as PNG", "photo.on.rectangle", [["Copy as PNG"]]),
-                    kit.menu("Export", "square.and.arrow.up", [["Export"]])]
+            return [kit.menu("Copy as PNG", "photo.on.rectangle", [["Copy as PNG"]], shortcut: "⇧⌘C"),
+                    kit.menu("Export", "square.and.arrow.up", [["Export"]], shortcut: "⇧⌘E")]
         case "com.bohemiancoding.sketch3":
             return [kit.menu("Copy as PNG", "photo.on.rectangle", [["Copy as PNG"]]),
                     kit.menu("Export", "square.and.arrow.up", [["Export"]])]
@@ -114,11 +114,11 @@ enum AppPack {
                     kit.keys("spotify.like", "Like song", "heart", key: 11, [.maskAlternate, .maskShift])]
         case "com.apple.music":
             return [kit.menu("Favorite", "star", [["Favorite"], ["Love"]]),
-                    kit.menu("Go to current song", "music.note", [["Go to Current Song"]])]
+                    kit.menu("Go to current song", "music.note", [["Go to Current Song"]], shortcut: "⌘L")]
         case "com.colliderli.iina":
             return [kit.menu("Screenshot frame", "camera", [["Take a Screenshot"], ["Screenshot"]])]
         case "com.apple.quicktimeplayerx":
-            return [kit.menu("Trim", "scissors", [["Trim"]])]
+            return [kit.menu("Trim", "scissors", [["Trim"]], shortcut: "⌘T")]
         default:
             return nil
         }
@@ -127,9 +127,9 @@ enum AppPack {
     /// Video calls: mute and camera without hunting for the window's controls.
     private static func calls(_ id: String, _ kit: Kit) -> [Command?]? {
         guard id == "us.zoom.xos" else { return nil }
-        return [kit.menu("Mute", "mic.slash", [["Mute Audio"], ["Unmute Audio"]], key: "zoom.audio", ownTitle: true),
-                kit.menu("Video", "video", [["Stop Video"], ["Start Video"]], key: "zoom.video", ownTitle: true),
-                kit.menu("Share screen", "rectangle.on.rectangle", [["Share Screen"]])]
+        return [kit.menu("Mute", "mic.slash", [["Mute Audio"], ["Unmute Audio"]], shortcut: "⇧⌘A", key: "zoom.audio", ownTitle: true),
+                kit.menu("Video", "video", [["Stop Video"], ["Start Video"]], shortcut: "⇧⌘V", key: "zoom.video", ownTitle: true),
+                kit.menu("Share screen", "rectangle.on.rectangle", [["Share Screen"]], shortcut: "⇧⌘S")]
     }
 
     // MARK: - Browsers
@@ -296,8 +296,9 @@ enum AppPack {
         /// One of the app's menu items, by its menus and title ("Share", "Master File"); nil when the
         /// app has no such item, or it's disabled right now. `ownTitle` shows the item's own words,
         /// for menu items that flip ("Mute Audio" / "Unmute Audio").
-        @MainActor func menu(_ title: String, _ icon: String, _ candidates: [[String]], key: String? = nil, ownTitle: Bool = false) -> Command? {
-            guard let ref = MenuSearch.shared.find(pid: c.pid, candidates) else { return nil }
+        @MainActor func menu(_ title: String, _ icon: String, _ candidates: [[String]], shortcut: String? = nil,
+                             key: String? = nil, ownTitle: Bool = false) -> Command? {
+            guard let ref = MenuSearch.shared.find(pid: c.pid, candidates, shortcut: shortcut) else { return nil }
             let shown = ownTitle ? ref.item.title.replacingOccurrences(of: "…", with: "") : title
             var command = Command(action: .menuItem(ref), title: shown,
                                   subtitle: ([ref.appName] + ref.item.path + [ref.item.title]).joined(separator: " › ")
