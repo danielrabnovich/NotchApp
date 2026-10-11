@@ -85,6 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         DebugHooks.install { [weak self] in self?.controllers ?? [] }
+        // Build the search glow while nothing is happening, not in the first open's first frame.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { SearchGlow.prewarm() }
 
         if !settings.hasLaunchedBefore {
             settings.hasLaunchedBefore = true

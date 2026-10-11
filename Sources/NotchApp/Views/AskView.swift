@@ -1522,90 +1522,142 @@ private struct RainbowGlow: View {
     /// The bar spans the page above results: keep the glow tight to the bar (edge, inner tint and a
     /// small bloom) so it isn't clipped by the page or spill onto the list below.
     var compact = false
-    /// Paused while pages slide, another tab is showing or the notch is still springing open: the
-    /// animation then only costs frames.
+    /// Paused while pages slide, another tab is showing or the notch is still springing open.
     @ObservedObject var pager: PagerState
     var onScreen = true
 
     /// How far the glow spreads past the bar on each side.
     static let spread: CGFloat = 56
-    private static let steps = 16
 
     var body: some View {
         let still = pager.isSwiping || pager.isSettling || !onScreen
-        let animate = (focused || running) && !still && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        Group {
-            if animate {
-                TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-                    // One full turn every 6s (3s while searching), like Siri's slow drift.
-                    let period: Double = running ? 3 : 6
-                    let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
-                    let position = phase * Double(Self.steps)
-                    let i = Int(position) % Self.steps
-                    let mix = position - Double(Int(position))
-                    ZStack {
-                        frame(i).opacity(1 - mix)
-                        frame((i + 1) % Self.steps).opacity(mix)
-                    }
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        // Turns slowly while you type, twice as fast while a search runs, and holds its angle when
+        // paused: speed changes never move it, so it can't jump.
+        let speed: Float = still || reduceMotion || !(focused || running) ? 0 : running ? 2 : 1
+        GlowLayers(speed: speed, compact: compact)
+            .padding(-Self.spread)
+            .opacity(running ? 0.9 : focused ? 0.7 : 0.35)
+            .animation(.easeOut(duration: 0.3), value: focused)
+            .animation(.easeOut(duration: 0.3), value: running)
+            .allowsHitTesting(false)
+    }
+}
+
+/// The glow as Core Animation layers: a conic gradient in Apple Intelligence's palette, rotating in
+/// the window server, seen through the bar's outline in three blurred strata (a faint wash that
+/// tints the inside, a soft bloom, a fine core along the edge). Nothing is drawn per frame by the
+/// app. (It used to crossfade 16 pre-blurred stills at 30 fps, which stepped and dimmed between
+/// frames, and jumped whenever the turn speed changed.)
+/// Lets the app build the search bar's glow ahead of the first open.
+enum SearchGlow {
+    @MainActor static func prewarm() { GlowLayers.prewarm() }
+}
+
+private struct GlowLayers: NSViewRepresentable {
+    let speed: Float
+    let compact: Bool
+
+    /// Finished glows, kept for the next open: building the layers and their blur filters cost a
+    /// dropped frame at the start of every open. (One per notch screen at most, so it stays tiny.)
+    @MainActor private static var pool: [GlowView] = []
+
+    func makeNSView(context: Context) -> GlowView { Self.pool.popLast() ?? GlowView() }
+    func updateNSView(_ view: GlowView, context: Context) { view.set(speed: speed, compact: compact) }
+
+    static func dismantleNSView(_ view: GlowView, coordinator: ()) {
+        view.set(speed: 0, compact: view.isCompact)
+        if pool.count < 2 { pool.append(view) }
+    }
+
+    /// Builds one ahead of time, so even the first open finds one ready.
+    @MainActor static func prewarm() {
+        if pool.isEmpty { pool.append(GlowView()) }
+    }
+
+    final class GlowView: NSView {
+        private let spin = CALayer()        // the time base: its speed is the turn speed
+        private var strata: [(wrapper: CALayer, masked: CALayer, mask: CAShapeLayer, gradient: CAGradientLayer, line: CGFloat)] = []
+        private var compact = false
+        var isCompact: Bool { compact }
+
+        /// Apple Intelligence's palette: lilac/violet, periwinkle, sky, pink, coral and peach.
+        private static let colors: [CGColor] = [0xBC82F3, 0x8D9FFF, 0x79C4FB, 0xF5B9EA, 0xFF6778, 0xFFBA71, 0xFFA1F3, 0xBC82F3].map {
+            CGColor(srgbRed: CGFloat(($0 >> 16) & 0xFF) / 255, green: CGFloat(($0 >> 8) & 0xFF) / 255, blue: CGFloat($0 & 0xFF) / 255, alpha: 1)
+        }
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            layerUsesCoreImageFilters = true
+            layer?.addSublayer(spin)
+            spin.speed = 0
+            // (line width, blur, opacity), widest first.
+            for (line, blur, opacity) in [(CGFloat(16), 18.0, Float(0.18)), (5, 6, 0.5), (1.5, 0, 0.9)] {
+                let wrapper = CALayer()
+                wrapper.opacity = opacity
+                if blur > 0, let filter = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: blur]) {
+                    wrapper.filters = [filter]
                 }
-            } else {
-                // Where the turn is now, so starting to animate (once the notch settles) doesn't jump.
-                let period: Double = running ? 3 : 6
-                let phase = Date().timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
-                frame(Int(phase * Double(Self.steps)) % Self.steps)
+                let masked = CALayer()
+                let mask = CAShapeLayer()
+                mask.fillColor = nil
+                mask.strokeColor = CGColor.white
+                mask.lineWidth = line
+                masked.mask = mask
+                let gradient = CAGradientLayer()
+                gradient.type = .conic
+                gradient.colors = Self.colors
+                gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
+                gradient.endPoint = CGPoint(x: 0.5, y: 0)
+                let turn = CABasicAnimation(keyPath: "transform.rotation.z")
+                turn.fromValue = 0
+                turn.toValue = -2 * Double.pi
+                turn.duration = 6
+                turn.repeatCount = .infinity
+                turn.isRemovedOnCompletion = false
+                gradient.add(turn, forKey: "turn")
+                masked.addSublayer(gradient)
+                wrapper.addSublayer(masked)
+                spin.addSublayer(wrapper)
+                strata.append((wrapper, masked, mask, gradient, line))
             }
         }
-        .padding(-Self.spread)
-        .opacity(running ? 0.9 : focused ? 0.7 : 0.35)
-        .animation(.easeOut(duration: 0.3), value: focused)
-        .animation(.easeOut(duration: 0.3), value: running)
-        .allowsHitTesting(false)
-    }
+        required init?(coder: NSCoder) { fatalError() }
 
-    private var barHeight: CGFloat { compact ? 38 : 48 }
-
-    /// Stretches only the straight middle of the glow, so the rounded ends (and the ring along the
-    /// edge) stay exactly on the bar whatever its width.
-    private func frame(_ i: Int) -> some View {
-        let cap = Self.spread + barHeight / 2
-        return Image(nsImage: Self.frames(height: barHeight)[i])
-            .resizable(capInsets: EdgeInsets(top: 0, leading: cap, bottom: 0, trailing: cap), resizingMode: .stretch)
-    }
-
-    private static func hex(_ v: UInt32) -> Color {
-        Color(red: Double((v >> 16) & 0xFF) / 255, green: Double((v >> 8) & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
-    }
-
-    /// Apple Intelligence's palette: lilac/violet, periwinkle, sky, pink, coral and peach.
-    private static let colors: [Color] = [0xBC82F3, 0x8D9FFF, 0x79C4FB, 0xF5B9EA, 0xFF6778, 0xFFBA71, 0xFFA1F3, 0xBC82F3].map(hex)
-
-    /// The glow at each rotation step for a bar of the given height, drawn once per height.
-    @MainActor private static var cache: [CGFloat: [NSImage]] = [:]
-
-    @MainActor private static func frames(height: CGFloat) -> [NSImage] {
-        if let cached = cache[height] { return cached }
-        let made = (0..<steps).map { render(step: $0, height: height) }
-        cache[height] = made
-        return made
-    }
-
-    @MainActor private static func render(step: Int, height: CGFloat) -> NSImage {
-        let bar = CGSize(width: 500, height: height)
-        let gradient = AngularGradient(colors: colors, center: .center,
-                                       angle: .degrees(Double(step) * 360 / Double(steps)))
-        let ring = Capsule().frame(width: bar.width, height: bar.height)
-        let content = ZStack {
-            ring.overlay(Capsule().stroke(gradient, lineWidth: 16)).foregroundStyle(.clear)
-                .blur(radius: 18).opacity(0.18)                     // faint wash, barely tints the inside
-            ring.overlay(Capsule().stroke(gradient, lineWidth: 5)).foregroundStyle(.clear)
-                .blur(radius: 6).opacity(0.5)                       // soft bloom
-            ring.overlay(Capsule().stroke(gradient, lineWidth: 1.5)).foregroundStyle(.clear)
-                .blur(radius: 0.5).opacity(0.9)                     // fine core along the edge
+        func set(speed: Float, compact: Bool) {
+            if compact != self.compact {
+                self.compact = compact
+                needsLayout = true
+            }
+            guard speed != spin.speed else { return }
+            // Re-base the clock where it is now, so the angle carries on from here at the new speed.
+            let now = CACurrentMediaTime()
+            let local = spin.convertTime(now, from: nil)
+            spin.beginTime = now
+            spin.timeOffset = local
+            spin.speed = speed
         }
-        .frame(width: bar.width + spread * 2, height: bar.height + spread * 2)
-        let renderer = ImageRenderer(content: content)
-        renderer.scale = 2
-        return renderer.nsImage ?? NSImage()
+
+        override func layout() {
+            super.layout()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            spin.frame = bounds
+            let bar = bounds.insetBy(dx: RainbowGlow.spread, dy: RainbowGlow.spread)
+            let path = CGPath(roundedRect: bar, cornerWidth: bar.height / 2, cornerHeight: bar.height / 2, transform: nil)
+            // Large enough that the turning gradient always covers the bar.
+            let side = hypot(bar.width, bar.height) + 40
+            for s in strata {
+                s.wrapper.frame = bounds
+                s.masked.frame = bounds
+                s.mask.frame = bounds
+                s.mask.path = path
+                s.gradient.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+                s.gradient.position = CGPoint(x: bounds.midX, y: bounds.midY)
+            }
+            CATransaction.commit()
+        }
     }
 }
 
