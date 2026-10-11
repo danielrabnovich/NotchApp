@@ -164,7 +164,7 @@ final class NotchViewModel: ObservableObject {
             let list = 85 + CGFloat(assistant.suggestionRows) * 30
             return CGSize(width: openWidth, height: notchSize.height + min(258, max(168, list)))
         }
-        let roomy = onAsk && assistant.current != nil
+        let roomy = onAsk && (assistant.current != nil || RambleStore.shared.active)
         return CGSize(width: openWidth, height: notchSize.height + (roomy || mirror ? 258 : 168))
     }
 

@@ -23,12 +23,22 @@ struct AskView: View {
     @State private var copied: String?
     @ObservedObject private var commands = CommandCenter.shared
     @ObservedObject private var appActions = AppActions.shared
+    @ObservedObject private var ramble = RambleStore.shared
     /// Proposed actions the user unticked before running the plan.
     @State private var excluded: Set<UUID> = []
     /// The result the arrow keys are on: previewed, and what ↩ / ⌘↩ / ⌘Y act on.
     @State private var resultIndex = 0
 
     var body: some View {
+        if ramble.active {
+            RambleView(ramble: ramble)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        } else {
+            search
+        }
+    }
+
+    @ViewBuilder private var search: some View {
         // One layout with a single search field: swapping between separate layouts recreated
         // the field and took the cursor out of it as soon as suggestions appeared.
         let idle = assistant.current == nil && suggestions.items.isEmpty
@@ -197,6 +207,7 @@ struct AskView: View {
 
     /// Runs the ticked actions from an AI plan, then clears the bar for the next thing.
     private func applyPlan(_ plan: CommandPlanner.Plan) {
+        if assistant.current?.actionTitle == "Ramble" { ramble.planApplied() }
         CommandCenter.shared.run(plan.commands.filter { !excluded.contains($0.id) })
         excluded = []
         query = ""
@@ -2111,6 +2122,76 @@ private struct ContextChip: View {
         guard case let .ready(c, _) = state else { return "" }
         let source = c.textSource == .accessibility ? "its text as the app reports it" : "its text read from the picture"
         return "\(c.label)\nAsking about this window and \(source). \(ScreenQuestion.privacyLine)."
+    }
+}
+
+/// Ramble: a big box to talk (through a dictation app) or type everything into, then turn it into
+/// tasks, events and a note, or keep it as a note as it is.
+private struct RambleView: View {
+    @ObservedObject var ramble: RambleStore
+    @FocusState private var focused: Bool
+    private let dictation = Dictation.app
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "waveform").font(.system(size: 13, weight: .semibold)).foregroundStyle(.orange)
+                Text("Ramble").font(.system(size: 14, weight: .semibold))
+                Text(dictation.map { "Hold \($0.keyLabel) to talk with \($0.name), or just type" } ?? "Type or paste it all out")
+                    .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.4))
+                Spacer()
+                if let dictation {
+                    Button { ramble.toggleDictation(); focused = true } label: {
+                        Label(ramble.dictating ? "Stop" : "Dictate", systemImage: ramble.dictating ? "stop.fill" : "mic.fill")
+                    }
+                    .buttonStyle(NotchPillButtonStyle(height: 24))
+                    .help("Presses \(dictation.keyLabel) for \(dictation.name)")
+                }
+                Button { ramble.close() } label: {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 24))
+                .help("Back to search (the draft is kept)")
+            }
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $ramble.text)
+                    .font(.system(size: 14.5))
+                    .scrollContentBackground(.hidden)
+                    .scrollIndicators(.never)
+                    .focused($focused)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 8)
+                if ramble.text.isEmpty {
+                    Text("Everything on your mind: errands, deadlines, “call the dentist Tuesday”, ideas for the launch… It becomes tasks, events and a note.")
+                        .font(.system(size: 14.5))
+                        .foregroundStyle(.white.opacity(0.3))
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white.opacity(0.07)))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(ramble.dictating ? Color.orange.opacity(0.6) : .white.opacity(0.08), lineWidth: 1))
+            HStack(spacing: 8) {
+                Text(ramble.wordCount == 0 ? "" : "\(ramble.wordCount) words")
+                    .font(.system(size: 11).monospacedDigit()).foregroundStyle(.white.opacity(0.35))
+                Spacer()
+                Button("Save as Note") { ramble.saveAsNote() }
+                    .buttonStyle(NotchPillButtonStyle(height: 26))
+                    .disabled(ramble.wordCount == 0)
+                Button { ramble.turnIntoTasks() } label: {
+                    HStack(spacing: 6) { Text("Turn into Tasks"); Text("⌘↩").opacity(0.5) }
+                }
+                .buttonStyle(NotchPillButtonStyle(primary: true, height: 26))
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(ramble.wordCount == 0 || !AssistantStore.shared.aiAvailable)
+                .help(AssistantStore.shared.aiAvailable ? "AI drafts them; you review before anything's added" : "Needs an AI model (Settings → Search)")
+            }
+        }
+        .padding(.horizontal, 4)
+        .onAppear { DispatchQueue.main.async { focused = true } }
+        .onExitCommand { ramble.close() }
     }
 }
 

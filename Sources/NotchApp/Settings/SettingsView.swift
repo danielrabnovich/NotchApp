@@ -593,6 +593,22 @@ private struct TasksSettingsPane: View {
                     ToggleRow("Notes scratchpad", subtitle: "A free-form note next to your tasks, saved automatically.", isOn: $s.notesEnabled)
                 }
             }
+            Section {
+                if let dictation = Dictation.app {
+                    ToggleRow("Start \(dictation.name) when Ramble opens",
+                              subtitle: "Presses \(dictation.keyLabel) for you, so you can just start talking. Or hold \(dictation.keyLabel) yourself.",
+                              isOn: $s.rambleAutoDictate)
+                } else {
+                    LabeledContent("Dictation") {
+                        Text("Any dictation app works: it types into the Ramble box")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("Ramble")
+            } footer: {
+                FooterText("Type “ramble” in the bar or press \(HotKeys.combo(for: .ramble)?.display ?? "its shortcut"), talk or type everything on your mind, then Turn into Tasks: AI drafts tasks, events and a note, and you review them first.")
+            }
             if s.tasksEnabled {
                 Section {
                     ToggleRow("Morning brief", subtitle: "Drops down the first time you unlock your Mac each day.", isOn: $s.morningBrief)

@@ -90,6 +90,7 @@ final class HotKeys: ObservableObject {
         // New actions go at the end: each one's position is its registered ID.
         case toggle, search, home, shelf, downloads, tasks, notes, timer, mixer, controls, camera, stats, tools, agents, clipboard, copyText, askScreen
         case windowLeft, windowRight, windowMaximize, windowCenter, windowNextDisplay, windowRestore
+        case ramble
 
         /// Window keys that other window tools often claim start turned off; set them in Settings.
         var onByDefault: Bool { ![.windowCenter, .windowNextDisplay, .windowRestore].contains(self) }
@@ -132,6 +133,7 @@ final class HotKeys: ObservableObject {
             case .windowCenter: "C"
             case .windowNextDisplay: "N"
             case .windowRestore: "⌫"
+            case .ramble: "J"
             }
         }
 
@@ -160,6 +162,7 @@ final class HotKeys: ObservableObject {
             case .windowCenter: "Window: center"
             case .windowNextDisplay: "Window: next display"
             case .windowRestore: "Window: restore"
+            case .ramble: "Ramble: talk it out, get tasks back"
             }
         }
 
@@ -192,6 +195,7 @@ final class HotKeys: ObservableObject {
             case .windowCenter: UInt32(kVK_ANSI_C)
             case .windowNextDisplay: UInt32(kVK_ANSI_N)
             case .windowRestore: UInt32(kVK_Delete)
+            case .ramble: UInt32(kVK_ANSI_J)
             }
         }
     }
@@ -318,6 +322,10 @@ final class HotKeys: ObservableObject {
             return
         case .askScreen:
             Self.askAboutScreen(vm, reason: .keyboard)
+            return
+        case .ramble:
+            let ramble = RambleStore.shared
+            if vm.isOpen, ramble.active { ramble.close(); vm.close() } else { ramble.open(vm) }
             return
         case .windowLeft, .windowRight, .windowMaximize, .windowCenter, .windowNextDisplay, .windowRestore:
             if let window = action.windowAction { WindowManager.apply(window) }

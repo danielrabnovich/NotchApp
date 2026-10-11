@@ -57,6 +57,8 @@ struct Command: Identifiable, Equatable {
         case askScreen(String)
         /// Tasks or events planned from the window in front ("add the dates in this email…").
         case planFromScreen(String)
+        /// Open Ramble, the box to talk everything out into.
+        case ramble
     }
 
     /// Code to run for an action, compared by its id.
@@ -116,6 +118,9 @@ enum CommandParser {
         if let c = PaletteCommands.translate(q, lower) ?? PaletteCommands.define(lower) ?? PaletteCommands.web(q, lower)
             ?? PaletteCommands.power(lower) ?? PaletteCommands.window(lower) { return [c] }
         if let c = utility(lower) ?? transform(lower) { return [c] }
+        if ["ramble", "brain dump", "braindump", "brain-dump", "dump"].contains(lower) {
+            return [Command(action: .ramble, title: "Ramble", subtitle: "Talk or type it all out, get tasks back", icon: "waveform", verb: "Open")]
+        }
         if let c = media(lower) { return [c] }
         if let c = timer(lower) ?? awake(lower) ?? control(lower) { return [c] }
         if let c = navigation(lower) { return [c] }
@@ -812,6 +817,9 @@ final class CommandCenter: ObservableObject {
             return Confirmation(text: message, icon: "checkmark.circle.fill")
         case .askScreen(let question):
             AssistantStore.shared.run(question, route: .screen, action: (command.title, command.icon))
+            return nil
+        case .ramble:
+            RambleStore.shared.open()
             return nil
         case .planFromScreen(let request):
             // Through a captured window: the plan is made from what's in it, and shown for review.
