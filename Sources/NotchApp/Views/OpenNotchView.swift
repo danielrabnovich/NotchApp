@@ -220,35 +220,55 @@ private struct PagedTabsView: View {
 
 struct HomeView: View {
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var media: MediaController
+    /// Music gets the big player when it was playing as Home appeared; otherwise it shrinks to a small
+    /// card in the same place and the day takes the room. Decided on appearing, so pausing while you look doesn't
+    /// reshuffle the page (starting playback does bring the player back).
+    @State private var musicLarge = true
+
+    private var showsToday: Bool { settings.calendarEnabled || settings.tasksEnabled }
 
     var body: some View {
         HStack(spacing: 18) {
-            if settings.musicEnabled {
+            if settings.musicEnabled, musicLarge || !showsToday {
                 MusicPlayerView()
                     .frame(maxWidth: .infinity)
-            }
-            if settings.musicEnabled && settings.calendarEnabled {
-                Rectangle()
-                    .fill(.white.opacity(0.1))
-                    .frame(width: 1)
-                    .padding(.vertical, 6)
-            }
-            if settings.calendarEnabled {
-                CalendarPanel()
-                    .frame(width: settings.musicEnabled ? 190 : nil)
-                    .frame(maxWidth: settings.musicEnabled ? nil : .infinity)
-            }
-            if !settings.musicEnabled && !settings.calendarEnabled {
+                if showsToday {
+                    divider
+                    TodayPanel()
+                        .frame(width: 210)
+                }
+            } else if showsToday {
+                // Music keeps its place on the left, small; the day widens into the room it gave up.
+                if settings.musicEnabled, media.hasTrack {
+                    CompactMusicCard()
+                        .frame(width: 190)
+                    divider
+                }
+                TodayPanel(wide: true)
+                    .frame(maxWidth: .infinity)
+            } else {
                 VStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 22))
-                    Text("Turn on Music or Calendar in Settings")
+                    Text("Turn on Music, Calendar or Tasks in Settings")
                         .font(.system(size: 12))
                 }
                 .foregroundStyle(.white.opacity(0.5))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onAppear { musicLarge = media.isPlaying }
+        .onChange(of: media.isPlaying) { _, playing in
+            if playing, !musicLarge { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { musicLarge = true } }
+        }
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(.white.opacity(0.1))
+            .frame(width: 1)
+            .padding(.vertical, 6)
     }
 }
 

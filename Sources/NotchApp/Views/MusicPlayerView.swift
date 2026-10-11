@@ -104,6 +104,59 @@ struct MusicPlayerView: View {
     }
 }
 
+/// Music when it isn't playing: the paused track and its controls, small, beside Home's day.
+struct CompactMusicCard: View {
+    @EnvironmentObject private var media: MediaController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                ZStack(alignment: .bottomTrailing) {
+                    AlbumArtView(image: media.artwork, size: 52, cornerRadius: 10)
+                    if let icon = media.appIcon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 18, height: 18)
+                            .shadow(color: .black.opacity(0.5), radius: 2)
+                            .offset(x: 5, y: 5)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { media.openSourceApp() }
+                .help(media.appName.map { "Open \($0)" } ?? "")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(media.title)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .lineLimit(1)
+                    Text(media.artist)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
+                }
+            }
+            HStack(spacing: 8) {
+                Button { media.previousTrack() } label: {
+                    Image(systemName: "backward.fill").font(.system(size: 12))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 28))
+                Button { media.togglePlayPause() } label: {
+                    Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 16))
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 32))
+                .help(media.isPlaying ? "Pause" : "Resume")
+                Button { media.nextTrack() } label: {
+                    Image(systemName: "forward.fill").font(.system(size: 12))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 28))
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxHeight: .infinity)
+    }
+}
+
 /// Drag-to-seek progress bar with elapsed / remaining time.
 struct ScrubBar: View {
     let accent: Color
