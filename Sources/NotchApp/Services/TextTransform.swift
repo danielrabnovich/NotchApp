@@ -55,6 +55,10 @@ enum TextTransform: String, CaseIterable, Identifiable {
                   let obj = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return nil }
             let options: JSONSerialization.WritingOptions = self == .prettyJSON ? [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
                                                                                 : [.withoutEscapingSlashes]
+            // Parsing allows fragments ("42", "\"hi\""), but writing one throws an Objective-C
+            // exception that `try?` can't catch, and crashed the app whenever a clip card checked
+            // its transforms. Only containers are formatted.
+            guard obj is [Any] || obj is [String: Any], JSONSerialization.isValidJSONObject(obj) else { return nil }
             return (try? JSONSerialization.data(withJSONObject: obj, options: options)).flatMap { String(data: $0, encoding: .utf8) }
         case .base64Encode: return Data(text.utf8).base64EncodedString()
         case .base64Decode:
