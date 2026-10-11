@@ -681,31 +681,20 @@ private struct CloudProviderSettings: View {
     @EnvironmentObject private var s: AppSettings
     @State private var key = ""
     @State private var hasKey = false
+    /// Typing a new key over a saved one.
+    @State private var replacing = false
     @State private var models: [CloudLLM.ModelInfo] = []
     @State private var checking = false
     @State private var result: (ok: Bool, message: String)?
     @State private var filter = ""
+    /// A long model list, opened to pick from.
+    @State private var browsing = false
+    @FocusState private var keyFocused: Bool
 
     var body: some View {
         Group {
             LabeledContent {
-                HStack {
-                    SecureField("", text: $key, prompt: Text(hasKey ? "Saved in your Keychain" : provider.keyPlaceholder))
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(save)
-                    Button(hasKey && key.isEmpty ? "Check" : "Save", action: save)
-                        .disabled(checking || (key.isEmpty && !hasKey && provider.keyRequired))
-                    if hasKey {
-                        Button(role: .destructive) {
-                            APIKeys.set(nil, for: provider)
-                            hasKey = false
-                            models = []
-                            result = nil
-                            AssistantStore.shared.refreshStatus()
-                        } label: { Image(systemName: "trash") }
-                        .help("Remove the key")
-                    }
-                }
+                if hasKey && !replacing { savedKey } else { keyField }
             } label: {
                 RowLabel(title: "API key", subtitle: keySubtitle)
             }
@@ -718,7 +707,7 @@ private struct CloudProviderSettings: View {
             }
             status
             if !models.isEmpty {
-                modelList
+                modelPicker
             } else if result?.ok != true {
                 TextField(text: modelBinding, prompt: Text(provider.suggestedModel.isEmpty ? "Model name" : provider.suggestedModel)) {
                     RowLabel(title: "Model", subtitle: "Or check the key to pick from the models it can use.")
@@ -729,6 +718,51 @@ private struct CloudProviderSettings: View {
         .onChange(of: provider) { _, _ in load() }
     }
 
+    /// A saved key: that it's there (and which one, by its last characters), not an empty field.
+    private var savedKey: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "key.fill").font(.system(size: 10.5))
+                Text("Saved")
+                    .fontWeight(.medium)
+                if let tail = APIKeys.get(provider).map({ String($0.suffix(4)) }), !tail.isEmpty {
+                    Text("••••\(tail)").font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
+                }
+            }
+            .foregroundStyle(.green)
+            .padding(.horizontal, 9).padding(.vertical, 4)
+            .background(Capsule().fill(.green.opacity(0.13)))
+            .help("Kept in your Mac's Keychain")
+            Button("Replace…") {
+                replacing = true
+                keyFocused = true
+            }
+            Button(role: .destructive) {
+                APIKeys.set(nil, for: provider)
+                hasKey = false
+                models = []
+                result = nil
+                AssistantStore.shared.refreshStatus()
+            } label: { Image(systemName: "trash") }
+            .help("Remove the key")
+        }
+    }
+
+    private var keyField: some View {
+        HStack {
+            SecureField("", text: $key, prompt: Text(provider.keyPlaceholder))
+                .textFieldStyle(.roundedBorder)
+                .focused($keyFocused)
+                .frame(minWidth: 180)
+                .onSubmit(save)
+            Button("Save", action: save)
+                .disabled(checking || (key.isEmpty && provider.keyRequired))
+            if replacing {
+                Button("Cancel") { replacing = false; key = "" }
+            }
+        }
+    }
+
     @ViewBuilder private var status: some View {
         if checking {
             HStack(spacing: 6) {
@@ -737,59 +771,65 @@ private struct CloudProviderSettings: View {
             }
             .font(.caption)
         } else if let result {
-            Label(result.message, systemImage: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .foregroundStyle(result.ok ? .green : .orange)
-                .font(.caption)
+            HStack(spacing: 6) {
+                Label(result.message, systemImage: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(result.ok ? .green : .orange)
+                Spacer()
+                Button("Check again", action: check)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
         }
     }
 
-    /// Every model the key can use, the chosen one ticked; a filter once the list is long.
-    private var modelList: some View {
+    /// The model: a menu when the list is short; when it's long (OpenRouter's hundreds), the chosen
+    /// one with a filterable list to change it, laid out in the page rather than scrolling inside it.
+    @ViewBuilder private var modelPicker: some View {
         let chosen = s.cloudModel(for: provider)
-        let shown = filter.isEmpty ? models : models.filter {
+        if models.count <= 20 {
+            Picker(selection: Binding(get: { chosen }, set: { s.cloudModels[provider.rawValue] = $0; AssistantStore.shared.refreshStatus() })) {
+                if !models.contains(where: { $0.id == chosen }) { Text(chosen.isEmpty ? "Choose…" : chosen).tag(chosen) }
+                ForEach(models) { model in Text(model.name ?? model.id).tag(model.id) }
+            } label: {
+                RowLabel(title: "Model", subtitle: models.first { $0.id == chosen }.flatMap { $0.name == nil ? nil : $0.id })
+            }
+        } else {
+            LabeledContent {
+                Button(browsing ? "Done" : "Change…") { browsing.toggle(); filter = "" }
+            } label: {
+                RowLabel(title: "Model", subtitle: models.first { $0.id == chosen }.map { ($0.name ?? $0.id) + ($0.name == nil ? "" : " · \($0.id)") } ?? chosen)
+            }
+            if browsing { modelBrowser(chosen: chosen) }
+        }
+    }
+
+    private func modelBrowser(chosen: String) -> some View {
+        let matches = filter.isEmpty ? models : models.filter {
             $0.id.localizedCaseInsensitiveContains(filter) || ($0.name?.localizedCaseInsensitiveContains(filter) ?? false)
         }
+        let shown = matches.prefix(8)
         return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Model").font(.system(size: 13))
-                Spacer()
-                if models.count > 8 {
-                    TextField("", text: $filter, prompt: Text("Filter \(models.count) models"))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 180)
-                }
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("", text: $filter, prompt: Text("Filter \(models.count) models"))
+                    .textFieldStyle(.plain)
             }
-            ScrollView {
-                LazyVStack(spacing: 1) {
-                    ForEach(shown) { model in
-                        Button {
-                            s.cloudModels[provider.rawValue] = model.id
-                            AssistantStore.shared.refreshStatus()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: model.id == chosen ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(model.id == chosen ? Color.accentColor : .secondary)
-                                VStack(alignment: .leading, spacing: 0) {
-                                    Text(model.name ?? model.id).font(.system(size: 12.5, weight: model.id == chosen ? .semibold : .regular))
-                                    if model.name != nil {
-                                        Text(model.id).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
-                                    }
-                                }
-                                Spacer()
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .contentShape(Rectangle())
-                            .background(RoundedRectangle(cornerRadius: 6).fill(model.id == chosen ? Color.accentColor.opacity(0.12) : .clear))
-                        }
-                        .buttonStyle(.plain)
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.06)))
+            VStack(spacing: 1) {
+                ForEach(shown) { model in
+                    ModelChoiceRow(model: model, chosen: model.id == chosen) {
+                        s.cloudModels[provider.rawValue] = model.id
+                        AssistantStore.shared.refreshStatus()
+                        browsing = false
                     }
                 }
             }
-            .frame(height: min(220, CGFloat(shown.count) * 36 + 4))
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
-            if !chosen.isEmpty, !models.contains(where: { $0.id == chosen }) {
-                Text("“\(chosen)” isn't in this list; pick one above.").font(.caption).foregroundStyle(.orange)
+            if matches.count > shown.count {
+                Text("\(matches.count - shown.count) more · type to narrow it down").font(.caption).foregroundStyle(.secondary)
+            } else if matches.isEmpty {
+                Text("No models match “\(filter)”").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -815,6 +855,8 @@ private struct CloudProviderSettings: View {
     private func load() {
         key = ""
         filter = ""
+        replacing = false
+        browsing = false
         hasKey = APIKeys.get(provider) != nil
         models = []
         result = nil
@@ -826,6 +868,7 @@ private struct CloudProviderSettings: View {
             APIKeys.set(key, for: provider)
             key = ""
             hasKey = true
+            replacing = false
         }
         check()
     }
@@ -856,6 +899,36 @@ private struct CloudProviderSettings: View {
     }
 }
 
+/// One model in the long list: its name and id, ticked when chosen, lit on hover.
+private struct ModelChoiceRow: View {
+    let model: CloudLLM.ModelInfo
+    let chosen: Bool
+    let pick: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: pick) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.name ?? model.id).font(.system(size: 12.5, weight: chosen ? .semibold : .regular))
+                    if model.name != nil {
+                        Text(model.id).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if chosen { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Color.accentColor) }
+            }
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(chosen ? Color.accentColor.opacity(0.16) : hovering ? Color.primary.opacity(0.06) : .clear))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
 /// Settings → Search → AI Commands: saved prompts for selected text, each replacing the selection
 /// or showing its result. Used from "ai …" in the bar and from Ask About This with a selection.
 private struct AICommandsEditor: View {
@@ -865,38 +938,26 @@ private struct AICommandsEditor: View {
     var body: some View {
         Section {
             ForEach($store.commands) { $command in
-                DisclosureGroup(isExpanded: Binding(get: { expanded == command.id },
-                                                    set: { expanded = $0 ? command.id : nil })) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextField("Name", text: $command.name)
-                        Picker("Result", selection: $command.output) {
-                            Text("Replace the selection").tag(AICommand.Output.replace)
-                            Text("Show in the notch").tag(AICommand.Output.show)
-                        }
-                        TextField("What to do with the text", text: $command.prompt, axis: .vertical)
-                            .lineLimit(2...5)
-                        HStack {
-                            Spacer()
-                            Button("Delete", role: .destructive) { store.remove(command.id) }
-                        }
+                VStack(alignment: .leading, spacing: 0) {
+                    AICommandRow(command: command, expanded: expanded == command.id) {
+                        withAnimation(.snappy(duration: 0.22)) { expanded = expanded == command.id ? nil : command.id }
                     }
-                    .padding(.top, 4)
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: command.icon).frame(width: 18).foregroundStyle(.secondary)
-                        Text(command.name)
-                        Spacer()
-                        Text(command.output == .replace ? "Replaces" : "Shows")
-                            .font(.caption).foregroundStyle(.secondary)
+                    if expanded == command.id {
+                        AICommandEditor(command: $command) {
+                            withAnimation(.snappy(duration: 0.22)) { store.remove(command.id) }
+                        }
+                        .padding(.top, 10)
+                        .padding(.bottom, 4)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
             }
             .onMove { store.commands.move(fromOffsets: $0, toOffset: $1) }
             HStack {
-                Button("Add Command") {
+                Button {
                     store.add()
-                    expanded = store.commands.last?.id
-                }
+                    withAnimation(.snappy(duration: 0.22)) { expanded = store.commands.last?.id }
+                } label: { Label("Add Command", systemImage: "plus") }
                 Spacer()
                 Button("Restore Defaults") { store.resetToDefaults() }
                     .buttonStyle(.borderless)
@@ -905,7 +966,104 @@ private struct AICommandsEditor: View {
         } header: {
             Text("AI Commands")
         } footer: {
-            FooterText("Select text anywhere, then type “ai” in the bar or press Ask About This (\(HotKeys.combo(for: .askScreen)?.display ?? "its shortcut")); the first four show as buttons. Replace commands put the result back where the text was (⌘Z undoes it).")
+            FooterText("Select text anywhere, then type “ai” in the bar or press Ask About This (\(HotKeys.combo(for: .askScreen)?.display ?? "its shortcut")); the first four show as buttons. Replace commands put the result back where the text was (⌘Z undoes it). Drag to reorder.")
+        }
+    }
+}
+
+/// A command, folded: its icon, name, what it asks for, and what happens to the result. The whole
+/// row opens it.
+private struct AICommandRow: View {
+    let command: AICommand
+    let expanded: Bool
+    let toggle: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 10) {
+                Image(systemName: command.icon)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 24, height: 24)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(command.output == .replace ? Color.indigo.gradient : Color.teal.gradient))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(command.name)
+                    Text(command.prompt)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Text(command.output == .replace ? "Replaces" : "Shows")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.primary.opacity(0.07)))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+            .opacity(hovering && !expanded ? 0.85 : 1)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+/// A command, open: its name and icon, where the result goes, and the instruction.
+private struct AICommandEditor: View {
+    @Binding var command: AICommand
+    let delete: () -> Void
+
+    /// Symbols that suit writing commands.
+    private static let icons = ["sparkles", "checkmark.seal", "face.smiling", "briefcase", "text.alignleft", "lightbulb",
+                                "character.bubble", "arrowshape.turn.up.left", "arrow.down.right.and.arrow.up.left",
+                                "list.bullet", "quote.bubble", "envelope", "pencil", "wand.and.stars", "doc.text.magnifyingglass",
+                                "number", "curlybraces", "megaphone", "heart", "graduationcap"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(Self.icons, id: \.self) { icon in
+                        Button { command.icon = icon } label: { Label(icon, systemImage: icon) }
+                    }
+                } label: {
+                    Image(systemName: command.icon)
+                }
+                .menuStyle(.button)
+                .fixedSize()
+                .help("Icon")
+                TextField("", text: $command.name, prompt: Text("Name"))
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .textFieldStyle(.roundedBorder)
+            }
+            Picker("Result", selection: $command.output) {
+                Text("Replace the selection").tag(AICommand.Output.replace)
+                Text("Show in the notch").tag(AICommand.Output.show)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Instruction").font(.caption).foregroundStyle(.secondary)
+                TextField("", text: $command.prompt, prompt: Text("What to do with the selected text"), axis: .vertical)
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(3...6)
+            }
+            HStack {
+                Spacer()
+                Button(role: .destructive, action: delete) { Label("Delete", systemImage: "trash") }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.red)
+            }
         }
     }
 }

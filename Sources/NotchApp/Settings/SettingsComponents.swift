@@ -63,7 +63,15 @@ struct PaneHeader: View {
         .padding(.top, 34)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.97))
+        .background {
+            // The page's colour, faintly, from behind its icon: each page reads as its own place.
+            ZStack {
+                Color(nsColor: .windowBackgroundColor).opacity(0.97)
+                RadialGradient(colors: [pane.tint.opacity(0.22), pane.tint.opacity(0)],
+                               center: UnitPoint(x: 0.06, y: 0.3), startRadius: 0, endRadius: 360)
+                LinearGradient(colors: [pane.tint.opacity(0.06), .clear], startPoint: .top, endPoint: .bottom)
+            }
+        }
         .overlay(alignment: .bottom) {
             Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.5)).frame(height: 1)
         }
@@ -422,6 +430,8 @@ struct FooterText: View {
         Text(text)
             .font(.caption)
             .foregroundStyle(.secondary)
+            // Form footers otherwise wrap their second line to the right.
+            .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
