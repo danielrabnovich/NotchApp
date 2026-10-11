@@ -3,18 +3,22 @@ import Security
 
 /// Where the intelligence comes from: the local Ollama model, or a cloud model with your own key.
 enum AIProvider: String, CaseIterable, Identifiable {
-    case local, anthropic, openai, openrouter, gemini, groq, custom
+    case local, anthropic, deepseek, zai, customAnthropic, openai, openrouter, gemini, groq, custom
 
     var id: String { rawValue }
 
     enum Wire { case anthropic, openAI }
 
-    var wire: Wire { self == .anthropic ? .anthropic : .openAI }
+    /// Anthropic's Messages API, which DeepSeek and Z.ai also serve; the rest speak OpenAI's chat API.
+    var wire: Wire { [.anthropic, .deepseek, .zai, .customAnthropic].contains(self) ? .anthropic : .openAI }
 
     var title: String {
         switch self {
         case .local: "On this Mac (Ollama)"
         case .anthropic: "Anthropic (Claude)"
+        case .deepseek: "DeepSeek"
+        case .zai: "Z.ai (GLM)"
+        case .customAnthropic: "Other (Anthropic-compatible)"
         case .openai: "OpenAI"
         case .openrouter: "OpenRouter"
         case .gemini: "Google Gemini"
@@ -28,6 +32,9 @@ enum AIProvider: String, CaseIterable, Identifiable {
         switch self {
         case .local: "this Mac"
         case .anthropic: "Anthropic"
+        case .deepseek: "DeepSeek"
+        case .zai: "Z.ai"
+        case .customAnthropic: "your provider"
         case .openai: "OpenAI"
         case .openrouter: "OpenRouter"
         case .gemini: "Google"
@@ -40,6 +47,9 @@ enum AIProvider: String, CaseIterable, Identifiable {
         switch self {
         case .local: ""
         case .anthropic: "https://api.anthropic.com/v1"
+        case .deepseek: "https://api.deepseek.com/anthropic/v1"
+        case .zai: "https://api.z.ai/api/anthropic/v1"
+        case .customAnthropic: "https://api.example.com/anthropic/v1"
         case .openai: "https://api.openai.com/v1"
         case .openrouter: "https://openrouter.ai/api/v1"
         case .gemini: "https://generativelanguage.googleapis.com/v1beta/openai"
@@ -52,9 +62,19 @@ enum AIProvider: String, CaseIterable, Identifiable {
     /// default); the others come from the provider's own model list once the key is checked.
     var suggestedModel: String { self == .anthropic ? "claude-opus-5-5" : "" }
 
+    /// Where the model list is when the Anthropic-style endpoint doesn't list them (OpenAI-style).
+    var fallbackModelsURL: String? {
+        switch self {
+        case .deepseek: "https://api.deepseek.com/models"
+        case .zai: "https://api.z.ai/api/paas/v4/models"
+        default: nil
+        }
+    }
+
     var keyPlaceholder: String {
         switch self {
         case .anthropic: "sk-ant-…"
+        case .deepseek: "sk-…"
         case .openai: "sk-…"
         case .openrouter: "sk-or-…"
         case .gemini: "AIza…"
@@ -66,6 +86,8 @@ enum AIProvider: String, CaseIterable, Identifiable {
     var keyURL: URL? {
         switch self {
         case .anthropic: URL(string: "https://platform.claude.com/settings/keys")
+        case .deepseek: URL(string: "https://platform.deepseek.com/api_keys")
+        case .zai: URL(string: "https://z.ai/manage-apikey/apikey-list")
         case .openai: URL(string: "https://platform.openai.com/api-keys")
         case .openrouter: URL(string: "https://openrouter.ai/keys")
         case .gemini: URL(string: "https://aistudio.google.com/apikey")
@@ -75,7 +97,10 @@ enum AIProvider: String, CaseIterable, Identifiable {
     }
 
     /// A local server (LM Studio and the like) may need no key.
-    var keyRequired: Bool { self != .custom }
+    var keyRequired: Bool { self != .custom && self != .customAnthropic }
+
+    /// Whether the server address is worth showing (the first-party ones never change).
+    var editableServer: Bool { ![.anthropic, .openai, .local].contains(self) }
 }
 
 /// API keys, in the login Keychain (never in preferences).
@@ -242,7 +267,7 @@ enum CloudLLM {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        if let key = c.key { request.setValue(key, forHTTPHeaderField: "x-api-key") }
+        authorize(&request, c)
         // On models whose safety classifiers can decline, let Anthropic re-run a declined request
         // on its recommended fallback model instead of returning the refusal.
         if usesDefaultFallback(c.model) {
@@ -279,6 +304,14 @@ enum CloudLLM {
         return request
     }
 
+    /// Anthropic takes the key as x-api-key; Anthropic-compatible services (DeepSeek, Z.ai…) also
+    /// accept it as a bearer token, which some of them require.
+    private static func authorize(_ request: inout URLRequest, _ c: Config) {
+        guard let key = c.key else { return }
+        request.setValue(key, forHTTPHeaderField: "x-api-key")
+        if c.provider != .anthropic { request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
+    }
+
     /// Current Claude models take `output_config.effort`; Haiku 4.5, Sonnet 4.5 and older reject it.
     static func supportsEffort(_ model: String) -> Bool {
         ["claude-fable-", "claude-mythos-", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
@@ -303,14 +336,29 @@ enum CloudLLM {
 
     // MARK: - Models
 
-    /// The models this key can use, newest first where the provider says (checks the key too).
-    static func models(_ c: Config) async throws -> [String] {
-        var request = URLRequest(url: c.baseURL.appendingPathComponent("models"))
+    struct ModelInfo: Identifiable, Hashable, Sendable {
+        let id: String
+        /// A friendlier name, when the provider gives one ("Claude Opus 5.5").
+        var name: String?
+    }
+
+    /// The models this key can use (checks the key too). For Anthropic-style services that don't
+    /// list models there, their OpenAI-style list.
+    static func models(_ c: Config) async throws -> [ModelInfo] {
+        do {
+            return try await listModels(c, url: c.baseURL.appendingPathComponent("models"), anthropicStyle: c.provider.wire == .anthropic)
+        } catch {
+            guard let fallback = c.provider.fallbackModelsURL.flatMap(URL.init(string:)) else { throw error }
+            return try await listModels(c, url: fallback, anthropicStyle: false)
+        }
+    }
+
+    private static func listModels(_ c: Config, url: URL, anthropicStyle: Bool) async throws -> [ModelInfo] {
+        var request = URLRequest(url: anthropicStyle ? URL(string: url.absoluteString + "?limit=100") ?? url : url)
         request.timeoutInterval = 15
-        if c.provider.wire == .anthropic {
-            request.url = URL(string: c.baseURL.appendingPathComponent("models").absoluteString + "?limit=100")
+        if anthropicStyle {
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            if let key = c.key { request.setValue(key, forHTTPHeaderField: "x-api-key") }
+            authorize(&request, c)
         } else if let key = c.key {
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }
@@ -319,8 +367,15 @@ enum CloudLLM {
             throw CloudError(message: errorMessage(String(decoding: data, as: UTF8.self), status: http.statusCode, provider: c.provider))
         }
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let list = obj["data"] as? [[String: Any]] else { throw CloudError(message: "Unexpected reply from \(c.provider.shortName).") }
+              let list = obj["data"] as? [[String: Any]], !list.isEmpty else {
+            throw CloudError(message: "\(c.provider.shortName) didn't list any models.")
+        }
         // Gemini lists "models/gemini-…"; the chat endpoint wants the bare name.
-        return list.compactMap { $0["id"] as? String }.map { $0.hasPrefix("models/") ? String($0.dropFirst(7)) : $0 }
+        return list.compactMap { m -> ModelInfo? in
+            guard var id = m["id"] as? String else { return nil }
+            if id.hasPrefix("models/") { id.removeFirst(7) }
+            let name = (m["display_name"] ?? m["name"]) as? String
+            return ModelInfo(id: id, name: name == id ? nil : name)
+        }
     }
 }

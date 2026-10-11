@@ -674,16 +674,17 @@ private struct VisualSearchRow: View {
     }
 }
 
-/// A cloud provider's key (kept in the Keychain), model and address. "Check" lists the models the
-/// key can use, which also proves the key works.
+/// A cloud provider's key (kept in the Keychain), address and model. Saving or checking the key
+/// lists the models it can use, which is also the proof that it works; pick one from the list.
 private struct CloudProviderSettings: View {
     let provider: AIProvider
     @EnvironmentObject private var s: AppSettings
     @State private var key = ""
     @State private var hasKey = false
-    @State private var models: [String] = []
+    @State private var models: [CloudLLM.ModelInfo] = []
     @State private var checking = false
     @State private var result: (ok: Bool, message: String)?
+    @State private var filter = ""
 
     var body: some View {
         Group {
@@ -708,25 +709,19 @@ private struct CloudProviderSettings: View {
             } label: {
                 RowLabel(title: "API key", subtitle: keySubtitle)
             }
-            if let result {
-                Label(result.message, systemImage: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(result.ok ? .green : .orange)
-                    .font(.caption)
-            }
-            if models.isEmpty {
-                TextField(text: modelBinding, prompt: Text(provider.suggestedModel.isEmpty ? "Model name" : provider.suggestedModel)) {
-                    RowLabel(title: "Model name", subtitle: "Check the key to pick from the models it can use.")
-                }
-            } else {
-                Picker("Model name", selection: modelBinding) {
-                    ForEach(pickerModels, id: \.self) { Text($0).tag($0) }
-                }
-            }
-            if provider == .custom || provider == .openrouter || provider == .gemini {
+            if provider.editableServer {
                 TextField(text: Binding(get: { s.cloudBaseURL(for: provider) },
                                         set: { s.cloudBaseURLs[provider.rawValue] = $0 }),
                           prompt: Text(provider.defaultBaseURL)) {
-                    RowLabel(title: "Server", subtitle: provider == .custom ? "LM Studio, vLLM, Together, Mistral, xAI… anything that speaks the OpenAI chat API." : nil)
+                    RowLabel(title: "Server", subtitle: serverSubtitle)
+                }
+            }
+            status
+            if !models.isEmpty {
+                modelList
+            } else if result?.ok != true {
+                TextField(text: modelBinding, prompt: Text(provider.suggestedModel.isEmpty ? "Model name" : provider.suggestedModel)) {
+                    RowLabel(title: "Model", subtitle: "Or check the key to pick from the models it can use.")
                 }
             }
         }
@@ -734,23 +729,92 @@ private struct CloudProviderSettings: View {
         .onChange(of: provider) { _, _ in load() }
     }
 
+    @ViewBuilder private var status: some View {
+        if checking {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Connecting to \(provider.shortName)…").foregroundStyle(.secondary)
+            }
+            .font(.caption)
+        } else if let result {
+            Label(result.message, systemImage: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(result.ok ? .green : .orange)
+                .font(.caption)
+        }
+    }
+
+    /// Every model the key can use, the chosen one ticked; a filter once the list is long.
+    private var modelList: some View {
+        let chosen = s.cloudModel(for: provider)
+        let shown = filter.isEmpty ? models : models.filter {
+            $0.id.localizedCaseInsensitiveContains(filter) || ($0.name?.localizedCaseInsensitiveContains(filter) ?? false)
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Model").font(.system(size: 13))
+                Spacer()
+                if models.count > 8 {
+                    TextField("", text: $filter, prompt: Text("Filter \(models.count) models"))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 180)
+                }
+            }
+            ScrollView {
+                LazyVStack(spacing: 1) {
+                    ForEach(shown) { model in
+                        Button {
+                            s.cloudModels[provider.rawValue] = model.id
+                            AssistantStore.shared.refreshStatus()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: model.id == chosen ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(model.id == chosen ? Color.accentColor : .secondary)
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(model.name ?? model.id).font(.system(size: 12.5, weight: model.id == chosen ? .semibold : .regular))
+                                    if model.name != nil {
+                                        Text(model.id).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .contentShape(Rectangle())
+                            .background(RoundedRectangle(cornerRadius: 6).fill(model.id == chosen ? Color.accentColor.opacity(0.12) : .clear))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(height: min(220, CGFloat(shown.count) * 36 + 4))
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
+            if !chosen.isEmpty, !models.contains(where: { $0.id == chosen }) {
+                Text("“\(chosen)” isn't in this list; pick one above.").font(.caption).foregroundStyle(.orange)
+            }
+        }
+    }
+
     private var keySubtitle: String? {
-        guard let url = provider.keyURL else { return nil }
+        guard let url = provider.keyURL else { return "Kept in your Mac's Keychain." }
         return "Get one at \(url.host() ?? url.absoluteString). Kept in your Mac's Keychain."
+    }
+
+    private var serverSubtitle: String? {
+        switch provider {
+        case .custom: "LM Studio, vLLM, Together, Mistral, xAI… anything that speaks the OpenAI chat API."
+        case .customAnthropic: "Kimi, MiniMax, Qwen… anything that speaks Anthropic's Messages API."
+        case .zai: "For the GLM Coding Plan, keep this address and use that plan's key."
+        default: nil
+        }
     }
 
     private var modelBinding: Binding<String> {
         Binding(get: { s.cloudModel(for: provider) }, set: { s.cloudModels[provider.rawValue] = $0; AssistantStore.shared.refreshStatus() })
     }
 
-    /// The listed models plus the chosen one, so the picker always shows the current choice.
-    private var pickerModels: [String] {
-        let chosen = s.cloudModel(for: provider)
-        return chosen.isEmpty || models.contains(chosen) ? models : [chosen] + models
-    }
-
     private func load() {
         key = ""
+        filter = ""
         hasKey = APIKeys.get(provider) != nil
         models = []
         result = nil
@@ -767,17 +831,23 @@ private struct CloudProviderSettings: View {
     }
 
     private func check() {
-        let model = s.cloudModel(for: provider)
         guard let url = URL(string: s.cloudBaseURL(for: provider)) else { return }
-        let config = CloudLLM.Config(provider: provider, key: APIKeys.get(provider), model: model, baseURL: url)
+        let config = CloudLLM.Config(provider: provider, key: APIKeys.get(provider), model: s.cloudModel(for: provider), baseURL: url)
         checking = true
+        result = nil
         Task {
             do {
                 let list = try await CloudLLM.models(config)
                 models = list
-                if model.isEmpty, let first = list.first { s.cloudModels[provider.rawValue] = first }
-                result = (true, "Connected · \(list.count) models available")
+                // Nothing chosen yet (or a name this key can't use): the first one listed.
+                let chosen = s.cloudModel(for: provider)
+                if chosen.isEmpty || !list.contains(where: { $0.id == chosen }), let first = list.first {
+                    s.cloudModels[provider.rawValue] = provider.suggestedModel.isEmpty || !list.contains(where: { $0.id == provider.suggestedModel })
+                        ? first.id : provider.suggestedModel
+                }
+                result = (true, "Connected to \(provider.shortName) · \(list.count) model\(list.count == 1 ? "" : "s") available")
             } catch {
+                models = []
                 result = (false, error.localizedDescription)
             }
             checking = false

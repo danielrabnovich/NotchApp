@@ -11,6 +11,14 @@ struct AskView: View {
 
     @State private var query = ""
     @FocusState private var focused: Bool
+    /// The field has had the keyboard since this open. Until it does, a notch opened to type in
+    /// already looks focused (the field takes focus once the opening spring settles, to keep it
+    /// smooth), so the bar doesn't brighten and gain its caret a beat after appearing.
+    @State private var focusLanded = false
+
+    private var looksFocused: Bool {
+        focused || (viewModel.isOpen && viewModel.wantsKeyboard && viewModel.tab == .ask && !focusLanded)
+    }
     @ObservedObject private var suggestions = SearchSuggestions.shared
     @State private var copied: String?
     @ObservedObject private var commands = CommandCenter.shared
@@ -75,6 +83,17 @@ struct AskView: View {
         .onChange(of: viewModel.tab) { _, _ in focusIfShown() }
         .onChange(of: viewModel.isSettled) { _, _ in focusIfShown() }
         .onChange(of: viewModel.wantsKeyboard) { _, _ in focusIfShown() }
+        .onChange(of: viewModel.typeAheadDelete) { _, n in
+            guard n > 0 else { return }
+            if !query.isEmpty { query.removeLast() }
+            viewModel.typeAheadDelete = 0
+        }
+        // Keys typed while the notch opens show up as they're typed, not all at once on focus.
+        .onChange(of: viewModel.typeAhead) { _, typed in
+            guard !typed.isEmpty else { return }
+            query += typed
+            viewModel.typeAhead = ""
+        }
         .onChange(of: assistant.current?.id) { _, _ in
             if let q = assistant.current?.query { query = q }
             resultIndex = 0
@@ -85,6 +104,7 @@ struct AskView: View {
             QuickLook.shared.close()
             // Drop focus so the next open focuses the field afresh (and its caret shows).
             focused = false
+            focusLanded = false
         }
 
         .onChange(of: viewModel.tab) { _, _ in QuickLook.shared.close() }
@@ -270,7 +290,7 @@ struct AskView: View {
                 } else {
                     Image(systemName: routeIcon)
                         .font(.system(size: compact ? 14 : 17, weight: .medium))
-                        .foregroundStyle(.white.opacity(focused ? 0.8 : 0.45))
+                        .foregroundStyle(.white.opacity(looksFocused ? 0.8 : 0.45))
                         .contentTransition(.symbolEffect(.replace))
                 }
             }
@@ -286,6 +306,15 @@ struct AskView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: compact ? 15 : 18, weight: .regular))
                 .focused($focused)
+                .overlay(alignment: .leading) {
+                    // A caret where the real one will be, until the field has the keyboard.
+                    if looksFocused, !focused, query.isEmpty {
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(Color(nsColor: .textInsertionPointColor))
+                            .frame(width: 2, height: compact ? 17 : 21)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .onSubmit {
                     if assistant.context != nil, assistant.current == nil || assistant.current?.query != query {
                         assistant.run(query) // about the captured window
@@ -342,25 +371,28 @@ struct AskView: View {
         .padding(.trailing, compact ? 10 : 14)
         .frame(height: compact ? 38 : 48)
         .frame(maxWidth: compact ? .infinity : 500)
-        .notchSurface(Capsule(), active: focused)
+        .notchSurface(Capsule(), active: looksFocused)
         .overlay {
             // Above results the bar spans the page: keep the glow to the bar plus a 7pt bloom.
             if compact {
-                RainbowGlow(focused: focused, running: running, compact: true, pager: viewModel.pager, onScreen: viewModel.tab == .ask && viewModel.isSettled)
+                RainbowGlow(focused: looksFocused, running: running, compact: true, pager: viewModel.pager, onScreen: viewModel.tab == .ask && viewModel.isSettled)
                     .mask { Capsule().padding(-7) }
             } else {
-                RainbowGlow(focused: focused, running: running, pager: viewModel.pager, onScreen: viewModel.tab == .ask && viewModel.isSettled)
+                RainbowGlow(focused: looksFocused, running: running, pager: viewModel.pager, onScreen: viewModel.tab == .ask && viewModel.isSettled)
             }
         }
         // Room for the glow's bloom when the bar spans the page, so it isn't cut off at the edges.
         .padding(.horizontal, compact ? 8 : 0)
         .padding(.top, compact ? 7 : 0)
-        .animation(.easeOut(duration: 0.18), value: focused)
+        .animation(.easeOut(duration: 0.18), value: looksFocused)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: compact)
         .animation(.easeOut(duration: 0.15), value: query.isEmpty)
         // Only hold the notch open once something's typed, so an auto-focused empty bar
         // doesn't stop it closing when the pointer leaves.
-        .onChange(of: focused) { _, f in viewModel.isEditing = f && !query.isEmpty }
+        .onChange(of: focused) { _, f in
+            viewModel.isEditing = f && !query.isEmpty
+            if f { focusLanded = true }
+        }
         .onChange(of: query) { _, q in viewModel.isEditing = focused && !q.isEmpty }
     }
 

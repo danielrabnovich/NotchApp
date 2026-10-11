@@ -95,15 +95,17 @@ final class NotchViewModel: ObservableObject {
     /// What was typed after the notch took the keyboard but before the search bar had it (it
     /// waits for the opening animation, where taking focus cost a dropped frame). The search bar
     /// takes it as it focuses.
-    var typeAhead = ""
+    @Published var typeAhead = ""
+    /// Deletes pressed before the field had the keyboard.
+    @Published var typeAheadDelete = 0
 
     /// Keeps a key press for the search bar, if it's on its way to taking the keyboard.
     func keepTypeAhead(_ event: NSEvent) -> Bool {
         guard isOpen, wantsKeyboard, tab == .ask, overlay == nil, !mirror else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard flags.isDisjoint(with: [.command, .control, .function]) else { return false }
-        if event.keyCode == 51 { // delete
-            if !typeAhead.isEmpty { typeAhead.removeLast() }
+        if event.keyCode == 51 { // delete: the typed-ahead text is already in the field
+            typeAheadDelete += 1
             return true
         }
         guard let chars = event.characters, !chars.isEmpty,
