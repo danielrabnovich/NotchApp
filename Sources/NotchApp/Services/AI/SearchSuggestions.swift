@@ -61,6 +61,13 @@ final class SearchSuggestions: ObservableObject {
         }
         let acts = commands.contains { if case .show = $0.action { false } else if case .settings = $0.action { false } else { true } }
 
+        // Settings: "turn off haptics" / "settings glances" lead; a plain "haptics" offers them after search.
+        let (settingRows, explicitSettings) = PaletteCommands.settings(q)
+        if explicitSettings, !settingRows.isEmpty {
+            set(settingRows.map { .command($0) })
+            return
+        }
+
         var head: [Suggestion] = commands.map { .command($0) }
         // With a model, "plan a trip to Lisbon" or "remind me to … and …" can become a set of actions.
         if AssistantStore.shared.aiAvailable, CommandPlanner.looksLikeRequest(q) { head.append(.plan(q)) }
@@ -71,6 +78,7 @@ final class SearchSuggestions: ObservableObject {
         let strong = apps.first.map { explicit || ($0.score >= 85 && !q.contains(" ")) } ?? false
         if strong, let top = apps.first { head.append(.app(top.app)) }
         head.append(.search(q))
+        head += settingRows.prefix(2).map { .command($0) }
         head += apps.dropFirst(strong ? 1 : 0).filter { explicit || $0.score >= 60 }.map { .app($0.app) }
         set(Array(head.prefix(6)))
 

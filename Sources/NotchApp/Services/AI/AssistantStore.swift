@@ -7,7 +7,61 @@ import SwiftUI
 final class AssistantStore: ObservableObject {
     static let shared = AssistantStore()
 
-    enum Route: String { case files, web, weather, actions, calendar, notes, screen }
+    enum Route: String { case files, web, weather, actions, calendar, notes, screen, write }
+
+    /// Text work for the model from the command bar.
+    enum Writing {
+        case translate(String, to: String)
+
+        var query: String {
+            switch self {
+            case let .translate(text, target): "Translate to \(target): \(text.prefix(60))"
+            }
+        }
+
+        var system: String {
+            switch self {
+            case let .translate(_, target):
+                "Translate the user's text into \(target). Reply with only the translation: keep the meaning, tone and formatting; no notes, no quotes."
+            }
+        }
+
+        var text: String {
+            switch self {
+            case let .translate(text, _): text
+            }
+        }
+    }
+
+    /// Runs a writing task (translate…) as a job, streaming the result into the answer view.
+    private var lastWriting: Writing?
+
+    func write(_ writing: Writing) {
+        lastWriting = writing
+        let source = writing.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return }
+        task?.cancel()
+        let job = Job(query: writing.query, route: .write)
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
+        let id = job.id
+        task = Task {
+            guard aiAvailable else {
+                update(id) { $0.state = .failed("Translating needs an AI model: start Ollama, or add a cloud model's key, in Settings → Search.") }
+                return
+            }
+            update(id) { $0.state = .running(stage: "Writing") }
+            do {
+                let result = try await OllamaClient.chatStream(system: writing.system, user: String(source.prefix(12_000))) { soFar in
+                    await MainActor.run { AssistantStore.shared.update(id, animated: false) { $0.answer = soFar } }
+                }
+                try Task.checkCancellation()
+                update(id) { $0.answer = result; $0.state = .done }
+            } catch is CancellationError {
+            } catch {
+                update(id) { $0.state = .failed(error.localizedDescription) }
+            }
+        }
+    }
 
     enum State: Equatable {
         case running(stage: String)
@@ -252,6 +306,8 @@ final class AssistantStore: ObservableObject {
 
     /// Starts a search. `route` forces files or web; otherwise the model decides.
     func run(_ query: String, route forced: Route? = nil) {
+        // "Try again" on a translation: the text lives in the writing task, not the query.
+        if forced == .write, let writing = lastWriting { return write(writing) }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         // "open spotify" launches the app instead of searching for files about it.
@@ -351,6 +407,8 @@ final class AssistantStore: ObservableObject {
                     update(id) { $0.notes = answer; $0.state = .done }
                 case .screen:
                     try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
+                case .write:
+                    break // writing jobs run through write(_:) (run() hands "Try again" back to it)
                 case .weather:
                     await progress("Checking the forecast")
                     let report = try await WeatherService.report(location: understanding.location, dayOffset: understanding.dayOffset)
@@ -418,7 +476,7 @@ final class AssistantStore: ObservableObject {
 
     /// Same question, the other way (files ↔ web).
     func switchRoute() {
-        guard let job = current, let route = job.route, route != .actions, route != .calendar else { return }
+        guard let job = current, let route = job.route, route != .actions, route != .calendar, route != .write else { return }
         // Files ↔ web; a weather or screen answer switches to a full web search.
         run(job.query, route: [.files, .weather, .screen].contains(route) ? .web : .files)
     }

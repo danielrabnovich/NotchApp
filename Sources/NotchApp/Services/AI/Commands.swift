@@ -39,6 +39,12 @@ struct Command: Identifiable, Equatable {
         case emptyTrash
         case downloadMedia(URL, VideoDownloader.Format, height: Int?)
         case transformClipboard(TextTransform)
+        /// A Settings page, or one of its switches set on or off.
+        case settingsPane(SettingsPane)
+        case toggleSetting(SettingSwitch, Bool)
+        /// Translate text (nil: the clipboard) into a language, with the AI model.
+        case translate(String?, to: String)
+        case power(PaletteCommands.Power)
     }
 
     enum MediaAction: String, Equatable { case toggle, play, pause, next, previous }
@@ -82,6 +88,8 @@ enum CommandParser {
         if let c = tasks(q, lower) ?? note(q, lower) ?? complete(q, lower) ?? quit(lower) ?? event(q, lower) { return c }
         if let c = port(lower) ?? uninstall(q, lower) ?? clip(q, lower) ?? media(q, lower) { return c }
         if let c = vpn(lower) { return c }
+        if let c = PaletteCommands.translate(q, lower) ?? PaletteCommands.define(lower) ?? PaletteCommands.web(q, lower)
+            ?? PaletteCommands.power(lower) { return [c] }
         if let c = utility(lower) ?? transform(lower) { return [c] }
         if let c = media(lower) { return [c] }
         if let c = timer(lower) ?? awake(lower) ?? control(lower) { return [c] }
@@ -512,7 +520,7 @@ enum CommandParser {
         Command(action: .template("clip "), title: "clip …", subtitle: "Find something you copied earlier", icon: "doc.on.clipboard", verb: "Use"),
         Command(action: .template("keep awake "), title: "keep awake 1h", subtitle: "Also: volume 40, brightness, dark mode, wifi, lock, screenshot",
                 icon: "switch.2", verb: "Use"),
-    ]
+    ] + PaletteCommands.templates
 
     // MARK: - Helpers
 
@@ -742,6 +750,23 @@ final class CommandCenter: ObservableObject {
             VideoDownloader.shared.download(url, format: format, height: height)
             return Confirmation(text: "Downloading \(format == .audio ? "audio" : "video")…", icon: "arrow.down.circle",
                                 destination: AppSettings.shared.shelfEnabled ? .show(.shelf, pane: ShelfPane.downloads.rawValue) : nil)
+        case .settingsPane(let pane):
+            NotchPresenter.shared.primary?.close()
+            SettingsWindowController.shared.show(pane: pane)
+            return nil
+        case .toggleSetting(let s, let on):
+            AppSettings.shared[keyPath: s.key] = on
+            Haptics.tap()
+            return Confirmation(text: "\(s.title) \(on ? "on" : "off")", icon: on ? "checkmark.circle.fill" : "poweroff",
+                                destination: .settingsPane(s.pane))
+        case .translate(let text, let target):
+            let source = text ?? NSPasteboard.general.string(forType: .string) ?? ""
+            AssistantStore.shared.write(.translate(source, to: target))
+            return nil
+        case .power(let p):
+            NotchPresenter.shared.primary?.close()
+            PaletteCommands.run(p)
+            return nil
         case .addTasks, .completeTask, .appendNote, .template, .createEvent, .moveEvent, .deleteEvent, .media: return nil
         }
     }

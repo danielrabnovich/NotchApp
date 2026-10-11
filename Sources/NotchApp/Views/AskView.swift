@@ -381,6 +381,7 @@ struct AskView: View {
         case .calendar?: "calendar"
         case .notes?: "note.text"
         case .screen?: "macwindow"
+        case .write?: "character.bubble"
         case nil: "magnifyingglass"
         }
     }
@@ -711,6 +712,7 @@ private struct RouteFooter: View {
         case .calendar?: ("calendar", job.calendar?.tasks.isEmpty == false ? "Your calendar and tasks" : "Your calendar")
         case .notes?: ("note.text", "Your notes and tasks")
         case .screen?: ("macwindow", job.sources.isEmpty ? "Looked at your screen" : "Your screen and the web")
+        case .write?: ("character.bubble", "Written by \(AppSettings.shared.aiProvider == .local ? "the model on this Mac" : AppSettings.shared.aiProvider.shortName)")
         default: ("globe", "Searched the web")
         }
     }
@@ -726,7 +728,16 @@ private struct RouteFooter: View {
                 Text("finding more")
                     .transition(.opacity)
             }
-            if job.route != .calendar {
+            if job.route == .write, let answer = job.answer, job.state == .done {
+                Text("·")
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(answer, forType: .string)
+                    Haptics.tap()
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.65))
+            } else if job.route != .calendar {
                 Text("·")
                 Button(job.route == .web || job.route == .notes ? "Search my files instead" : "Search the web instead") {
                     assistant.switchRoute()
@@ -995,6 +1006,8 @@ private struct WebResults: View {
             }
             .frame(maxWidth: .infinity)
 
+            // A translation has no sources to list.
+            if job.route != .write {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Sources")
@@ -1025,6 +1038,7 @@ private struct WebResults: View {
                 }
             }
             .frame(width: 200)
+            }
         }
         .frame(maxHeight: .infinity, alignment: .top)
     }
@@ -1484,6 +1498,11 @@ private struct ConfirmationLine: View {
                 Button("Show") { CommandCenter.shared.show(tab, pane: pane) }
                     .buttonStyle(.plain)
                     .foregroundStyle(.white.opacity(0.55))
+            } else if let destination = confirmation.destination, case .settingsPane(let pane) = destination {
+                Text("·").foregroundStyle(.white.opacity(0.3))
+                Button("Settings") { CommandCenter.shared.run([Command(action: .settingsPane(pane), title: pane.title, icon: pane.icon)]) }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.55))
             }
         }
         .font(.system(size: 11.5, weight: .medium))
@@ -1694,8 +1713,10 @@ private struct SuggestionList: View {
                             .font(.system(size: 11.5))
                             .foregroundStyle(.white.opacity(highlighted ? 0.7 : 0.38))
                             .lineLimit(1)
-                            .truncationMode(.middle)
-                            .frame(minWidth: 90, alignment: .leading)
+                            .truncationMode(.tail)
+                            // Ideal width small, so a long detail (a definition) truncates into
+                            // the room there is instead of the whole detail being dropped.
+                            .frame(minWidth: 90, idealWidth: 90, maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 titleText(item)
