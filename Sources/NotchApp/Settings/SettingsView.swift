@@ -110,6 +110,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case mouse = "Mouse"
     case updates = "Updates"
     case shortcuts = "Shortcuts"
+    case permissions = "Permissions"
     case about = "About"
 
     var id: String { rawValue }
@@ -118,7 +119,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var group: Group {
         switch self {
-        case .general, .addOns, .appearance, .live, .shortcuts: .app
+        case .general, .addOns, .appearance, .live, .shortcuts, .permissions: .app
         case .about: .info
         default: .features
         }
@@ -158,6 +159,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .mouse: "Scroll direction and middle click."
         case .updates: "Homebrew and app updates, checked for you."
         case .shortcuts: "Jump straight to any tab from anywhere."
+        case .permissions: "What NotchApp can see and do, and what each permission unlocks."
         case .about: "Version and app info."
         }
     }
@@ -183,6 +185,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .mouse: "computermouse.fill"
         case .updates: "arrow.down.app.fill"
         case .shortcuts: "command"
+        case .permissions: "lock.shield.fill"
         case .about: "info.circle.fill"
         }
     }
@@ -208,6 +211,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .mouse: Color(red: 0.4, green: 0.45, blue: 0.55)
         case .updates: .blue
         case .shortcuts: Color(red: 0.25, green: 0.5, blue: 0.95)
+        case .permissions: Color(red: 0.2, green: 0.65, blue: 0.45)
         case .about: .secondary
         }
     }
@@ -251,6 +255,7 @@ struct SettingsView: View {
                 case .mouse: MousePane()
                 case .updates: UpdatesPane()
                 case .shortcuts: ShortcutsPane()
+                case .permissions: PermissionsPane()
                 case .about: AboutPane()
                 }
             }

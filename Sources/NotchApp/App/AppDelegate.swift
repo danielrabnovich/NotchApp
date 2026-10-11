@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentMonitor.shared.start()
         FrontmostTracker.shared.start()
         AppActions.shared.start()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Onboarding.showIfNeeded() }
         settings.$screenshotSearch.removeDuplicates().sink { on in
             DispatchQueue.main.async { ScreenshotText.shared.apply(on) }
         }.store(in: &cancellables)

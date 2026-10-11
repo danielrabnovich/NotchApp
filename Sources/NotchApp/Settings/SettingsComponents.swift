@@ -319,6 +319,7 @@ extension SettingsPane {
         case .mouse: ["scroll", "reverse", "middle click", "trackpad", "three finger"]
         case .updates: ["homebrew", "brew", "sparkle", "upgrade"]
         case .shortcuts: ["hotkeys", "keyboard", "keys", "⌃⌥", "hyper"]
+        case .permissions: ["privacy", "accessibility", "screen recording", "calendar", "files", "camera", "notifications", "allow", "access"]
         case .about: ["version", "credits"]
         }
     }
