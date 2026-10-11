@@ -75,6 +75,31 @@ struct ControlsView: View {
 }
 
 extension ControlAction {
+    /// Runs the action from a Glance beside the closed notch. Actions that need the screen to
+    /// themselves (a screenshot, picking a colour, selecting text) wait for the click to finish.
+    @MainActor func run() {
+        let controls = ControlsService.shared, tweaks = SystemTweaks.shared
+        let later: (@escaping @MainActor () -> Void) -> Void = { work in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { MainActor.assumeIsolated(work) }
+        }
+        switch self {
+        case .wifi: controls.toggleWiFi()
+        case .darkMode: controls.toggleDarkMode()
+        case .mic: controls.toggleMic()
+        case .screenshot: later { controls.screenshot() }
+        case .colorPicker: later { controls.pickColor() }
+        case .lockScreen: later { controls.lockScreen() }
+        case .copyText: later { tweaks.copyTextFromScreen() }
+        case .nightShift: tweaks.toggleNightShift()
+        case .hiddenFiles: tweaks.toggleHiddenFiles()
+        case .desktopIcons: tweaks.toggleDesktopIcons()
+        case .flushDNS: tweaks.flushDNS()
+        case .emptyTrash: controls.emptyTrash()
+        case .speedTest: SpeedTest.shared.phase.isRunning ? SpeedTest.shared.cancel() : SpeedTest.shared.start()
+        case .keepAwake, .ports, .cleaner, .clipboard, .saveVideo: break // these open their own UI in the notch
+        }
+    }
+
     /// Tiles that lead to a feature which is switched off are hidden rather than dead.
     @MainActor var isAvailable: Bool {
         switch self {

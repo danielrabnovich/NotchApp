@@ -236,6 +236,22 @@ final class HotKeys: ObservableObject {
         DebugHooks.log("HotKeys: registered \(refs.count) of \(Action.allCases.count)")
     }
 
+    /// "Ask about this": captures the window in front, then opens search about it. Again while
+    /// that's showing puts it away. (The shortcut, and the Glance.)
+    static func askAboutScreen(_ vm: NotchViewModel, reason: OpenReason) {
+        let assistant = AssistantStore.shared
+        if vm.isOpen, vm.tab == .ask, assistant.context != nil {
+            vm.close()
+            return
+        }
+        // Capture first, while the window you mean is still the one in front.
+        assistant.clear()
+        assistant.captureContext()
+        vm.mirror = false
+        vm.overlay = nil
+        vm.open(tab: .ask, reason: reason)
+    }
+
     private func perform(_ action: Action) {
         guard let vm = NotchPresenter.shared.primary else { return }
         let defaults = UserDefaults.standard
@@ -267,18 +283,7 @@ final class HotKeys: ObservableObject {
             SystemTweaks.shared.copyTextFromScreen()
             return
         case .askScreen:
-            let assistant = AssistantStore.shared
-            // Again while it's up: put it away.
-            if vm.isOpen, vm.tab == .ask, assistant.context != nil {
-                vm.close()
-                return
-            }
-            // Capture first, while the window you mean is still the one in front.
-            assistant.clear()
-            assistant.captureContext()
-            vm.mirror = false
-            vm.overlay = nil
-            vm.open(tab: .ask, reason: .keyboard)
+            Self.askAboutScreen(vm, reason: .keyboard)
             return
         }
         guard let target, vm.tabs.contains(target) else { return }

@@ -120,6 +120,12 @@ enum GlanceActions {
         case .vpn: "Show VPN"
         case .devices, .privacy: "Show Devices"
         case .disk: "Show Cleaner"
+        case .askScreen: "Ask About This Window"
+        case .quickDarkMode: ControlsService.shared.darkMode ? "Turn Dark Mode Off" : "Turn Dark Mode On"
+        case .quickMic: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
+        case .quickWiFi: ControlsService.shared.wifiOn ? "Turn Wi-Fi Off" : "Turn Wi-Fi On"
+        case .quickNightShift: SystemTweaks.shared.nightShiftOn ? "Turn Night Shift Off" : "Turn Night Shift On"
+        case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock: item.title
         }
     }
 
@@ -141,6 +147,10 @@ enum GlanceActions {
         case .agents:
             let agents = AgentMonitor.shared
             if let waiting = agents.waiting.first { agents.focus(waiting) } else { openDetail(item, in: vm) }
+        case .askScreen:
+            HotKeys.askAboutScreen(vm, reason: .click)
+        case let item where item.isAction:
+            item.controlAction?.run()
         default:
             openDetail(item, in: vm)
         }
@@ -167,6 +177,9 @@ enum GlanceActions {
         case .vpn: defaults.set(ToolsPane.vpn.rawValue, forKey: "tools.pane"); tab = .tools
         case .devices, .privacy: defaults.set(ToolsPane.devices.rawValue, forKey: "tools.pane"); tab = .tools
         case .disk: defaults.set(ToolsPane.cleaner.rawValue, forKey: "tools.pane"); tab = .tools
+        case .askScreen: tab = .ask
+        case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift:
+            tab = .controls
         }
         vm.open(tab: vm.tabs.contains(tab) ? tab : nil, takeKeyboard: false, reason: .click)
     }
@@ -230,7 +243,8 @@ struct LiveItemView: View {
             KeepAwakeReading(compact: true)
         case .disk:
             DiskReading(compact: true)
-        case .tasks:
+        case .tasks, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
+             .quickWiFi, .quickNightShift:
             regularBody
         }
     }
@@ -302,6 +316,9 @@ struct LiveItemView: View {
             KeepAwakeReading()
         case .disk:
             DiskReading()
+        case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
+             .quickWiFi, .quickNightShift:
+            ActionGlyph(item: item)
         case .tasks:
             Text("\(tasks.openCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
@@ -380,6 +397,48 @@ struct LiveItemView: View {
                     .lineLimit(1)
                     .fixedSize()
             }
+        }
+    }
+}
+
+/// An action Glance: its glyph, lit in its colour while its switch is on (Dark Mode, a muted mic…).
+private struct ActionGlyph: View {
+    let item: LiveItem
+    @ObservedObject private var controls = ControlsService.shared
+    @ObservedObject private var tweaks = SystemTweaks.shared
+    @ObservedObject private var assistant = AssistantStore.shared
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(on ? item.tint : .white.opacity(0.78))
+            .contentTransition(.symbolEffect(.replace))
+            .symbolEffect(.pulse, options: .repeating, isActive: busy)
+            .onAppear { if item == .quickDarkMode || item == .quickMic || item == .quickWiFi { controls.refresh() } }
+    }
+
+    private var on: Bool {
+        switch item {
+        case .quickDarkMode: controls.darkMode
+        case .quickMic: controls.micMuted
+        case .quickWiFi: !controls.wifiOn
+        case .quickNightShift: tweaks.nightShiftOn
+        case .quickCopyText: tweaks.recognizing
+        default: false
+        }
+    }
+
+    private var busy: Bool {
+        if case .capturing? = assistant.context, item == .askScreen { return true }
+        return item == .quickCopyText && tweaks.recognizing
+    }
+
+    private var icon: String {
+        switch item {
+        case .quickMic: controls.micMuted ? "mic.slash.fill" : "mic.fill"
+        case .quickWiFi: controls.wifiOn ? "wifi" : "wifi.slash"
+        case .quickNightShift: tweaks.nightShiftOn ? "moon.circle.fill" : "moon.circle"
+        default: item.icon
         }
     }
 }
@@ -601,6 +660,14 @@ struct LiveActivitiesPane: View {
                 }
             } footer: {
                 FooterText("Click to add or remove, or drag onto the notch (up to \(LiveActivities.perSide) a side). Click one beside the notch to use it (play/pause, pause the timer, join the meeting…), hold it to open its details, or right-click for its options.")
+            }
+            Section {
+                ActivityGallery(gallery: gallery, items: LiveItem.actions)
+                    .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
+            } header: {
+                Text("Actions")
+            } footer: {
+                FooterText("One click beside the notch: ask about the window in front, take a screenshot, copy text off the screen, pick a color, lock the Mac, or flip Dark Mode, the mic, Wi-Fi or Night Shift.")
             }
             Section {
                 Picker(selection: $settings.glanceDensity) {
@@ -1088,11 +1155,12 @@ private struct ActivityOptions: View {
 /// one onto the notch to put it in a particular place.
 private struct ActivityGallery: View {
     @ObservedObject var gallery: GalleryDrag
+    var items: [LiveItem] = LiveItem.readings
     @ObservedObject private var live = LiveActivities.shared
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 10)], spacing: 10) {
-            ForEach(LiveItem.allCases) { item in
+            ForEach(items) { item in
                 GalleryTile(item: item, pinned: live.slot(for: item) != nil, gallery: gallery) {
                     if live.slot(for: item) != nil {
                         live.remove([item])

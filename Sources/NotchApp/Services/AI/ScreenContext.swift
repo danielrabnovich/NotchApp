@@ -81,10 +81,12 @@ extension ScreenContext {
                              text: text, textSource: source)
     }
 
+    /// The app in front, or (when NotchApp itself is, after using Settings) the one you were in before.
     @MainActor private static func frontmostOtherApp() -> NSRunningApplication? {
-        guard let app = NSWorkspace.shared.frontmostApplication,
-              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return nil }
-        return app
+        if let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            return app
+        }
+        return FrontmostTracker.shared.lastOther.flatMap { $0.isTerminated ? nil : $0 }
     }
 
     /// The window by its ID (or the app's largest on-screen window), else the display under the pointer.
@@ -222,3 +224,22 @@ enum AXReader {
 /// The window number behind an Accessibility window (private, but long-stable and widely used).
 @_silgen_name("_AXUIElementGetWindow")
 private func _AXUIElementGetWindow(_ element: AXUIElement, _ id: UnsafeMutablePointer<CGWindowID>) -> AXError
+
+/// Remembers the last app other than NotchApp that was in front.
+@MainActor
+final class FrontmostTracker {
+    static let shared = FrontmostTracker()
+    private(set) var lastOther: NSRunningApplication?
+    private var observer: NSObjectProtocol?
+
+    func start() {
+        lastOther = NSWorkspace.shared.frontmostApplication.flatMap { $0.processIdentifier == getpid() ? nil : $0 }
+        observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
+                                                                     object: nil, queue: .main) { note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            MainActor.assumeIsolated {
+                if let app, app.processIdentifier != getpid() { FrontmostTracker.shared.lastOther = app }
+            }
+        }
+    }
+}

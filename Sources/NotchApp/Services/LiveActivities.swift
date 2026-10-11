@@ -5,8 +5,30 @@ import SwiftUI
 /// Something that can stay on beside the closed notch.
 enum LiveItem: String, CaseIterable, Codable, Identifiable {
     case music, timer, cpu, temperature, memory, gpu, power, battery, nextEvent, tasks, network, devices, privacy, agents, vpn, keepAwake, disk
+    /// Actions: a button beside the notch rather than a reading.
+    case askScreen, quickScreenshot, quickCopyText, quickColorPicker, quickLock, quickDarkMode, quickMic, quickWiFi, quickNightShift
 
     var id: String { rawValue }
+
+    static let actions: [LiveItem] = [.askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock,
+                                      .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift]
+    static let readings: [LiveItem] = allCases.filter { !actions.contains($0) }
+    var isAction: Bool { Self.actions.contains(self) }
+
+    /// The Controls tile the action shares its behaviour with.
+    var controlAction: ControlAction? {
+        switch self {
+        case .quickScreenshot: .screenshot
+        case .quickCopyText: .copyText
+        case .quickColorPicker: .colorPicker
+        case .quickLock: .lockScreen
+        case .quickDarkMode: .darkMode
+        case .quickMic: .mic
+        case .quickWiFi: .wifi
+        case .quickNightShift: .nightShift
+        default: nil
+        }
+    }
 
     var title: String {
         switch self {
@@ -27,6 +49,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .vpn: "VPN"
         case .keepAwake: "Keep Awake"
         case .disk: "Disk Space"
+        case .askScreen: "Ask About This"
+        case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.title
         }
     }
 
@@ -49,6 +73,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .vpn: "A shield and the country your traffic exits in."
         case .keepAwake: "A cup while the Mac is being kept awake, with time left."
         case .disk: "Free space on the startup disk."
+        case .askScreen: "Ask the AI about the window in front."
+        case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.detail
         }
     }
 
@@ -71,6 +97,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .vpn: "lock.shield.fill"
         case .keepAwake: "cup.and.saucer.fill"
         case .disk: "internaldrive.fill"
+        case .askScreen: "sparkle.magnifyingglass"
+        case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.icon
         }
     }
 
@@ -93,6 +121,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .vpn: .green
         case .keepAwake: .brown
         case .disk: .pink
+        case .askScreen: .indigo
+        case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.tint
         }
     }
 
@@ -132,6 +162,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .vpn: 50
         case .keepAwake: 52
         case .disk: 58
+        case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         }
     }
 
@@ -150,6 +181,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .network: 40
         case .devices, .privacy, .agents, .vpn, .keepAwake: 20
         case .disk: 32
+        case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         }
     }
 
@@ -466,6 +498,12 @@ final class LiveActivities: ObservableObject {
         case .agents:
             guard AppSettings.shared.agentsEnabled else { return false }
             return !slot.whileActive || AgentMonitor.shared.activeCount > 0
+        case .askScreen:
+            return AppSettings.shared.assistantEnabled
+        case .quickNightShift:
+            return NightShift.isAvailable
+        case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi:
+            return true
         }
     }
 
