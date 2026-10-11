@@ -134,7 +134,11 @@ private struct SessionRow: View {
     @EnvironmentObject private var agents: AgentMonitor
     @State private var hovering = false
 
+    @State private var reply = ""
+    @State private var sentNote: String?
+
     var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
         HStack(spacing: 9) {
             AgentGlyph(tool: session.tool)
             VStack(alignment: .leading, spacing: 0) {
@@ -148,13 +152,58 @@ private struct SessionRow: View {
                 status
             }
         }
-        .padding(.horizontal, 6)
         .frame(height: 32)
+        if session.state == .waiting, session.pid != nil {
+            replyBox
+        }
+        }
+        .padding(.horizontal, 6)
+        .padding(.bottom, session.state == .waiting && session.pid != nil ? 6 : 0)
         .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(hovering ? 0.06 : 0)))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture { agents.focus(session) }
         .help(session.directory ?? session.title)
+    }
+
+    /// What it's waiting on, and a field to answer it right here.
+    private var replyBox: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if let words = session.lastWords {
+                Text(words)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 6) {
+                TextField("", text: $reply, prompt: Text(sentNote ?? "Reply to \(session.tool.name)…").foregroundStyle(.white.opacity(0.35)))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .onSubmit(send)
+                Button(action: send) {
+                    Image(systemName: "arrow.up").font(.system(size: 9, weight: .bold))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 20))
+                .disabled(reply.trimmingCharacters(in: .whitespaces).isEmpty)
+                .help("Typed into its own pane (cmux, Terminal or iTerm2); elsewhere it's copied for you to paste")
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 26)
+            .notchSurface(Capsule())
+        }
+        .padding(.leading, 31)
+    }
+
+    private func send() {
+        let text = reply
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        reply = ""
+        Haptics.tap()
+        switch AgentReply.send(text, to: session) {
+        case .sent: sentNote = "Sent"
+        case .copied: sentNote = "Copied: paste it in the terminal"
+        }
     }
 
     private var subtitle: String {

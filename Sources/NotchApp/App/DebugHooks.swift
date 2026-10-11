@@ -182,6 +182,13 @@ enum DebugHooks {
                 do { log("CLOUD models: \(try await CloudLLM.models(config).prefix(5))") }
                 catch { log("CLOUD models error: \(error.localizedDescription)") }
             }
+        case "agentwords": // what each running Claude Code session last said (read-only)
+            let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/sessions")
+            for url in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] where url.pathExtension == "json" {
+                guard let data = try? Data(contentsOf: url), let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let id = obj["sessionId"] as? String, let cwd = obj["cwd"] as? String else { continue }
+                log("WORDS \((cwd as NSString).lastPathComponent): \(AgentReply.lastWords(sessionID: id, cwd: cwd)?.prefix(140) ?? "nil")")
+            }
         case "compact": // compact <item> [0]: a pinned Glance's compact form on or off
             if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { LiveActivities.shared.update(item) { $0.compact = parts[safe: 2] != "0" } }
         case "codeshot": // codeshot <path>: sample code in each language, highlighted

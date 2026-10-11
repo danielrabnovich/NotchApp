@@ -772,7 +772,8 @@ enum CommandPlanner {
         var commands: [Command]
     }
 
-    static func plan(_ request: String) async throws -> Plan {
+    /// `context`: text from the window "Ask about this" captured, for "add this to my calendar".
+    static func plan(_ request: String, context: String? = nil) async throws -> Plan {
         let system = """
         You turn a request typed into a Mac's command bar into actions for a notch app with a to-do list, \
         a notes pad, a timer, keep-awake, music controls and the user's calendar.
@@ -808,9 +809,12 @@ enum CommandPlanner {
         - Meetings, appointments, classes, lunches, calls at a set time → "event" (a calendar entry), not a task. \
         "Remind me to …" without a fixed appointment is a task.
         - "Move/push/reschedule X to …" → move_event. "Cancel/delete/remove X" → delete_event.
+        - With content from a window ("this"): take the specifics from it (names, dates, times, places, links) \
+        and put them in the actions; one action per distinct thing, at most 8.
         Reply with JSON only: {"summary":"one short line saying what you'll do","actions":[...]}
         """
-        let obj = try await OllamaClient.chatJSON(system: system, user: request)
+        let user = context.map { "\(request)\n\nContent from the window in front:\n\($0)" } ?? request
+        let obj = try await OllamaClient.chatJSON(system: system, user: user)
         var commands: [Command] = []
         for case let a as [String: Any] in obj["actions"] as? [Any] ?? [] {
             switch (a["type"] as? String ?? "").lowercased() {

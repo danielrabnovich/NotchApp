@@ -278,8 +278,11 @@ final class AssistantStore: ObservableObject {
         // "What's the answer to this question": look at the screen now, before anything on it changes.
         // With a captured window ("Ask about this"), every question is about it.
         let hasContext = context != nil && forced == nil
-        let aboutScreen = forced == .screen || hasContext
-            || (forced == nil && AppSettings.shared.screenQuestions && Router.isAboutScreen(trimmed))
+        // "Add this to my calendar" about a captured window: plan actions from it rather than answer.
+        let actOnScreen = hasContext && ScreenQuestion.isAction(trimmed)
+        let forced = actOnScreen ? .actions : forced
+        let aboutScreen = !actOnScreen && (forced == .screen || hasContext
+            || (forced == nil && AppSettings.shared.screenQuestions && Router.isAboutScreen(trimmed)))
         let job = Job(query: trimmed, route: aboutScreen ? .screen : forced)
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
 
@@ -316,7 +319,15 @@ final class AssistantStore: ObservableObject {
                     update(id) { $0.answer = answer; $0.sources = sources; $0.state = .done }
                 case .actions:
                     await progress("Planning")
-                    let plan = try await CommandPlanner.plan(trimmed)
+                    var windowText: String?
+                    if actOnScreen {
+                        await contextTask?.value
+                        if let c = screenContext {
+                            let body = c.hasSelection ? (c.selection ?? "") : c.text
+                            windowText = [c.header, String(body.prefix(4000))].filter { !$0.isEmpty }.joined(separator: "\n")
+                        }
+                    }
+                    let plan = try await CommandPlanner.plan(trimmed, context: windowText)
                     try Task.checkCancellation()
                     guard !plan.commands.isEmpty else { throw OllamaClient.OllamaError(message: "Couldn’t turn that into an action. Try rewording it.") }
                     // One safe action ("add lunch with Sam friday 1pm", "timer 10 min") just happens, with Undo;

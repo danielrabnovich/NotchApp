@@ -1930,15 +1930,28 @@ private struct ContextActions: View {
         }
     }
 
+    /// A date or time in the text ("Friday", "Oct 14", "3:30 pm"), so "Add to my calendar" makes sense.
+    static func mentionsDate(_ text: String) -> Bool {
+        let t = String(text.prefix(4000))
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) else { return false }
+        return detector.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)) != nil
+    }
+
     static func suggestions(for c: ScreenContext) -> [String] {
         if c.hasSelection {
-            return ["Explain this", "Summarize this", "Translate to English", "Fix spelling and grammar"]
+            let selection = c.selection ?? ""
+            return mentionsDate(selection) ? ["Explain this", "Summarize this", "Add to my calendar", "Add to my tasks"]
+                : ["Explain this", "Summarize this", "Translate to English", "Fix spelling and grammar"]
         }
         let text = c.text.lowercased()
         var out: [String] = []
         if ["error", "exception", "failed", "traceback", "fatal", "warning:"].contains(where: text.contains) { out.append("Explain the error") }
         if text.contains("?") && ["a)", "b)", "a.", "b.", "question", "quiz", "select", "choose"].contains(where: text.contains) {
             out.append("What's the answer?")
+        }
+        if mentionsDate(c.hasSelection ? (c.selection ?? "") : c.text) { out.append("Add to my calendar") }
+        if ["action item", "to do", "todo", "to-do", "- [ ]", "next steps", "follow up", "follow-up"].contains(where: text.contains) {
+            out.append("Add to my tasks")
         }
         out.append(c.text.count > 1500 ? "Summarize this" : "What's this?")
         out.append("Key points")

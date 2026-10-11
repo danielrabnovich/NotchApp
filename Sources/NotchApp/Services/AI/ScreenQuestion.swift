@@ -65,6 +65,14 @@ enum ScreenQuestion {
                                             progress: progress, partial: partial)
     }
 
+    /// "Add this to my tasks", "put it in my calendar": something to do with the window, not a question.
+    static func isAction(_ question: String) -> Bool {
+        let q = question.lowercased()
+        let verbs = ["add ", "create ", "make a", "remind me", "schedule ", "save ", "book ", "put ", "set a reminder", "note "]
+        let things = ["task", "todo", "to-do", "calendar", "event", "reminder", "meeting", "note", "remind"]
+        return verbs.contains(where: q.hasPrefix) && things.contains(where: q.contains)
+    }
+
     /// Explaining, summarizing, translating, rewriting, fixing: all about what's already there.
     static func isSelfContained(_ question: String) -> Bool {
         let q = question.lowercased()

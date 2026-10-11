@@ -61,6 +61,8 @@ final class AgentMonitor: ObservableObject {
         let updated: Date
         var pid: pid_t?
         var model: String?
+        /// While waiting: what it last said, or the tool it wants to use (Claude Code).
+        var lastWords: String?
 
         var project: String { directory.map { ($0 as NSString).lastPathComponent } ?? title }
     }
@@ -173,7 +175,16 @@ final class AgentMonitor: ObservableObject {
         for session in all {
             guard let before = lastStates[session.id], before != session.state else { continue }
             if session.state == .waiting {
-                ActivityCenter.shared.show(.notice(title: "\(session.tool.name) needs you", detail: session.project, icon: "hand.raised.fill", tone: .warning), for: 5)
+                // A Prompt: what it said, with Reply (in the Agents tab) and Go to Terminal.
+                let words = session.lastWords.map { String($0.prefix(120)) }
+                NotchPresenter.shared.offer(Prompt(
+                    icon: "hand.raised.fill", tint: .systemOrange,
+                    title: "\(session.tool.name) needs you · \(session.project)",
+                    detail: words ?? "It's waiting for your answer.",
+                    actions: [
+                        .init(title: "Reply", primary: true) { NotchPresenter.shared.open(tab: .agents) },
+                        .init(title: "Go to Terminal") { AgentMonitor.shared.focus(session) },
+                    ]))
             } else if before == .working, session.state == .idle {
                 ActivityCenter.shared.show(.notice(title: "\(session.tool.name) finished", detail: session.project, icon: "sparkles.rectangle.stack.fill"), for: 4)
             }
@@ -207,9 +218,14 @@ final class AgentMonitor: ObservableObject {
                 : status.isEmpty || status == "idle" ? .idle : .waiting
             let updated = (Double(string(obj["statusUpdatedAt"]) ?? string(obj["updatedAt"]) ?? "") ?? 0) / 1000
             let cwd = string(obj["cwd"])
-            return Session(id: "claude:\(string(obj["sessionId"]) ?? "\(pid)")", tool: .claude,
-                           title: string(obj["name"]) ?? cwd.map { ($0 as NSString).lastPathComponent } ?? "Claude Code",
-                           directory: cwd, state: state, updated: Date(timeIntervalSince1970: updated), pid: pid)
+            let sessionID = string(obj["sessionId"])
+            var session = Session(id: "claude:\(sessionID ?? "\(pid)")", tool: .claude,
+                                  title: string(obj["name"]) ?? cwd.map { ($0 as NSString).lastPathComponent } ?? "Claude Code",
+                                  directory: cwd, state: state, updated: Date(timeIntervalSince1970: updated), pid: pid)
+            if state == .waiting, let sessionID, let cwd {
+                session.lastWords = AgentReply.lastWords(sessionID: sessionID, cwd: cwd)
+            }
+            return session
         }
     }
 
