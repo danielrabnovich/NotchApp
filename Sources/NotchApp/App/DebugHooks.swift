@@ -38,7 +38,7 @@ enum DebugHooks {
         case "done": if let t = TaskStore.shared.open.first { TaskStore.shared.setDone(t.id, true) }
         case "page": c.viewModel.pageOffset = CGFloat(Double(parts[safe: 1] ?? "0") ?? 0)
         case "drag":
-            c.viewModel.dragPreview = DragPreview(taskTitle: "Reply to Sarah about the Q3 budget", hasFiles: false, icon: "envelope.fill")
+            c.viewModel.dragPreview = DragPreview(taskTitle: "Reply to Sarah about the Q3 budget", hasFiles: parts[safe: 1] == "files", icon: "envelope.fill")
             c.viewModel.isDragActive = parts[safe: 1] != "0"
         case "duesoon":
             TaskStore.shared.add(TaskItem(title: "Send updated deck to Sarah", due: Date().addingTimeInterval(95 * 60)))
@@ -279,6 +279,15 @@ enum DebugHooks {
             if parts[safe: 1] == "list" { UpdateChecker.shared.listOpen = true } else { UpdateChecker.shared.check() }
         case "awake":
             if let m = Int(parts[safe: 1] ?? "") { KeepAwake.shared.start(.minutes(m)) } else { KeepAwake.shared.stop() }
+        case "appactions": // what the row under the empty bar offers for the app in front
+            let a = AppActions.shared
+            log("APPACTIONS \(a.context.map { "\($0.appName) \($0.kind) url=\($0.url?.absoluteString ?? "-") file=\($0.filePath ?? "-") sel=\($0.selection?.prefix(40) ?? "-") editable=\($0.selectionEditable)" } ?? "none") → \(a.items.map(\.title))")
+        case "apprun", "appstar": // apprun|appstar <title…>: runs (or stars as a Glance) an app action by title
+            let title = parts.dropFirst().joined(separator: " ").lowercased()
+            if let command = AppActions.shared.items.first(where: { $0.title.lowercased() == title }) {
+                if parts[0] == "apprun" { CommandCenter.shared.run([command]) } else { AppActions.shared.toggleStar(command) }
+            }
+            log("APPSTARS \(AppActions.shared.stars) glance=\(AppActions.shared.glanceActions.map(\.title))")
         case "close": c.viewModel.close()
         case "hover": c.viewModel.isHovering = parts.count > 1 ? parts[1] == "1" : true
         case "volume": ActivityCenter.shared.show(.volume(level: Float(parts[safe: 1] ?? "0.6") ?? 0.6, muted: false), for: 5)

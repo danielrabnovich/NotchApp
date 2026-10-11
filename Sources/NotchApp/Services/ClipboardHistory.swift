@@ -83,6 +83,13 @@ final class ClipboardHistory: ObservableObject {
         ignoreChange = NSPasteboard.general.changeCount
     }
 
+    /// Lets the clipboard change without keeping anything, for a moment (reading a selection by
+    /// copying it, then putting the user's clipboard back).
+    func pause(for seconds: TimeInterval) {
+        pausedUntil = Date().addingTimeInterval(seconds)
+    }
+    private var pausedUntil = Date.distantPast
+
     var pinned: [Clip] { clips.filter(\.pinned) }
 
     // MARK: - Capture
@@ -91,6 +98,7 @@ final class ClipboardHistory: ObservableObject {
         let pb = NSPasteboard.general
         guard pb.changeCount != lastChange else { return }
         lastChange = pb.changeCount
+        if Date() < pausedUntil { return }
         if ignoreChange == pb.changeCount { return }
         let types = Set((pb.types ?? []).map(\.rawValue))
         // nspasteboard.org conventions for "don't keep this".

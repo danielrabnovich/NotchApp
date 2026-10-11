@@ -57,7 +57,10 @@ final class NotchViewModel: ObservableObject {
     @Published var isOpen = false
     /// True once the open animation has finished (used for effects too costly to animate).
     @Published var isSettled = false
-    @Published var isHovering = false
+    @Published var isHovering = false {
+        // The pointer on its way in: read the app in front now, so its actions are up as search opens.
+        didSet { if isHovering, !oldValue, !isOpen { AppActions.shared.prepare() } }
+    }
     @Published var tab: NotchTab = AppSettings.shared.assistantEnabled ? .ask : .home
 
     /// Something is being dragged over the notch from another app; show the drop bins.
@@ -303,6 +306,8 @@ final class NotchViewModel: ObservableObject {
             return
         }
         if let target, tabs.contains(target) { self.tab = target }
+        // The app in front, read while the notch opens (a shortcut gives no hover head start).
+        if self.tab == .ask { AppActions.shared.prepare() }
         // Opening covers the Banner; it's been seen.
         ActivityCenter.shared.dismissBanner()
         if overlay == nil, let prompt = NotchPresenter.shared.takePendingPrompt() { overlay = .prompt(prompt) }

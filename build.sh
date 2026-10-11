@@ -50,7 +50,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSCameraUsageDescription</key><string>NotchApp's camera mirror shows a preview of yourself before a call.</string>
-  <key>NSAppleEventsUsageDescription</key><string>NotchApp's Controls switch Dark Mode and empty the Trash, and replies to a coding agent are typed into its own Terminal or iTerm2 tab.</string>
+  <key>NSAppleEventsUsageDescription</key><string>NotchApp's Controls switch Dark Mode and empty the Trash, its app actions read the files selected in Finder and copy the song playing in Spotify, and replies to a coding agent are typed into its own Terminal or iTerm2 tab.</string>
   <key>NSAudioCaptureUsageDescription</key><string>NotchApp's sound mixer adjusts each app's volume by routing its audio through NotchApp.</string>
   <key>NSCalendarsFullAccessUsageDescription</key><string>NotchApp shows today's events and alerts you before meetings.</string>
   <key>NSCalendarsUsageDescription</key><string>NotchApp shows today's events and alerts you before meetings.</string>

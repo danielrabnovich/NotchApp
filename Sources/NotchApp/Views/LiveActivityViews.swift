@@ -121,6 +121,7 @@ enum GlanceActions {
         case .devices, .privacy: "Show Devices"
         case .disk: "Show Cleaner"
         case .askScreen: "Ask About This Window"
+        case .appAction: AppActions.shared.glanceActions.map(\.title).joined(separator: " · ")
         case .quickDarkMode: ControlsService.shared.darkMode ? "Turn Dark Mode Off" : "Turn Dark Mode On"
         case .quickMic: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
         case .quickWiFi: ControlsService.shared.wifiOn ? "Turn Wi-Fi Off" : "Turn Wi-Fi On"
@@ -149,6 +150,11 @@ enum GlanceActions {
             if let waiting = agents.waiting.first { agents.focus(waiting) } else { openDetail(item, in: vm) }
         case .askScreen:
             HotKeys.askAboutScreen(vm, reason: .click)
+        case .appAction:
+            // One glyph: run it. Several: each glyph runs its own (see AppActionGlyphs).
+            if let only = AppActions.shared.glanceActions.first, AppActions.shared.glanceActions.count == 1 {
+                AppActions.shared.runGlance(only, in: vm)
+            }
         case let item where item.isAction:
             item.controlAction?.run()
         default:
@@ -177,7 +183,7 @@ enum GlanceActions {
         case .vpn: defaults.set(ToolsPane.vpn.rawValue, forKey: "tools.pane"); tab = .tools
         case .devices, .privacy: defaults.set(ToolsPane.devices.rawValue, forKey: "tools.pane"); tab = .tools
         case .disk: defaults.set(ToolsPane.cleaner.rawValue, forKey: "tools.pane"); tab = .tools
-        case .askScreen: tab = .ask
+        case .askScreen, .appAction: tab = .ask
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift:
             tab = .controls
         }
@@ -244,7 +250,7 @@ struct LiveItemView: View {
         case .disk:
             DiskReading(compact: true)
         case .tasks, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
-             .quickWiFi, .quickNightShift:
+             .quickWiFi, .quickNightShift, .appAction:
             regularBody
         }
     }
@@ -319,6 +325,8 @@ struct LiveItemView: View {
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
              .quickWiFi, .quickNightShift:
             ActionGlyph(item: item)
+        case .appAction:
+            AppActionGlyphs()
         case .tasks:
             Text("\(tasks.openCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
@@ -360,8 +368,13 @@ struct LiveItemView: View {
                     .trim(from: 0, to: min(max(value, 0.03), 1))
                     .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(-90))
+                // Sized as an image, not as text: a symbol set in a font sits on its baseline, a
+                // little below the ring's centre.
                 Image(systemName: icon)
-                    .font(.system(size: 7, weight: .bold))
+                    .resizable()
+                    .fontWeight(.bold)
+                    .scaledToFit()
+                    .frame(width: 8, height: 8)
                     .foregroundStyle(.white.opacity(0.7))
             }
             .frame(width: 17, height: 17)
@@ -439,6 +452,35 @@ private struct ActionGlyph: View {
         case .quickWiFi: controls.wifiOn ? "wifi" : "wifi.slash"
         case .quickNightShift: tweaks.nightShiftOn ? "moon.circle.fill" : "moon.circle"
         default: item.icon
+        }
+    }
+}
+
+/// The starred actions for the app in front, one glyph each. With more than one, each glyph is its
+/// own button (with one, the whole Glance is).
+private struct AppActionGlyphs: View {
+    @ObservedObject private var actions = AppActions.shared
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(actions.glanceActions, id: \.stableKey) { command in
+                if actions.glanceActions.count > 1 {
+                    Image(systemName: command.icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 24, height: 22)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if let vm = NotchPresenter.shared.primary { actions.runGlance(command, in: vm) }
+                        }
+                        .help(command.title)
+                } else {
+                    Image(systemName: command.icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 24)
+                }
+            }
         }
     }
 }

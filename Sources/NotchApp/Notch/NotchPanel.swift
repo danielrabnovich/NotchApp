@@ -60,6 +60,12 @@ final class NotchPanel: NSPanel {
             }
             return true
         }
+        // Only the modifiers people hold (digits can arrive marked as from the keypad).
+        if flags.intersection([.command, .option, .control, .shift]) == .command,
+           let n = Int(event.charactersIgnoringModifiers ?? ""), (1...5).contains(n),
+           MainActor.assumeIsolated({ AppActions.shared.shortcut?(n) }) == true {
+            return true
+        }
         return super.performKeyEquivalent(with: event)
     }
 

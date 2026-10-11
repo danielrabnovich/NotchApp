@@ -40,6 +40,20 @@ final class AssistantStore: ObservableObject {
             case let .command(_, text, _): text
             }
         }
+
+        var title: String {
+            switch self {
+            case let .translate(_, target): "Translate to \(target)"
+            case let .command(command, _, _): command.name
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .translate: "character.bubble"
+            case let .command(command, _, _): command.icon
+            }
+        }
     }
 
     /// Runs a writing task (translate…) as a job, streaming the result into the answer view.
@@ -50,7 +64,9 @@ final class AssistantStore: ObservableObject {
         let source = writing.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !source.isEmpty else { return }
         task?.cancel()
-        let job = Job(query: writing.query, route: .write)
+        var job = Job(query: writing.query, route: .write)
+        job.actionTitle = writing.title
+        job.actionIcon = writing.icon
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
         let id = job.id
         task = Task {
@@ -71,6 +87,8 @@ final class AssistantStore: ObservableObject {
                     SelectionText.replace(with: result, in: source)
                     ActivityCenter.shared.show(.notice(title: command.name, detail: "Replaced in \(source.appName ?? "the app") · ⌘Z to undo",
                                                        icon: command.icon, tone: .success), for: 3)
+                    // It's done its job where the text was: the next open starts fresh.
+                    if current?.id == id { withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = nil } }
                 }
             } catch is CancellationError {
             } catch {
@@ -103,6 +121,10 @@ final class AssistantStore: ObservableObject {
         var plan: CommandPlanner.Plan?
         /// What the screen looked like, for a question about it (a small preview; nothing is saved).
         var screen: NSImage?
+        /// Started by an action (an AI Command, a chip under the bar) rather than typed: the bar stays
+        /// empty and shows this instead, since there's nothing in it to edit and run again.
+        var actionTitle: String?
+        var actionIcon: String?
         let startedAt = Date()
 
         var isRunning: Bool { if case .running = state { true } else { false } }
@@ -321,7 +343,8 @@ final class AssistantStore: ObservableObject {
     // MARK: - Searching
 
     /// Starts a search. `route` forces files or web; otherwise the model decides.
-    func run(_ query: String, route forced: Route? = nil) {
+    /// `action`: the title and icon of what started it, when it wasn't typed (a chip under the bar).
+    func run(_ query: String, route forced: Route? = nil, action: (title: String, icon: String)? = nil) {
         // "Try again" on a translation: the text lives in the writing task, not the query.
         if forced == .write, let writing = lastWriting { return write(writing) }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -355,7 +378,9 @@ final class AssistantStore: ObservableObject {
         let forced = actOnScreen ? .actions : forced
         let aboutScreen = !actOnScreen && (forced == .screen || hasContext
             || (forced == nil && AppSettings.shared.screenQuestions && Router.isAboutScreen(trimmed)))
-        let job = Job(query: trimmed, route: aboutScreen ? .screen : forced)
+        var job = Job(query: trimmed, route: aboutScreen ? .screen : forced)
+        job.actionTitle = action?.title
+        job.actionIcon = action?.icon
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
 
         task = Task {

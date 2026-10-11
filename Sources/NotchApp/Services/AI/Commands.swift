@@ -51,6 +51,21 @@ struct Command: Identifiable, Equatable {
         case menuItem(MenuSearch.Ref)
         /// Snap the window in front.
         case window(WindowManager.Action)
+        /// An app action done in code (copy the page's link, put the document on the Shelf).
+        case perform(Closure)
+        /// A question about the window in front, answered from a look at it.
+        case askScreen(String)
+        /// Tasks or events planned from the window in front ("add the dates in this email…").
+        case planFromScreen(String)
+    }
+
+    /// Code to run for an action, compared by its id.
+    final class Closure: Equatable {
+        let id: String
+        /// Does it, and says what happened, or nil when what it did speaks for itself.
+        let run: @MainActor () -> String?
+        init(id: String, run: @escaping @MainActor () -> String?) { self.id = id; self.run = run }
+        static func == (a: Closure, b: Closure) -> Bool { a.id == b.id }
     }
 
     enum MediaAction: String, Equatable { case toggle, play, pause, next, previous }
@@ -71,6 +86,10 @@ struct Command: Identifiable, Equatable {
     let icon: String
     /// The verb beside ↩ on the highlighted row.
     var verb = "Run"
+    /// What stays the same about it from one read of the app to the next (for an app action starred
+    /// as a Glance); the title when nil.
+    var key: String? = nil
+    var stableKey: String { key ?? title.lowercased() }
 
     static func == (a: Command, b: Command) -> Bool { a.action == b.action && a.title == b.title && a.subtitle == b.subtitle }
 }
@@ -783,6 +802,21 @@ final class CommandCenter: ObservableObject {
             NotchPresenter.shared.primary?.close()
             // Once the notch is out of the way, so the window in front is the one that moves.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { WindowManager.apply(action) }
+            return nil
+        case .perform(let closure):
+            let before = confirmation?.id
+            let message = closure.run()
+            // It confirmed on its own (adding an event, with undo): leave that one up.
+            guard confirmation?.id == before else { return nil }
+            guard let message else { NotchPresenter.shared.primary?.close(); return nil }
+            return Confirmation(text: message, icon: "checkmark.circle.fill")
+        case .askScreen(let question):
+            AssistantStore.shared.run(question, route: .screen, action: (command.title, command.icon))
+            return nil
+        case .planFromScreen(let request):
+            // Through a captured window: the plan is made from what's in it, and shown for review.
+            AssistantStore.shared.captureContext()
+            AssistantStore.shared.run(request, action: (command.title, command.icon))
             return nil
         case .addTasks, .completeTask, .appendNote, .template, .createEvent, .moveEvent, .deleteEvent, .media: return nil
         }

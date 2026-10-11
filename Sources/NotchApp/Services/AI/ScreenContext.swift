@@ -212,7 +212,7 @@ enum AXReader {
         return s
     }
 
-    private static func value<T>(_ element: AXUIElement, _ attribute: String) -> T? {
+    static func value<T>(_ element: AXUIElement, _ attribute: String) -> T? {
         var ref: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &ref) == .success, let ref else { return nil }
         if T.self == AXUIElement.self {

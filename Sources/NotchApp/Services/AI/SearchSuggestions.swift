@@ -93,6 +93,8 @@ final class SearchSuggestions: ObservableObject {
         }
 
         var head: [Suggestion] = commands.map { .command($0) }
+        // What fits the app in front ("summ" in Safari → Summarize page).
+        head += AppActions.shared.matches(q, limit: 2).map { .command($0) }
         // With a model, "plan a trip to Lisbon" or "remind me to … and …" can become a set of actions.
         if AssistantStore.shared.aiAvailable, CommandPlanner.looksLikeRequest(q) { head.append(.plan(q)) }
         if let answer = QuickAnswers.answer(q) { head.append(.answer(answer)) }

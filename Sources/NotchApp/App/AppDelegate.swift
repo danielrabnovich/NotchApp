@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PrivacyMonitor.shared.start()
         AgentMonitor.shared.start()
         FrontmostTracker.shared.start()
+        AppActions.shared.start()
         settings.$screenshotSearch.removeDuplicates().sink { on in
             DispatchQueue.main.async { ScreenshotText.shared.apply(on) }
         }.store(in: &cancellables)

@@ -84,6 +84,7 @@ enum SelectionText {
     static func read() -> (text: String, source: Source)? {
         guard AXIsProcessTrusted(),
               let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else { return nil }
+        exposeElectron(pid: app.processIdentifier, bundlePath: app.bundleURL?.path)
         let element = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(element, 0.25)
         var focused: CFTypeRef?
@@ -93,6 +94,62 @@ enum SelectionText {
         guard AXUIElementCopyAttributeValue(focused as! AXUIElement, kAXSelectedTextAttribute as CFString, &selected) == .success,
               let text = selected as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return (text, Source(pid: app.processIdentifier, appName: app.localizedName))
+    }
+
+    /// Electron apps (Discord, Slack, Notion, VS Code…) keep their text from Accessibility until
+    /// something asks for it; this asks, once per app run. Their text, selection included, reads
+    /// normally from then on (the first read may still come back empty while the app builds it).
+    nonisolated static func exposeElectron(pid: pid_t, bundlePath: String?) {
+        guard let bundlePath else { return }
+        electronLock.lock()
+        defer { electronLock.unlock() }
+        guard !exposed.contains(pid) else { return }
+        exposed.insert(pid)
+        guard FileManager.default.fileExists(atPath: bundlePath + "/Contents/Frameworks/Electron Framework.framework") else { return }
+        AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), "AXManualAccessibility" as CFString, kCFBooleanTrue)
+    }
+    private nonisolated(unsafe) static var exposed = Set<pid_t>()
+    private nonisolated static let electronLock = NSLock()
+
+    /// The selection, by copying it (⌘C) in the app in front, for apps that don't say through
+    /// Accessibility. The user's clipboard is put back, and clipboard history skips both. The notch
+    /// gives the keyboard back first, so the keys reach the app.
+    static func copy(completion: @escaping (_ text: String?, _ source: Source?) -> Void) {
+        guard let app = NSWorkspace.shared.frontmostApplication ?? FrontmostTracker.shared.lastOther,
+              app.processIdentifier != getpid() else { return completion(nil, nil) }
+        let source = Source(pid: app.processIdentifier, appName: app.localizedName)
+        let pasteboard = NSPasteboard.general
+        let saved = pasteboard.pasteboardItems?.map { item -> NSPasteboardItem in
+            let copy = NSPasteboardItem()
+            for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+            return copy
+        } ?? []
+        let before = pasteboard.changeCount
+        ClipboardHistory.shared.pause(for: 1.5)
+        let hadKeyboard = NSApp.keyWindow is NotchPanel
+        if hadKeyboard { NotchPresenter.shared.primary?.close() }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(hadKeyboard ? 200 : 20))
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier { app.activate() }
+            let c = CGKeyCode(8) // kVK_ANSI_C
+            for down in [true, false] {
+                let e = CGEvent(keyboardEventSource: nil, virtualKey: c, keyDown: down)
+                e?.flags = .maskCommand
+                e?.post(tap: .cghidEventTap)
+            }
+            // Wait for the copy to land (apps take a moment), then put the clipboard back.
+            for _ in 0..<10 where pasteboard.changeCount == before {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            let text = pasteboard.changeCount != before ? pasteboard.string(forType: .string) : nil
+            if pasteboard.changeCount != before {
+                pasteboard.clearContents()
+                if !saved.isEmpty { pasteboard.writeObjects(saved) }
+                ClipboardHistory.shared.ignoreCurrent()
+            }
+            let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            completion(trimmed.isEmpty ? nil : text, source)
+        }
     }
 
     /// Pastes `text` over the selection in the source app (which keeps its selection while the
@@ -142,10 +199,15 @@ enum AICommandRunner {
         if let (text, source) = SelectionText.read() {
             return start(command, text: text, source: source)
         }
-        if command.output == .show, let clip = NSPasteboard.general.string(forType: .string), !clip.isEmpty {
-            return start(command, text: clip, source: nil)
+        // Apps that don't share their selection (Electron apps on a first try, games, some editors):
+        // copy it instead.
+        SelectionText.copy { text, source in
+            if let text { return start(command, text: text, source: source) }
+            if command.output == .show, let clip = NSPasteboard.general.string(forType: .string), !clip.isEmpty {
+                return start(command, text: clip, source: nil)
+            }
+            ActivityCenter.shared.show(.notice(title: "Select some text first", detail: command.name, icon: "text.cursor", tone: .warning), for: 3)
         }
-        ActivityCenter.shared.show(.notice(title: "Select some text first", detail: command.name, icon: "text.cursor", tone: .warning), for: 3)
     }
 
     private static func start(_ command: AICommand, text: String, source: SelectionText.Source?) {

@@ -7,10 +7,12 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
     case music, timer, cpu, temperature, memory, gpu, power, battery, nextEvent, tasks, network, devices, privacy, agents, vpn, keepAwake, disk
     /// Actions: a button beside the notch rather than a reading.
     case askScreen, quickScreenshot, quickCopyText, quickColorPicker, quickLock, quickDarkMode, quickMic, quickWiFi, quickNightShift
+    /// The actions starred for the app in front (right-click one under the search bar).
+    case appAction
 
     var id: String { rawValue }
 
-    static let actions: [LiveItem] = [.askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock,
+    static let actions: [LiveItem] = [.appAction, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock,
                                       .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift]
     static let readings: [LiveItem] = allCases.filter { !actions.contains($0) }
     var isAction: Bool { Self.actions.contains(self) }
@@ -50,6 +52,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .keepAwake: "Keep Awake"
         case .disk: "Disk Space"
         case .askScreen: "Ask About This"
+        case .appAction: "App Actions"
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.title
         }
     }
@@ -74,6 +77,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .keepAwake: "A cup while the Mac is being kept awake, with time left."
         case .disk: "Free space on the startup disk."
         case .askScreen: "Ask the AI about the window in front."
+        case .appAction: "Actions you star for an app (right-click one under the search bar), while that app is in front."
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.detail
         }
     }
@@ -98,6 +102,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .keepAwake: "cup.and.saucer.fill"
         case .disk: "internaldrive.fill"
         case .askScreen: "sparkle.magnifyingglass"
+        case .appAction: "star.square.on.square"
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.icon
         }
     }
@@ -122,6 +127,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .keepAwake: .brown
         case .disk: .pink
         case .askScreen: .indigo
+        case .appAction: .orange
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.tint
         }
     }
@@ -163,6 +169,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .keepAwake: 52
         case .disk: 58
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
+        case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
         }
     }
 
@@ -181,6 +188,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .devices, .privacy, .agents, .vpn, .keepAwake: 20
         case .disk: 32
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
+        case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
         }
     }
 
@@ -281,6 +289,7 @@ final class LiveActivities: ObservableObject {
         AgentMonitor.shared.$sessions.sink { _ in refresh() }.store(in: &cancellables)
         VPNMonitor.shared.$connections.sink { _ in refresh() }.store(in: &cancellables)
         KeepAwake.shared.$isActive.sink { _ in refresh() }.store(in: &cancellables)
+        AppActions.shared.$glanceActions.sink { _ in refresh() }.store(in: &cancellables)
         Cleaner.shared.$disk.sink { _ in refresh() }.store(in: &cancellables)
         // Network "only while busy" follows the rate, which changes every second.
         NetworkMonitor.shared.$downRate.sink { _ in
@@ -499,6 +508,8 @@ final class LiveActivities: ObservableObject {
             return !slot.whileActive || AgentMonitor.shared.activeCount > 0
         case .askScreen:
             return AppSettings.shared.assistantEnabled
+        case .appAction:
+            return !AppActions.shared.glanceActions.isEmpty
         case .quickNightShift:
             return NightShift.isAvailable
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi:

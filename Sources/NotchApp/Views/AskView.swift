@@ -22,6 +22,7 @@ struct AskView: View {
     @ObservedObject private var suggestions = SearchSuggestions.shared
     @State private var copied: String?
     @ObservedObject private var commands = CommandCenter.shared
+    @ObservedObject private var appActions = AppActions.shared
     /// Proposed actions the user unticked before running the plan.
     @State private var excluded: Set<UUID> = []
     /// The result the arrow keys are on: previewed, and what ↩ / ⌘↩ / ⌘Y act on.
@@ -56,6 +57,12 @@ struct AskView: View {
                         }
                     } else if let done = commands.confirmation {
                         ConfirmationLine(confirmation: done)
+                    } else if let app = appActions.context, !appActions.items.isEmpty {
+                        VStack(spacing: 10) {
+                            AppActionsRow(context: app, items: appActions.items, perform: runAppAction)
+                            // The hint gives way to the actions; a status that needs doing something stays.
+                            if assistant.pullingModel != nil || ![.ready, .unknown].contains(assistant.status) { AIStatusLine() }
+                        }
                     } else {
                         AIStatusLine()
                     }
@@ -74,12 +81,22 @@ struct AskView: View {
         }
         .onAppear {
             assistant.refreshStatusIfStale()
+            if viewModel.isOpen { AppActions.shared.prepare() }
+            // ⌘1…⌘5 run the actions under the empty bar (the panel sees ⌘ keys before this view does).
+            AppActions.shared.shortcut = { n in
+                guard query.isEmpty, assistant.current == nil, assistant.context == nil,
+                      appActions.items.indices.contains(n - 1) else { return false }
+                runAppAction(appActions.items[n - 1])
+                return true
+            }
             // If Quick Look keeps the keyboard, its arrow keys still move the selection here.
             QuickLook.shared.onMove = { moveSelection($0) }
-            // Hidden tabs aren't rendered, so restore the query when this page comes back.
-            if let q = assistant.current?.query { query = q }
+            // Hidden tabs aren't rendered, so restore the query when this page comes back. With no
+            // result to come back to, the bar starts empty, and so does the list (it outlives this view).
+            if let job = assistant.current { query = barText(job) } else if query.isEmpty { suggestions.clear() }
             focusIfShown()
         }
+        .onDisappear { AppActions.shared.shortcut = nil }
         .onChange(of: viewModel.tab) { _, _ in focusIfShown() }
         .onChange(of: viewModel.isSettled) { _, _ in focusIfShown() }
         .onChange(of: viewModel.wantsKeyboard) { _, _ in focusIfShown() }
@@ -95,7 +112,7 @@ struct AskView: View {
             viewModel.typeAhead = ""
         }
         .onChange(of: assistant.current?.id) { _, _ in
-            if let q = assistant.current?.query { query = q }
+            if let job = assistant.current { query = barText(job) }
             resultIndex = 0
             QuickLook.shared.close()
         }
@@ -108,6 +125,8 @@ struct AskView: View {
         }
 
         .onChange(of: viewModel.tab) { _, _ in QuickLook.shared.close() }
+        // A model came up: the AI actions can join the row.
+        .onChange(of: assistant.status) { _, _ in AppActions.shared.refresh() }
         .onChange(of: commands.confirmation?.id) { _, new in
             // An action that ran straight from the bar: clear it for the next thing.
             if new != nil, assistant.current == nil { query = ""; suggestions.clear() }
@@ -115,7 +134,8 @@ struct AskView: View {
         .onChange(of: query) { _, q in
             // Typing something new replaces the last result with live suggestions — except while
             // asking about a captured window, where files and apps would only get in the way.
-            if let job = assistant.current, q != job.query { assistant.clear() }
+            // (An action's result sits under an empty bar: only typing something replaces it.)
+            if let job = assistant.current, q != job.query, !(job.actionTitle != nil && q.isEmpty) { assistant.clear() }
             if assistant.current == nil {
                 if assistant.context == nil { suggestions.update(q) } else { suggestions.clear() }
             }
@@ -145,13 +165,31 @@ struct AskView: View {
                 return
             }
             CommandCenter.shared.run([c])
-            query = ""
+            // A command that started a job (an AI Command, a question about the window) shows it:
+            // emptying the bar would clear it.
+            query = assistant.current.map(barText) ?? ""
             suggestions.clear()
         case .plan(let q):
             suggestions.clear()
             excluded = []
             assistant.run(q, route: .actions)
         }
+    }
+
+    /// A chip under the empty bar (or ⌘1…⌘5).
+    private func runAppAction(_ command: Command) {
+        if case .template(let prefix) = command.action {
+            query = prefix
+            return
+        }
+        CommandCenter.shared.run([command])
+        if let job = assistant.current { query = barText(job) }
+    }
+
+    /// What the bar shows for a result: what was typed, so it can be changed and run again; nothing
+    /// for one an action started (its title shows beside the bar's icon instead).
+    private func barText(_ job: AssistantStore.Job) -> String {
+        job.actionTitle == nil ? job.query : ""
     }
 
     /// Runs the ticked actions from an AI plan, then clears the bar for the next thing.
@@ -299,6 +337,9 @@ struct AskView: View {
             if let context = assistant.context {
                 ContextChip(state: context) { assistant.clearContext() }
                     .transition(.scale(scale: 0.8).combined(with: .opacity))
+            } else if let job = assistant.current, let title = job.actionTitle, query.isEmpty {
+                ActionChip(title: title, icon: job.actionIcon ?? "sparkles") { assistant.clear() }
+                    .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
 
             TextField("", text: $query, prompt: Text(placeholder)
@@ -400,7 +441,7 @@ struct AskView: View {
         switch assistant.context {
         case .ready(let c, _)?: c.hasSelection ? "Ask about the selection" : "Ask about \(c.appName ?? "this window")"
         case .capturing?: "Ask about what's on screen"
-        default: "Search, or type a command"
+        default: assistant.current?.actionTitle != nil ? "Search something else" : "Search, or type a command"
         }
     }
 
@@ -1999,6 +2040,34 @@ private struct ContextChip: View {
     }
 }
 
+/// What an action's result came from, in the bar where typed text would be: its icon and name.
+/// ✕ clears it.
+private struct ActionChip: View {
+    let title: String
+    let icon: String
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+            Text(title).frame(maxWidth: 180)
+            Button(action: remove) {
+                Image(systemName: "xmark").font(.system(size: 7.5, weight: .bold))
+            }
+            .buttonStyle(NotchIconButtonStyle(size: 16))
+            .help("Clear")
+        }
+        .font(.system(size: 11.5, weight: .medium))
+        .foregroundStyle(.white.opacity(0.85))
+        .lineLimit(1)
+        .padding(.leading, 8)
+        .padding(.trailing, 2)
+        .frame(height: 24)
+        .fixedSize()
+        .background(Capsule().fill(.white.opacity(0.12)))
+    }
+}
+
 /// One-click questions for the captured window: what you'd most likely ask about a selection, an
 /// error, a page or a question on screen.
 private struct ContextActions: View {
@@ -2073,6 +2142,57 @@ private struct ContextActions: View {
         out.append("Key points")
         if c.location?.hasPrefix("http") == true { out.append("What should I know about this site?") }
         return Array(out.prefix(4))
+    }
+}
+
+/// Actions for the app in front, under the empty bar: its icon, then as many as fit. Right-click
+/// one to keep it as a Glance beside the closed notch while this app is in front.
+private struct AppActionsRow: View {
+    let context: AppContext
+    let items: [Command]
+    let perform: (Command) -> Void
+    @ObservedObject private var actions = AppActions.shared
+
+    var body: some View {
+        let shown = Array(items.prefix(5))
+        ViewThatFits(in: .horizontal) {
+            ForEach((1...max(1, shown.count)).reversed(), id: \.self) { n in
+                row(Array(shown.prefix(n)))
+            }
+        }
+        .padding(.horizontal, 24)
+        .transition(.opacity.combined(with: .offset(y: 4)))
+    }
+
+    private func row(_ commands: [Command]) -> some View {
+        HStack(spacing: 6) {
+            AppIcon(bundlePath: context.bundlePath, size: 16)
+                .padding(.trailing, 2)
+                .help(context.selection == nil ? "For \(context.appName)" : "For the selection in \(context.appName)")
+            ForEach(Array(commands.enumerated()), id: \.element.id) { i, command in
+                let starred = actions.isStarred(command)
+                Button { perform(command) } label: {
+                    HStack(spacing: 5) {
+                        Label(command.title, systemImage: command.icon)
+                        if starred {
+                            Image(systemName: "star.fill").font(.system(size: 7)).foregroundStyle(.orange)
+                        }
+                    }
+                }
+                .buttonStyle(NotchPillButtonStyle())
+                .help([command.subtitle, "⌘\(i + 1) · right-click to keep it as a Glance"].compactMap { $0 }.joined(separator: "\n"))
+                .contextMenu {
+                    if starred {
+                        Button("Remove from Glance") { actions.toggleStar(command) }
+                    } else if actions.canStar(command) {
+                        Button("Show as Glance in \(context.appName)") { actions.toggleStar(command) }
+                    } else if case .template = command.action {
+                    } else {
+                        Text("\(context.appName) has \(AppActions.starsPerApp) Glance actions already")
+                    }
+                }
+            }
+        }
     }
 }
 

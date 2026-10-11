@@ -44,6 +44,7 @@ final class MenuSearch {
                 MenuSearch.shared.cache = (pid, name, Date(), items)
                 MenuSearch.shared.loading = nil
                 SearchSuggestions.shared.refresh()
+                AppActions.shared.refresh()
             }
         }
     }
@@ -57,6 +58,45 @@ final class MenuSearch {
         let hits = cache.items.filter { item in words.allSatisfy { item.searchText.contains($0) } }
         let ranked = hits.sorted { a, b in score(a, words) > score(b, words) }
         return ranked.prefix(limit).map { Ref($0, appName: cache.appName) }
+    }
+
+    /// Titles worth offering before anything is typed, in order of how useful they tend to be.
+    private static let featuredTitles = ["export as pdf", "export to pdf", "save as pdf", "export", "copy link", "share",
+                                         "duplicate", "reveal in finder", "show in finder", "rename", "move to"]
+
+    /// The app's most useful menu items (Export as PDF, Copy Link…), for the row under the empty bar.
+    func featured(pid: pid_t, limit: Int) -> [Ref] {
+        guard let cache, cache.pid == pid else { return [] }
+        var out: [Ref] = []
+        for title in Self.featuredTitles {
+            if let item = cache.items.first(where: { Self.plain($0.title) == title }),
+               !out.contains(where: { $0.item.title == item.title }) {
+                out.append(Ref(item, appName: cache.appName))
+            }
+            if out.count == limit { break }
+        }
+        return out
+    }
+
+    /// The first of `candidates` the app's menus have, each a path ending in the item's title
+    /// (["Share", "Master File"]): the title matches, and every menu named before it is above it.
+    func find(pid: pid_t, _ candidates: [[String]]) -> Ref? {
+        guard let cache, cache.pid == pid else { return nil }
+        for candidate in candidates {
+            guard let last = candidate.last.map(Self.plain) else { continue }
+            let menus = candidate.dropLast().map(Self.plain)
+            if let item = cache.items.first(where: { item in
+                Self.plain(item.title) == last && menus.allSatisfy { m in item.path.contains { Self.plain($0) == m } }
+            }) {
+                return Ref(item, appName: cache.appName)
+            }
+        }
+        return nil
+    }
+
+    private static func plain(_ title: String) -> String {
+        title.lowercased().replacingOccurrences(of: "…", with: "").replacingOccurrences(of: "...", with: "")
+            .trimmingCharacters(in: .whitespaces)
     }
 
     private func score(_ item: Item, _ words: [String]) -> Int {

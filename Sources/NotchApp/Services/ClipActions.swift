@@ -24,7 +24,7 @@ enum ClipActions {
 
     // MARK: Text
 
-    private static func text(_ t: String) -> [ClipAction] {
+    static func text(_ t: String) -> [ClipAction] {
         guard !t.isEmpty else { return [] }
         let s = AppSettings.shared
         var out: [ClipAction] = []
