@@ -36,6 +36,18 @@ enum CollapsedActivity: Equatable {
     case peek(SneakPeek.Kind)
 }
 
+/// What opened the notch, which decides what closes it.
+enum OpenReason {
+    /// The pointer rested on the notch: leaving it closes it again.
+    case hover
+    /// A click on the notch.
+    case click
+    /// A keyboard shortcut: stays open until Esc, the shortcut again, or a click elsewhere.
+    case keyboard
+    /// The app itself (a dropped file, a brief, a notification's button).
+    case system
+}
+
 /// Per-screen notch state.
 @MainActor
 final class NotchViewModel: ObservableObject {
@@ -80,6 +92,26 @@ final class NotchViewModel: ObservableObject {
     /// Makes the notch window key so a text field can take typing (set by the window controller).
     var takeKeyFocus: () -> Void = {}
 
+    /// What was typed after the notch took the keyboard but before the search bar had it (it
+    /// waits for the opening animation, where taking focus cost a dropped frame). The search bar
+    /// takes it as it focuses.
+    var typeAhead = ""
+
+    /// Keeps a key press for the search bar, if it's on its way to taking the keyboard.
+    func keepTypeAhead(_ event: NSEvent) -> Bool {
+        guard isOpen, wantsKeyboard, tab == .ask, overlay == nil, !mirror else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.isDisjoint(with: [.command, .control, .function]) else { return false }
+        if event.keyCode == 51 { // delete
+            if !typeAhead.isEmpty { typeAhead.removeLast() }
+            return true
+        }
+        guard let chars = event.characters, !chars.isEmpty,
+              chars.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else { return false }
+        typeAhead += chars
+        return true
+    }
+
     /// Brief or nudge the app opened by itself; stays until acted on.
     @Published var overlay: NotchOverlay?
     /// The camera mirror is showing in place of the tabs.
@@ -91,12 +123,31 @@ final class NotchViewModel: ObservableObject {
 
     /// Corner radii for the black shape (top flare / bottom rounding).
     var topRadius: CGFloat { isOpen ? 14 : 6 }
-    var bottomRadius: CGFloat { isOpen ? 26 : (hasPhysicalNotch ? 10 : 12) }
+    var bottomRadius: CGFloat {
+        if isOpen { return 26 }
+        // A Banner hanging under the notch reads as a card.
+        if ActivityCenter.shared.banner != nil { return 20 }
+        return hasPhysicalNotch ? 10 : 12
+    }
 
-    init(notchSize: CGSize, hasPhysicalNotch: Bool) {
+    /// Most room each side's Glances may take: half the menu bar beside the notch, so the
+    /// frontmost app's menus and the status icons stay reachable.
+    let glanceBudget: CGFloat
+
+    init(notchSize: CGSize, hasPhysicalNotch: Bool, screenWidth: CGFloat) {
         self.notchSize = notchSize
         self.hasPhysicalNotch = hasPhysicalNotch
+        glanceBudget = max(120, (screenWidth - notchSize.width) / 4)
     }
+
+    /// One side's Glances as they fit this screen.
+    func glanceRow(_ side: LiveSlot.Side) -> GlanceRow {
+        LiveActivities.shared.row(side, notchHeight: notchSize.height, budget: glanceBudget)
+    }
+
+    /// The sides hold Glances, which are clicked rather than hovered: resting on them doesn't
+    /// open the notch (hovering the notch itself still does).
+    var wingsAreInteractive: Bool { !isOpen && activity == .live }
 
     /// The Ask tab grows taller once it has results so they never feel cramped.
     var openSize: CGSize {
@@ -168,7 +219,7 @@ final class NotchViewModel: ObservableObject {
         case .working: notchSize.height + 4
         case .speedTest: 62
         case .videoDownload: 54
-        case .live: LiveActivities.shared.sideWidth(notchHeight: notchSize.height)
+        case .live: LiveActivities.shared.sideWidth(notchHeight: notchSize.height, budget: glanceBudget)
         case .peek(let kind): kind.sideWidth(notchHeight: notchSize.height)
         }
     }
@@ -188,7 +239,15 @@ final class NotchViewModel: ObservableObject {
     var collapsedSize: CGSize {
         var w = notchSize.width + 2 * sideWidth
         var h = notchSize.height
-        if case .peek(let kind) = activity, kind.hasSubtitle { h += 26 }
+        // A Banner or a reminder tab hangs below; the Glances beside the notch stay as they are.
+        let alerts = ActivityCenter.shared
+        if alerts.banner != nil {
+            w = max(w, ActivityCenter.bannerWidth(notchWidth: notchSize.width))
+            h += ActivityCenter.bannerHeight
+        } else if alerts.reminder != nil {
+            w = max(w, notchSize.width + 60)
+            h += ActivityCenter.reminderHeight
+        }
         if showsStack {
             h += Self.stackHeight
             // Room to fan the files out on hover.
@@ -211,8 +270,22 @@ final class NotchViewModel: ObservableObject {
     /// turned off in Settings).
     @Published var wantsKeyboard = false
 
-    func open(tab: NotchTab? = nil, takeKeyboard: Bool = true) {
+    /// How the notch was last opened (or re-targeted by a shortcut while open).
+    private(set) var openReason: OpenReason = .hover
+    /// The pointer has been over the open panel since it opened. Moving the pointer towards a notch
+    /// a shortcut opened mustn't close it; once it has been over the panel, leaving works as for a hover.
+    var pointerVisited = false
+
+    /// Whether the pointer leaving the panel should close it.
+    var closesOnPointerExit: Bool { openReason == .hover || pointerVisited }
+
+    func open(tab: NotchTab? = nil, takeKeyboard: Bool = true, reason: OpenReason = .click) {
         if takeKeyboard { wantsKeyboard = true }
+        // A shortcut aimed at the open notch makes it stay put like a shortcut-opened one.
+        if !isOpen || reason == .keyboard {
+            openReason = reason
+            pointerVisited = false
+        }
         // Search is the default view each time the notch opens, unless something was just dropped
         // on the shelf: then it opens where those files are.
         var target = tab ?? (tabs.contains(.ask) ? .ask : nil)
@@ -220,24 +293,39 @@ final class NotchViewModel: ObservableObject {
             target = .shelf
             UserDefaults.standard.set(ShelfPane.shelf.rawValue, forKey: "shelf.pane")
         }
+        if isOpen {
+            // Already open: slide over to a tab that was asked for (and stay put otherwise); a
+            // shortcut also takes the keyboard, which a hover-opened notch may not have.
+            if let tab, tabs.contains(tab) { select(tab) }
+            if wantsKeyboard, reason == .keyboard { takeKeyFocus() }
+            return
+        }
         if let target, tabs.contains(target) { self.tab = target }
-        guard !isOpen else { return }
+        // Opening covers the Banner; it's been seen.
+        ActivityCenter.shared.dismissBanner()
         if overlay == nil, let prompt = NotchPresenter.shared.takePendingPrompt() { overlay = .prompt(prompt) }
-        // Take the keyboard as the open begins (before the content is built), so typing can start
-        // straight away; doing it after the animation re-rendered the whole panel and dropped frames.
-        if wantsKeyboard { takeKeyFocus() }
+        if reason == .hover { Haptics.align() }
+        FrameProbe.mark("open")
         withAnimation(AppSettings.shared.openAnimation, completionCriteria: .logicallyComplete) {
             isOpen = true
         } completion: { [weak self] in
             guard let self, self.isOpen else { return }
+            FrameProbe.mark("opened")
             self.isSettled = true
             self.prepareNeighbors()
         }
+        // Take the keyboard as the open begins (before the content is built), so typing — or Esc on
+        // a tab without a text field — works straight away; doing it after the animation re-rendered
+        // the whole panel and dropped frames. (It has to follow `isOpen`: the window only takes the
+        // keyboard while the notch is open.)
+        if wantsKeyboard { takeKeyFocus() }
+        FrameProbe.mark("keyed")
     }
 
     func close() {
         guard isOpen else { return }
         isSettled = false
+        typeAhead = ""
         wantsKeyboard = false
         pager.builtCenter = nil
         withAnimation(AppSettings.shared.closeAnimation) {
@@ -269,6 +357,7 @@ final class NotchViewModel: ObservableObject {
     func select(_ tab: NotchTab) {
         wantsKeyboard = true
         guard tab != self.tab else { return }
+        Haptics.tap()
         slide(to: tab, animation: .spring(response: 0.42, dampingFraction: 0.84))
     }
 
@@ -300,7 +389,9 @@ final class NotchViewModel: ObservableObject {
     /// neighbours stay up until then: tearing them down as a slide settled and building the next
     /// ones as the following slide began were the two hitches in every swipe.
     private func prepareNeighbors() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+        // Late enough to stay clear of the first thing done after opening (typing, a click); a
+        // swipe before then builds them at once (`ensureNeighbors`).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self, self.isOpen, !self.isSettling, !self.isSwiping else { return }
             guard self.pager.builtCenter != self.tabIndex else { return }
             FrameProbe.mark("neighbors")

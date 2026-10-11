@@ -134,19 +134,23 @@ final class ImageIndex: ObservableObject {
         let store = ImageIndexStore.shared
         let files = scan(folders, cloud: cloud)
         store.prune(keeping: Set(files.keys))
-        let clip = VisualSearch.model
+        // Whether MobileCLIP is here, without loading it: most passes find nothing to do.
+        let canEmbed = VisualSearch.isUsable
         // New or changed pictures, plus (once MobileCLIP is here) ones indexed before it was.
         // Newest first: those are the ones people look for.
         let todo = files.filter { path, modified in
             guard let entry = store.entry(path), entry.modified == modified else { return true }
-            return clip != nil && entry.vector == nil && entry.readable
+            return canEmbed && entry.vector == nil && entry.readable
         }.sorted { $0.value > $1.value }
-        DebugHooks.log("ImageIndex: \(files.count) images, \(todo.count) to index (clip: \(clip != nil))")
+        DebugHooks.log("ImageIndex: \(files.count) images, \(todo.count) to index (clip: \(canEmbed))")
         await progress(store.count, todo.count)
 
         for (i, (path, modified)) in todo.enumerated() {
             if Task.isCancelled || ProcessInfo.processInfo.isLowPowerModeEnabled { break }
             let existing = store.entry(path).flatMap { $0.modified == modified ? $0 : nil }
+            // Fetched per picture (not held for the pass) so it counts as in use, and a search
+            // meanwhile shares this copy rather than loading a second one.
+            let clip = canEmbed ? VisualSearch.model : nil
             let entry = autoreleasepool { analyze(URL(fileURLWithPath: path), modified: modified, existing: existing, clip: clip) }
             store.set(path, entry)
             if i % 5 == 4 { await progress(store.count, todo.count - i - 1) }
@@ -174,7 +178,11 @@ final class ImageIndex: ObservableObject {
         for folder in folders {
             guard let walker = FileManager.default.enumerator(at: URL(fileURLWithPath: folder), includingPropertiesForKeys: scanKeys,
                                                               options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { continue }
-            for case let url as URL in walker { consider(url) }
+            // The walker's URLs (and their cached resource values) are autoreleased: drain them as
+            // it goes, or a whole home folder's worth is held until the walk ends.
+            while let url = autoreleasepool(invoking: { walker.nextObject() as? URL }) {
+                autoreleasepool { consider(url) }
+            }
         }
         for folder in cloud {
             spotlightImages(in: folder).forEach(consider)

@@ -1,5 +1,31 @@
 import SwiftUI
 
+/// What clicking a Banner does: take you to what it's about, or simply dismiss it.
+@MainActor
+enum BannerActions {
+    static func perform(_ banner: SneakPeek, in vm: NotchViewModel) {
+        ActivityCenter.shared.dismissBanner()
+        switch banner {
+        case .screenshot, .taildrop:
+            UserDefaults.standard.set(ShelfPane.shelf.rawValue, forKey: "shelf.pane")
+            vm.open(tab: .shelf, takeKeyboard: false, reason: .click)
+        case .download:
+            UserDefaults.standard.set(ShelfPane.downloads.rawValue, forKey: "shelf.pane")
+            vm.open(tab: .shelf, takeKeyboard: false, reason: .click)
+        case .assistant:
+            vm.open(tab: .ask, reason: .click)
+        case .timer:
+            vm.open(tab: .timer, takeKeyboard: false, reason: .click)
+        case .meeting:
+            NotchPresenter.shared.reopenPending()
+        case let .notice(_, _, _, tone) where tone == .action:
+            NotchPresenter.shared.reopenPending()
+        default:
+            break // informational: the click just clears it
+        }
+    }
+}
+
 /// Live activities shown on either side of the hardware notch.
 struct CollapsedNotchView: View {
     @ObservedObject var viewModel: NotchViewModel
@@ -25,9 +51,14 @@ struct CollapsedNotchView: View {
                 trailing
                     .frame(width: side, height: h)
             }
-            if let peek = activity.peek, peek.kind.hasSubtitle {
-                subtitle(for: peek)
-                    .frame(height: 26)
+            if let banner = activity.banner {
+                bannerCard(banner)
+                    .frame(height: ActivityCenter.bannerHeight)
+                    .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.12)),
+                                            removal: .opacity.animation(.easeOut(duration: 0.12))))
+            } else if let reminder = activity.reminder {
+                reminderTab(reminder)
+                    .frame(height: ActivityCenter.reminderHeight)
                     .transition(.opacity)
             }
             if viewModel.showsStack {
@@ -72,7 +103,7 @@ struct CollapsedNotchView: View {
             TimerRing(clock: TimerStore.shared.clock)
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .live:
-            LiveSide(items: live.left, side: .left, notchHeight: viewModel.notchSize.height)
+            LiveSide(row: viewModel.glanceRow(.left), side: .left, viewModel: viewModel)
                 .transition(.opacity)
         case .peek:
             if let peek = activity.peek { peekLeading(peek).transition(.opacity) }
@@ -116,7 +147,7 @@ struct CollapsedNotchView: View {
             }
             .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .live:
-            LiveSide(items: live.right, side: .right, notchHeight: viewModel.notchSize.height)
+            LiveSide(row: viewModel.glanceRow(.right), side: .right, viewModel: viewModel)
                 .transition(.opacity)
         case .peek:
             if let peek = activity.peek { peekTrailing(peek).transition(.opacity) }
@@ -254,63 +285,60 @@ struct CollapsedNotchView: View {
         }
     }
 
-    @ViewBuilder private func subtitle(for peek: SneakPeek) -> some View {
-        switch peek {
-        case let .meeting(title, minutes, _):
-            Text("\(title) · in \(minutes) min" + (NotchPresenter.shared.hasPendingPrompt(titled: title) ? " · open to join" : ""))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(1)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-        case let .notice(title, detail, _, _):
-            (Text(title).fontWeight(.semibold) + Text(" · " + detail).foregroundColor(.white.opacity(0.7)))
-                .font(.system(size: 12))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-        case let .taildrop(title, detail, _):
-            (Text(title).fontWeight(.semibold) + Text(" · " + detail).foregroundColor(.white.opacity(0.7)))
-                .font(.system(size: 12))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-        case let .assistant(title, detail, _):
-            (Text(title).fontWeight(.semibold) + Text(" · " + detail).foregroundColor(.white.opacity(0.7)))
-                .font(.system(size: 12))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-        case let .screenshot(count):
-            Text((count == 1 ? "Screenshot on Shelf" : "\(count) screenshots on Shelf")
-                 + (AppSettings.shared.copyShelfAdds ? " · copied" : ""))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(1)
-                .padding(.bottom, 6)
-        case let .timer(message):
-            Text(message)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(1)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-        case let .download(name):
-            Text("Downloaded \(name)")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 6)
-        default:
-            EmptyView()
+    // MARK: - Banners
+
+    /// A heads-up dropped down under the notch: its glyph, two lines, and its mark (a check, a
+    /// warning, or a chevron when it has buttons). Click to act on it; resting on it keeps it up.
+    private func bannerCard(_ banner: SneakPeek) -> some View {
+        let text = banner.bannerText
+        return HStack(spacing: 11) {
+            peekLeading(banner)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(.white.opacity(0.1)))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(text.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(text.detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .truncationMode(.middle)
+            }
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            peekTrailing(banner)
         }
+        .padding(.leading, 14)
+        .padding(.trailing, 16)
+        .padding(.bottom, 6)
+        // Card-sized and centred under the notch, however wide the Glances make the notch.
+        .frame(maxWidth: ActivityCenter.bannerWidth(notchWidth: viewModel.notchSize.width))
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            Haptics.tap()
+            BannerActions.perform(banner, in: viewModel)
+        }
+    }
+
+    /// An unanswered Prompt, folded into a slim tab: click to bring its buttons back.
+    private func reminderTab(_ title: String) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(Color.orange).frame(width: 5, height: 5)
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.8))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            Haptics.tap()
+            NotchPresenter.shared.reopenPending()
+        }
+        .help("Show again")
     }
 
     private struct TaskCountBadge: View {

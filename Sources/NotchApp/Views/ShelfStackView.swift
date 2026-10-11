@@ -168,7 +168,7 @@ final class DragSourceView: NSView, NSDraggingSource {
             let gone = items.filter { !$0.pinned }
             guard !gone.isEmpty else { return }
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { ShelfStore.shared.remove(gone) }
-            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            Haptics.level()
         }
     }
 }

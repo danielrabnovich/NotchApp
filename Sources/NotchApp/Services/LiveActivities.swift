@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Something that can stay on beside the closed notch.
 enum LiveItem: String, CaseIterable, Codable, Identifiable {
-    case music, timer, cpu, temperature, memory, gpu, battery, nextEvent, tasks, network, devices, privacy, agents, vpn, keepAwake, disk
+    case music, timer, cpu, temperature, memory, gpu, power, battery, nextEvent, tasks, network, devices, privacy, agents, vpn, keepAwake, disk
 
     var id: String { rawValue }
 
@@ -16,6 +16,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .temperature: "Temperature"
         case .memory: "Memory"
         case .gpu: "GPU"
+        case .power: "Power"
         case .battery: "Battery"
         case .nextEvent: "Next Event"
         case .tasks: "Tasks"
@@ -37,6 +38,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .temperature: "CPU temperature, warmer colors as it heats up."
         case .memory: "How much memory is in use."
         case .gpu: "How busy the graphics are."
+        case .power: "What the whole Mac is drawing, in watts."
         case .battery: "Charge level."
         case .nextEvent: "Countdown to your next meeting."
         case .tasks: "How many tasks are open."
@@ -58,6 +60,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .temperature: "thermometer.medium"
         case .memory: "memorychip"
         case .gpu: "square.stack.3d.up.fill"
+        case .power: "bolt.fill"
         case .battery: "battery.75percent"
         case .nextEvent: "calendar"
         case .tasks: "checklist"
@@ -79,6 +82,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .temperature: .orange
         case .memory: .purple
         case .gpu: .mint
+        case .power: .yellow
         case .battery: .green
         case .nextEvent: .red
         case .tasks: .teal
@@ -110,12 +114,14 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
     }
 
     /// Fixed widths, so values ticking over never resize the notch.
-    func width(notchHeight h: CGFloat) -> CGFloat {
-        switch self {
+    func width(notchHeight h: CGFloat, compact: Bool = false) -> CGFloat {
+        if compact { return compactWidth(notchHeight: h) }
+        return switch self {
         case .music: h + 12
         case .timer: 64
         case .cpu, .gpu, .memory: 50
         case .temperature: 46
+        case .power: 52
         case .battery: 68
         case .nextEvent: 62
         case .tasks: 22
@@ -129,7 +135,24 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         }
     }
 
-    var usesStats: Bool { [.cpu, .temperature, .memory, .gpu].contains(self) }
+    /// The compact form: just the reading, a small gauge, or the glyph.
+    private func compactWidth(notchHeight h: CGFloat) -> CGFloat {
+        switch self {
+        case .music: h - 10
+        case .timer: 40
+        case .cpu, .gpu, .memory: 20
+        case .temperature: 28
+        case .power: 30
+        case .battery: 28
+        case .nextEvent: 40
+        case .tasks: 22
+        case .network: 40
+        case .devices, .privacy, .agents, .vpn, .keepAwake: 20
+        case .disk: 32
+        }
+    }
+
+    var usesStats: Bool { [.cpu, .temperature, .memory, .gpu, .power].contains(self) }
 }
 
 struct LiveSlot: Codable, Identifiable, Equatable {
@@ -138,7 +161,51 @@ struct LiveSlot: Codable, Identifiable, Equatable {
     var item: LiveItem
     var side: Side
     var whileActive: Bool
+    /// Always shown in its compact form (it may also turn compact by itself when a side is full).
+    var compact = false
     var id: LiveItem { item }
+
+    init(item: LiveItem, side: Side, whileActive: Bool, compact: Bool = false) {
+        self.item = item
+        self.side = side
+        self.whileActive = whileActive
+        self.compact = compact
+    }
+
+    // Saved layouts from before `compact` existed still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        item = try c.decode(LiveItem.self, forKey: .item)
+        side = try c.decode(Side.self, forKey: .side)
+        whileActive = try c.decode(Bool.self, forKey: .whileActive)
+        compact = try c.decodeIfPresent(Bool.self, forKey: .compact) ?? false
+    }
+}
+
+/// How tightly Glances sit beside each other.
+enum GlanceDensity: String, CaseIterable, Identifiable {
+    case roomy, regular, tight
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+    var spacing: CGFloat {
+        switch self {
+        case .roomy: 14
+        case .regular: 10
+        case .tight: 6
+        }
+    }
+}
+
+/// One side as drawn: each Glance and whether it's compact, plus how many didn't fit.
+struct GlanceRow: Equatable {
+    var items: [(item: LiveItem, compact: Bool)] = []
+    var overflow = 0
+    var width: CGFloat = 0
+
+    static func == (a: GlanceRow, b: GlanceRow) -> Bool {
+        a.overflow == b.overflow && a.width == b.width
+            && a.items.map(\.item) == b.items.map(\.item) && a.items.map(\.compact) == b.items.map(\.compact)
+    }
 }
 
 /// The live activities pinned beside the closed notch, which of them are showing right now, and
@@ -194,10 +261,17 @@ final class LiveActivities: ObservableObject {
 
     func slot(for item: LiveItem) -> LiveSlot? { slots.first { $0.item == item } }
 
+    /// Most Glances a side holds.
+    static let perSide = 5
+
+    func isFull(_ side: LiveSlot.Side) -> Bool { items(on: side).count >= Self.perSide }
+
     func pin(_ item: LiveItem) {
         guard slot(for: item) == nil else { return }
         // Alternate sides so a first few picks balance out.
-        let side: LiveSlot.Side = slots.filter { $0.side == .left }.count <= slots.filter { $0.side == .right }.count ? .left : .right
+        var side: LiveSlot.Side = slots.filter { $0.side == .left }.count <= slots.filter { $0.side == .right }.count ? .left : .right
+        if isFull(side) { side = side == .left ? .right : .left }
+        guard !isFull(side) else { return }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
             slots.append(LiveSlot(item: item, side: side, whileActive: item.canWaitForActivity))
         }
@@ -247,6 +321,8 @@ final class LiveActivities: ObservableObject {
     /// Pins (or moves) an item to a position on a side; `index` counts left to right as drawn.
     func place(_ item: LiveItem, side: LiveSlot.Side, at index: Int) {
         var slot = slot(for: item) ?? LiveSlot(item: item, side: side, whileActive: item.canWaitForActivity)
+        // A full side takes no more (moving within it is fine).
+        if slot.side != side || self.slot(for: item) == nil, isFull(side) { return }
         slot.side = side
         var left = slots.filter { $0.side == .left && $0.item != item }
         var right = slots.filter { $0.side == .right && $0.item != item }
@@ -274,15 +350,45 @@ final class LiveActivities: ObservableObject {
     }
 
     /// Width of each side of the notch: the fuller side decides, so the notch stays centered.
-    func sideWidth(notchHeight h: CGFloat) -> CGFloat {
-        let widths = [left, right].map { items -> CGFloat in
-            guard !items.isEmpty else { return 0 }
-            return items.reduce(0) { $0 + $1.width(notchHeight: h) } + CGFloat(items.count - 1) * Self.spacing + Self.outerPadding + Self.innerPadding
-        }
-        return widths.max() ?? 0
+    func sideWidth(notchHeight h: CGFloat, budget: CGFloat) -> CGFloat {
+        max(row(.left, notchHeight: h, budget: budget).width, row(.right, notchHeight: h, budget: budget).width)
     }
 
-    static let spacing: CGFloat = 10
+    /// One side laid out within `budget` points. Glances farther from the notch give way first:
+    /// they turn compact, then fold into a "+N" — they're also the ones that would cover the
+    /// menu bar's menus and icons.
+    func row(_ side: LiveSlot.Side, notchHeight h: CGFloat, budget: CGFloat) -> GlanceRow {
+        // Nearest the notch first (the left side is drawn outside-in).
+        let near = side == .left ? Array(left.reversed()) : right
+        guard !near.isEmpty else { return GlanceRow() }
+        let spacing = AppSettings.shared.glanceDensity.spacing
+        var compact = near.map { slot(for: $0)?.compact ?? false }
+        var count = near.count
+        func width() -> CGFloat {
+            let items = (0..<count).reduce(CGFloat(0)) { $0 + near[$1].width(notchHeight: h, compact: compact[$1]) }
+            let more: CGFloat = count < near.count ? Self.overflowWidth + spacing : 0
+            return items + CGFloat(count - 1) * spacing + more + Self.outerPadding + Self.innerPadding
+        }
+        // Compact from the outside in, then drop from the outside in (always keeping one).
+        var i = count - 1
+        while width() > budget, i >= 0 {
+            compact[i] = true
+            i -= 1
+        }
+        while width() > budget, count > 1 { count -= 1 }
+        var row = GlanceRow(items: (0..<count).map { (near[$0], compact[$0]) }, overflow: near.count - count, width: width())
+        if side == .left { row.items.reverse() }
+        return row
+    }
+
+    static let overflowWidth: CGFloat = 20
+    /// The gap between Glances, from the Density setting.
+    static var spacing: CGFloat { AppSettings.shared.glanceDensity.spacing }
+
+    /// A pinned Glance's width in the form it's set to (regular or compact).
+    func width(_ item: LiveItem, notchHeight h: CGFloat) -> CGFloat {
+        item.width(notchHeight: h, compact: slot(for: item)?.compact ?? false)
+    }
     /// Room for the notch's rounded bottom corners on the outside, and a gap beside the hardware notch.
     static let outerPadding: CGFloat = 12
     static let innerPadding: CGFloat = 8
@@ -337,6 +443,9 @@ final class LiveActivities: ObservableObject {
             return TaskStore.shared.openCount > 0
         case .cpu, .memory, .gpu:
             return true
+        case .power:
+            // Not every Mac reports it either.
+            return SystemMonitor.shared.snapshot.systemPower != nil || SystemMonitor.shared.cpuHistory.isEmpty
         case .network:
             // "Busy" is more than background chatter: 200 KB/s either way.
             let n = NetworkMonitor.shared

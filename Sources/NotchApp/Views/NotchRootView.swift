@@ -21,11 +21,12 @@ struct NotchRootView: View {
 
         ZStack(alignment: .top) {
             // The shadow is only drawn once the shape has settled: re-rendering a large blurred
-            // shadow on every frame of the spring is what made opening feel heavy.
+            // shadow on every frame of the spring is what made opening feel heavy. For the same
+            // reason it goes at once when closing, rather than fading out across the close.
             shape
                 .fill(Color.black)
                 .shadow(color: .black.opacity(vm.isSettled && settings.showShadow ? 0.6 : 0), radius: 14, y: 6)
-                .animation(.easeOut(duration: 0.2), value: vm.isSettled)
+                .animation(vm.isSettled ? .easeOut(duration: 0.2) : nil, value: vm.isSettled)
 
             // Content is laid out once at its final size and revealed by the growing shape,
             // instead of being re-laid out on every animation frame.
@@ -53,7 +54,7 @@ struct NotchRootView: View {
             if !vm.isOpen { vm.open() }
         }
         .contextMenu {
-            Button("Live Activities…") { SettingsWindowController.shared.show(pane: .live) }
+            Button("Glances…") { SettingsWindowController.shared.show(pane: .live) }
             Button("Settings…") { SettingsWindowController.shared.show() }
             Divider()
             Button("Quit NotchApp") { NSApp.terminate(nil) }

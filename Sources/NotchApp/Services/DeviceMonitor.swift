@@ -166,6 +166,7 @@ final class PrivacyMonitor: ObservableObject {
         }
         poll()
         let t = Timer(timeInterval: 2, repeats: true) { _ in MainActor.assumeIsolated { PrivacyMonitor.shared.poll() } }
+        t.tolerance = 0.4 // lets macOS batch this wake-up with others
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }

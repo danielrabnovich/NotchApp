@@ -84,7 +84,7 @@ final class ScreenshotText {
         queue.removeFirst()
         working = true
         Task.detached(priority: .background) {
-            let text = await SystemTweaks.recognizeText(in: next) ?? ""
+            let text = await SystemTweaks.recognizeText(in: next, qos: .utility) ?? ""
             let created = (try? next.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date()
             await MainActor.run {
                 let shared = ScreenshotText.shared

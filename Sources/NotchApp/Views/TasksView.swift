@@ -310,7 +310,7 @@ private struct TaskRow: View {
         let done = !checked
         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { checked = done }
         if done {
-            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            Haptics.level()
             // Let the check animation play before the row slides into "Done".
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
                 withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { store.setDone(task.id, true) }

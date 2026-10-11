@@ -106,12 +106,14 @@ enum ScreenQuestion {
     private static func recognizeText(in image: CGImage) async -> String {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let request = VNRecognizeTextRequest()
-                request.recognitionLevel = .accurate
-                request.usesLanguageCorrection = true
-                try? VNImageRequestHandler(cgImage: image).perform([request])
-                let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-                continuation.resume(returning: lines.joined(separator: "\n"))
+                let text = autoreleasepool {
+                    let request = VNRecognizeTextRequest()
+                    request.recognitionLevel = .accurate
+                    request.usesLanguageCorrection = true
+                    try? VNImageRequestHandler(cgImage: image).perform([request])
+                    return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+                }
+                continuation.resume(returning: text)
             }
         }
     }

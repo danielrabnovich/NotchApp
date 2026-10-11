@@ -218,20 +218,30 @@ struct AskView: View {
         return .handled
     }
 
-    /// Puts the cursor in the search bar whenever the notch shows this tab.
+    /// Puts the cursor in the search bar whenever the notch shows this tab. Not until the notch has
+    /// finished opening: the field taking focus mid-spring cost a dropped frame on every open. The
+    /// window already has the keyboard by then, and keeps anything typed meanwhile (`typeAhead`).
     private func focusIfShown() {
-        guard viewModel.isOpen, viewModel.wantsKeyboard, viewModel.tab == .ask else { return }
+        guard viewModel.isOpen, viewModel.isSettled, viewModel.wantsKeyboard, viewModel.tab == .ask, !focused else { return }
+        FrameProbe.mark("focus")
         viewModel.takeKeyFocus()
         // The window has to be key before the field can take focus.
         DispatchQueue.main.async {
             focused = true
-            // The field editor can become first responder before the panel is fully key (or while
-            // the open animation is still building the field); it then takes typing but never
-            // starts blinking its caret. Restart the caret once focus has landed.
+            // The field editor can become first responder before the panel is fully key; it then
+            // takes typing but never starts blinking its caret. Restart the caret once focus has
+            // landed, after adding what was typed while the notch opened.
             DispatchQueue.main.async {
+                if !viewModel.typeAhead.isEmpty {
+                    query += viewModel.typeAhead
+                    viewModel.typeAhead = ""
+                }
                 guard let window = NSApp.keyWindow as? NotchPanel,
                       let editor = window.firstResponder as? NSTextView else { return }
-                editor.updateInsertionPointStateAndRestartTimer(true)
+                DispatchQueue.main.async {
+                    editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+                    editor.updateInsertionPointStateAndRestartTimer(true)
+                }
             }
         }
     }
@@ -319,10 +329,10 @@ struct AskView: View {
         .overlay {
             // Above results the bar spans the page: keep the glow to the bar plus a 7pt bloom.
             if compact {
-                RainbowGlow(focused: focused, running: running, compact: true, pager: viewModel.pager, onScreen: viewModel.tab == .ask)
+                RainbowGlow(focused: focused, running: running, compact: true, pager: viewModel.pager, onScreen: viewModel.tab == .ask && viewModel.isSettled)
                     .mask { Capsule().padding(-7) }
             } else {
-                RainbowGlow(focused: focused, running: running, pager: viewModel.pager, onScreen: viewModel.tab == .ask)
+                RainbowGlow(focused: focused, running: running, pager: viewModel.pager, onScreen: viewModel.tab == .ask && viewModel.isSettled)
             }
         }
         // Room for the glow's bloom when the bar spans the page, so it isn't cut off at the edges.
@@ -1396,7 +1406,8 @@ private struct RainbowGlow: View {
     /// The bar spans the page above results: keep the glow tight to the bar (edge, inner tint and a
     /// small bloom) so it isn't clipped by the page or spill onto the list below.
     var compact = false
-    /// Paused while pages slide or another tab is showing: the animation then only costs frames.
+    /// Paused while pages slide, another tab is showing or the notch is still springing open: the
+    /// animation then only costs frames.
     @ObservedObject var pager: PagerState
     var onScreen = true
 
@@ -1422,7 +1433,10 @@ private struct RainbowGlow: View {
                     }
                 }
             } else {
-                frame(0)
+                // Where the turn is now, so starting to animate (once the notch settles) doesn't jump.
+                let period: Double = running ? 3 : 6
+                let phase = Date().timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+                frame(Int(phase * Double(Self.steps)) % Self.steps)
             }
         }
         .padding(-Self.spread)

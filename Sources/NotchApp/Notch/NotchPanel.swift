@@ -33,6 +33,19 @@ final class NotchPanel: NSPanel {
         MainActor.assumeIsolated { onCancel?() }
     }
 
+    /// Typing that arrives before a text field has the keyboard (the search bar takes it once the
+    /// notch has finished opening); returns whether it was kept.
+    var onTypeAhead: ((NSEvent) -> Bool)?
+
+    /// Keys nothing in the content handled reach the window. Esc there means back out (a window,
+    /// unlike a text view, doesn't turn it into `cancelOperation` by itself); typing is kept for
+    /// the search bar if it's about to take the keyboard.
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { return cancelOperation(nil) }
+        if MainActor.assumeIsolated({ onTypeAhead?(event) }) == true { return }
+        super.keyDown(with: event)
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 

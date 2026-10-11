@@ -61,13 +61,13 @@ final class NotchPresenter {
 
     func open(tab: NotchTab) {
         primary?.overlay = nil
-        primary?.open(tab: tab)
+        primary?.open(tab: tab, reason: .system)
     }
 
     func present(_ overlay: NotchOverlay) {
         guard let vm = primary else { return }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { vm.overlay = overlay }
-        vm.open()
+        vm.open(reason: .system)
     }
 
     func dismissOverlay(close: Bool) {
@@ -90,6 +90,23 @@ final class NotchPresenter {
         }
     }
 
+    /// How long an unanswered prompt stays on offer from the tab under the notch.
+    static let reminderLifetime: TimeInterval = 300
+
+    /// A prompt is still on offer (for the tab under the notch).
+    var hasRecentPrompt: Bool {
+        guard let p = pendingPrompt else { return false }
+        return Date().timeIntervalSince(p.created) < Self.reminderLifetime
+    }
+
+    /// The tab under the notch was clicked: show the prompt it stands for, with its buttons.
+    func reopenPending() {
+        ActivityCenter.shared.clearReminder()
+        guard let p = pendingPrompt, Date().timeIntervalSince(p.created) < Self.reminderLifetime else { return }
+        pendingPrompt = nil
+        present(.prompt(p))
+    }
+
     func hasPendingPrompt(titled title: String) -> Bool {
         guard let p = pendingPrompt else { return false }
         return p.title == title && Date().timeIntervalSince(p.created) < 30
@@ -98,6 +115,7 @@ final class NotchPresenter {
     /// Called as the notch opens: hands over a fresh prompt.
     func takePendingPrompt() -> Prompt? {
         defer { pendingPrompt = nil }
+        ActivityCenter.shared.clearReminder()
         guard let p = pendingPrompt, Date().timeIntervalSince(p.created) < 30 else { return nil }
         return p
     }
@@ -246,7 +264,7 @@ final class BriefingService {
                           message: overdue ? "Want to wrap it up now?" : "Start now and future you will thank you.",
                           hasLink: task.link != nil)
         NotchPresenter.shared.present(.nudge(nudge))
-        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        Haptics.level()
         scheduleNudgeDismiss()
 
         Task {

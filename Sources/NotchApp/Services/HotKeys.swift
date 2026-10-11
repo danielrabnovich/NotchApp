@@ -238,11 +238,11 @@ final class HotKeys: ObservableObject {
         let target: NotchTab?
         switch action {
         case .toggle:
-            vm.isOpen ? vm.close() : vm.open()
+            vm.isOpen ? vm.close() : vm.open(reason: .keyboard)
             return
         case .camera:
             if vm.isOpen && vm.mirror { vm.close(); return }
-            vm.open()
+            vm.open(reason: .keyboard)
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { vm.mirror = true }
             return
         case .search: target = .ask
@@ -269,7 +269,9 @@ final class HotKeys: ObservableObject {
         } else {
             vm.mirror = false
             vm.overlay = nil
-            if vm.isOpen { vm.select(target) } else { vm.open(tab: target) }
+            // Through `open` even when already open: a shortcut aimed at a hover-opened notch slides
+            // to the tab and makes the notch stay put like one the shortcut opened.
+            vm.open(tab: target, reason: .keyboard)
         }
     }
 }

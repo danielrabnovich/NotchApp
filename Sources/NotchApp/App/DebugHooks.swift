@@ -32,7 +32,7 @@ enum DebugHooks {
         switch verb {
         case "pin": pinned = parts[safe: 1] != "0"
         case "open": c.viewModel.open(tab: parts.count > 1 ? NotchTab(rawValue: parts[1]) : nil, takeKeyboard: false)
-        case "openkey": c.viewModel.open(tab: parts.count > 1 ? NotchTab(rawValue: parts[1]) : nil)
+        case "openkey": c.viewModel.open(tab: parts.count > 1 ? NotchTab(rawValue: parts[1]) : nil, reason: .keyboard)
         case "addtask": TaskStore.shared.add(title: parts.dropFirst().joined(separator: " "))
         case "done": if let t = TaskStore.shared.open.first { TaskStore.shared.setDone(t.id, true) }
         case "page": c.viewModel.pageOffset = CGFloat(Double(parts[safe: 1] ?? "0") ?? 0)

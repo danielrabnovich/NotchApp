@@ -94,7 +94,7 @@ struct DropZonesView: View {
             viewModel.tab = tab
             viewModel.pageOffset = 0
         }
-        NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        Haptics.level()
     }
 }
 

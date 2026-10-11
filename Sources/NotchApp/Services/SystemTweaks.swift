@@ -97,17 +97,24 @@ final class SystemTweaks: ObservableObject {
         }
     }
 
-    nonisolated static func recognizeText(in url: URL) async -> String? {
+    /// `qos` is `.utility` for background reading (the screenshot backlog), so it neither competes
+    /// with what you're doing nor runs at user-initiated priority under a background task.
+    nonisolated static func recognizeText(in url: URL, qos: DispatchQoS.QoSClass = .userInitiated) async -> String? {
         await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let request = VNRecognizeTextRequest()
-                request.recognitionLevel = .accurate
-                request.usesLanguageCorrection = true
-                request.automaticallyDetectsLanguage = true
-                let handler = VNImageRequestHandler(url: url)
-                try? handler.perform([request])
-                let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-                continuation.resume(returning: lines.isEmpty ? nil : lines.joined(separator: "\n"))
+            DispatchQueue.global(qos: qos).async {
+                // The decoded image and Vision's buffers are autoreleased: drain them per picture,
+                // or a backlog of screenshots piles up hundreds of MB before the queue empties.
+                let text: String? = autoreleasepool {
+                    let request = VNRecognizeTextRequest()
+                    request.recognitionLevel = .accurate
+                    request.usesLanguageCorrection = true
+                    request.automaticallyDetectsLanguage = true
+                    let handler = VNImageRequestHandler(url: url)
+                    try? handler.perform([request])
+                    let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+                    return lines.isEmpty ? nil : lines.joined(separator: "\n")
+                }
+                continuation.resume(returning: text)
             }
         }
     }

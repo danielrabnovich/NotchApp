@@ -20,7 +20,7 @@ final class NotchWindowController {
 
     init(screen: NSScreen) {
         self.screen = screen
-        let vm = NotchViewModel(notchSize: screen.notchSize, hasPhysicalNotch: screen.hasNotch)
+        let vm = NotchViewModel(notchSize: screen.notchSize, hasPhysicalNotch: screen.hasNotch, screenWidth: screen.frame.width)
         viewModel = vm
 
         let width = vm.maxOpenSize.width + 2 * 30 + 2 * Self.shadowPadding
@@ -76,10 +76,12 @@ final class NotchWindowController {
         }
 
         vm.takeKeyFocus = { [weak self] in
-            guard let self, self.viewModel.isOpen else { return }
+            // Becoming key is a window-server round trip that re-renders the panel: only when needed.
+            guard let self, self.viewModel.isOpen, !self.panel.isKeyWindow else { return }
             self.panel.makeKey()
         }
         panel.onCancel = { [weak vm] in vm?.backOut() }
+        panel.onTypeAhead = { [weak vm] event in vm?.keepTypeAhead(event) ?? false }
 
         // Hand keyboard focus back to the previous app once the notch closes.
         vm.$isOpen
@@ -142,6 +144,20 @@ final class NotchWindowController {
                       width: size.width, height: NotchViewModel.stackHeight + 3)
     }
 
+    /// Beside the hardware notch, over the Glances (a little of the notch's own edge still counts
+    /// as the notch, so aiming for it doesn't need precision).
+    private func onWings(_ p: NSPoint) -> Bool {
+        guard viewModel.wingsAreInteractive else { return false }
+        return abs(p.x - screen.notchCenterX) > viewModel.notchSize.width / 2 + 4
+    }
+
+    /// Under the hardware notch, over a Banner or the reminder tab: those are clicked, not hovered.
+    private func onBanner(_ p: NSPoint) -> Bool {
+        let alerts = ActivityCenter.shared
+        guard !viewModel.isOpen, alerts.banner != nil || alerts.reminder != nil else { return false }
+        return p.y < screen.frame.maxY - viewModel.notchSize.height
+    }
+
     private var dragHotRect: NSRect {
         let n = viewModel.notchSize
         return rect(width: n.width + 260, height: n.height + 90)
@@ -172,6 +188,9 @@ final class NotchWindowController {
         }
 
         let onStack = !dragging && (stackRect?.contains(p) ?? false)
+        if NotchPresenter.shared.primary === viewModel {
+            ActivityCenter.shared.hold(inside && onBanner(p))
+        }
         if viewModel.stackHovered != onStack {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { viewModel.stackHovered = onStack }
         }
@@ -179,6 +198,7 @@ final class NotchWindowController {
         if inside {
             closeWork?.cancel()
             closeWork = nil
+            if viewModel.isOpen { viewModel.pointerVisited = true }
             if !viewModel.isHovering {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { viewModel.isHovering = true }
             }
@@ -189,16 +209,19 @@ final class NotchWindowController {
                     viewModel.dragPreview = TaskStore.preview(of: NSPasteboard(name: .drag))
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { viewModel.isDragActive = true }
                 }
-                viewModel.open(takeKeyboard: false) // a file drag: the drop bins, not typing
-            } else if onStack {
-                // Resting on the stack is for its files; a click opens the shelf.
+                viewModel.open(takeKeyboard: false, reason: .system) // a file drag: the drop bins, not typing
+            } else if onStack || onWings(p) || onBanner(p) {
+                // Resting on the stack is for its files, and on the Glances for clicking them; a
+                // click on either (off a Glance) opens the notch.
                 openWork?.cancel()
                 openWork = nil
             } else if !viewModel.isOpen, settings.openMode == .hover, openWork == nil, !buttonDown {
                 let work = DispatchWorkItem { [weak self] in
                     guard let self else { return }
                     self.openWork = nil
-                    if self.viewModel.isHovering { self.viewModel.open(takeKeyboard: AppSettings.shared.focusSearchOnHover) }
+                    if self.viewModel.isHovering {
+                        self.viewModel.open(takeKeyboard: AppSettings.shared.focusSearchOnHover, reason: .hover)
+                    }
                 }
                 openWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + settings.hoverDelay, execute: work)
@@ -219,8 +242,11 @@ final class NotchWindowController {
             } else if dragging && viewModel.isDragActive {
                 // Dragged past the notch without dropping: tuck it away again.
                 scheduleClose(after: 0.3)
-            } else if settings.openMode == .hover, !buttonDown, !viewModel.isEditing, pointerMoved {
-                // Short grace period so brushing past the edge doesn't snap it shut.
+            } else if settings.openMode == .hover, !buttonDown, !viewModel.isEditing, pointerMoved,
+                      viewModel.closesOnPointerExit {
+                // Short grace period so brushing past the edge doesn't snap it shut. A notch opened
+                // from the keyboard waits until the pointer has been over it: heading towards it
+                // from elsewhere on screen isn't leaving.
                 scheduleClose(after: 0.15)
             }
         }
@@ -370,7 +396,7 @@ final class NotchWindowController {
         viewModel.slide(to: tabs[index],
                         animation: .interpolatingSpring(stiffness: 260, damping: 28, initialVelocity: initialVelocity))
         if changed {
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            Haptics.align()
         }
     }
 }

@@ -16,7 +16,11 @@ struct StatsView: View {
                     .frame(maxWidth: mode == .compact ? CardMode.compactWidth : .infinity)
             }
         }
-        .onAppear { monitor.viewerAppeared() }
+        .onAppear {
+            monitor.viewerAppeared()
+            // Opened from a Glance: show its card.
+            if let kind = monitor.pendingCard, kind != expanded { toggle(kind) }
+        }
         .onDisappear {
             monitor.viewerDisappeared()
             if expanded?.listsApps == true { monitor.detailDisappeared() }

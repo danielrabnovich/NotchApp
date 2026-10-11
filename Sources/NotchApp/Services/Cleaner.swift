@@ -260,9 +260,12 @@ final class Cleaner: ObservableObject {
         guard let walker = FileManager.default.enumerator(at: url, includingPropertiesForKeys: keys, options: [],
                                                           errorHandler: { _, _ in true }) else { return 0 }
         var total: Int64 = 0
-        for case let file as URL in walker {
-            if let v = try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey]) {
-                total += Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0)
+        // Drained as it goes: a big folder (an Xcode cache) is hundreds of thousands of URLs.
+        while let file = autoreleasepool(invoking: { walker.nextObject() as? URL }) {
+            autoreleasepool {
+                if let v = try? file.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey]) {
+                    total += Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0)
+                }
             }
         }
         return total

@@ -380,13 +380,15 @@ final class AgentUsageStore: ObservableObject {
                 guard let lastNewline = data.lastIndex(of: UInt8(ascii: "\n")) else { continue }
                 var seen = Set(state.recentIDs)
                 var order = state.recentIDs
-                for line in data[data.startIndex...lastNewline].split(separator: UInt8(ascii: "\n")) {
+                // Each parsed line's objects are autoreleased: drained per line, or a long history
+                // (hundreds of MB of transcripts) piled up over a GB before the scan finished.
+                for line in data[data.startIndex...lastNewline].split(separator: UInt8(ascii: "\n")) { autoreleasepool {
                     guard line.firstRange(of: usageMarker) != nil,
                           let obj = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any],
                           let message = obj["message"] as? [String: Any], let u = message["usage"] as? [String: Any],
-                          let model = message["model"] as? String, model != "<synthetic>" else { continue }
+                          let model = message["model"] as? String, model != "<synthetic>" else { return }
                     let id = (message["id"] as? String) ?? (obj["requestId"] as? String) ?? UUID().uuidString
-                    guard seen.insert(id).inserted else { continue }
+                    guard seen.insert(id).inserted else { return }
                     order.append(id)
                     let date = (obj["timestamp"] as? String).flatMap(iso.date(from:)) ?? Date()
                     let writes = u["cache_creation"] as? [String: Any]
@@ -396,7 +398,7 @@ final class AgentUsageStore: ObservableObject {
                                              cacheRead: int(u["cache_read_input_tokens"]),
                                              cacheWrite: max(0, allWrites - long), cacheWriteLong: long, requests: 1)
                     add(counts, model: model, at: date, to: &a.claude)
-                }
+                } }
                 state.offset += UInt64(lastNewline - data.startIndex + 1)
                 state.recentIDs = Array(order.suffix(64))
                 a.claudeFiles[url.path] = state
@@ -419,8 +421,8 @@ final class AgentUsageStore: ObservableObject {
         var buckets: Buckets = [:]
         var plan = a.codexPlan
         var planDate = Date.distantPast
-        for url in files {
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+        for url in files { autoreleasepool { // a whole rollout's parsed lines, drained per file
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
             var model = "gpt-5"
             var previous = TokenCounts()
             for line in text.split(separator: "\n") where line.contains("token_count") || line.contains("turn_context") || line.contains("\"model\"") {
@@ -442,7 +444,7 @@ final class AgentUsageStore: ObservableObject {
                 if step.total > 0 { add(step, model: model, at: date, to: &buckets) }
                 previous = now
             }
-        }
+        } }
         a.codex = merged(a.codex, buckets)
         a.codexPlan = plan
     }

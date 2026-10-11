@@ -73,6 +73,7 @@ final class ClipboardHistory: ObservableObject {
         guard enabled else { return }
         lastChange = NSPasteboard.general.changeCount
         let t = Timer(timeInterval: 0.6, repeats: true) { _ in MainActor.assumeIsolated { ClipboardHistory.shared.poll() } }
+        t.tolerance = 0.15 // lets macOS batch this wake-up with others
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }

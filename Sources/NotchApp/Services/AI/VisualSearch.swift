@@ -18,10 +18,52 @@ final class VisualSearch: ObservableObject {
 
     @Published private(set) var state: State = .notInstalled
 
-    /// The loaded model, for the indexer and search on any thread.
-    nonisolated static var model: CLIPModel? { lock.withLock { loaded } }
+    /// The model, for the indexer and search on any thread. It's loaded on first use and let go
+    /// after a couple of idle minutes: both encoders plus the tokenizer's tables are well over
+    /// 100 MB, and kept for good they were the biggest part of the app's memory. Nil when it isn't
+    /// installed. The first call after a while blocks while it loads (well under a second).
+    nonisolated static var model: CLIPModel? {
+        lock.withLock {
+            guard usable else { return nil }
+            if loaded == nil {
+                do { loaded = try CLIPModel(directory: directory) } catch { DebugHooks.log("VisualSearch load failed: \(error)") }
+            }
+            lastUse = Date()
+            if loaded != nil, !unloadScheduled { scheduleUnload() }
+            return loaded
+        }
+    }
+
+    /// Whether the model is installed and loads (no loading involved). Set on the main actor.
+    nonisolated static var isUsable: Bool { lock.withLock { usable } }
+
+    /// Loads the model ahead of a search that may need it, off the main thread.
+    nonisolated static func prewarm() {
+        guard isUsable, lock.withLock({ loaded == nil }) else { return }
+        DispatchQueue.global(qos: .userInitiated).async { _ = model }
+    }
+
     nonisolated(unsafe) private static var loaded: CLIPModel?
+    nonisolated(unsafe) private static var usable = false
+    nonisolated(unsafe) private static var lastUse = Date.distantPast
+    nonisolated(unsafe) private static var unloadScheduled = false
     private nonisolated static let lock = NSLock()
+    private nonisolated static let idleLimit: TimeInterval = 120
+
+    /// Called with the lock held.
+    private nonisolated static func scheduleUnload() {
+        unloadScheduled = true
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + idleLimit) {
+            lock.withLock {
+                unloadScheduled = false
+                if Date().timeIntervalSince(lastUse) >= idleLimit {
+                    loaded = nil
+                } else if loaded != nil {
+                    scheduleUnload()
+                }
+            }
+        }
+    }
 
     private var task: Task<Void, Never>?
 
@@ -46,13 +88,13 @@ final class VisualSearch: ObservableObject {
 
     var isInstalled: Bool { CLIPModel.files.allSatisfy { FileManager.default.fileExists(atPath: Self.directory.appendingPathComponent($0).path) } }
 
-    /// Loads the model if it's been downloaded before.
+    /// Checks the model downloaded before still loads (then lets it go until a search needs it).
     func start() {
         guard isInstalled else { return }
         state = .preparing
         Task.detached(priority: .utility) {
             let result = Result { try CLIPModel(directory: Self.directory) }
-            await self.finishLoading(result)
+            await self.finishLoading(result.map { _ in () })
         }
     }
 
@@ -64,8 +106,8 @@ final class VisualSearch: ObservableObject {
                 try await download()
                 state = .preparing
                 try await compile()
-                let model = try await Task.detached(priority: .utility) { try CLIPModel(directory: Self.directory) }.value
-                finishLoading(.success(model))
+                _ = try await Task.detached(priority: .utility) { try CLIPModel(directory: Self.directory) }.value
+                finishLoading(.success(()))
             } catch {
                 state = Task.isCancelled ? .notInstalled : .failed(error.localizedDescription)
             }
@@ -79,19 +121,17 @@ final class VisualSearch: ObservableObject {
 
     func remove() {
         task?.cancel()
-        Self.lock.withLock { Self.loaded = nil }
+        Self.lock.withLock { Self.loaded = nil; Self.usable = false }
         try? FileManager.default.removeItem(at: Self.directory)
         ImageIndexStore.shared.removeVectors()
         state = .notInstalled
     }
 
-    private func finishLoading(_ result: Result<CLIPModel, Error>) {
+    private func finishLoading(_ result: Result<Void, Error>) {
         switch result {
-        case .success(let model):
-            Self.lock.withLock { Self.loaded = model }
+        case .success:
+            Self.lock.withLock { Self.usable = true }
             state = .ready
-            // The first text query pays for loading the encoder onto the Neural Engine; do it now.
-            Task.detached(priority: .utility) { _ = try? model.embed(text: "a photo") }
             // Pictures indexed before the model was here get their vectors on the next pass.
             ImageIndex.shared.refresh()
         case .failure(let error):

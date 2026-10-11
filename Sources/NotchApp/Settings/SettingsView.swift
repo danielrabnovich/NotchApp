@@ -94,7 +94,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case general = "General"
     case addOns = "Add-ons"
     case appearance = "Appearance"
-    case live = "Live Activities"
+    case live = "Glances"
     case assistant = "Assistant"
     case media = "Media"
     case hud = "HUD"
@@ -141,7 +141,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         switch self {
         case .general: "How and where the notch opens."
         case .appearance: "Accent color and motion."
-        case .live: "Keep music, a timer, stats and more beside the notch, always."
+        case .live: "Keep music, a timer, stats and more beside the notch, one click away."
         case .assistant: "Find files, search the web and check the weather, with optional local AI."
         case .media: "Now playing, the visualizer and per-app volume."
         case .hud: "Show volume and brightness changes in the notch."
@@ -370,6 +370,20 @@ private struct AppearancePane: View {
                 }
                 .pickerStyle(.segmented)
                 ToggleRow("Shadow when open", subtitle: "A soft shadow under the open notch.", isOn: $s.showShadow)
+                ToggleRow("Haptic feedback", subtitle: "A light tap on the trackpad as the notch opens, tabs change and things snap into place.", isOn: $s.haptics)
+            }
+            Section {
+                Picker(selection: $s.alertLevel) {
+                    ForEach(AppSettings.AlertLevel.allCases) { Text($0.label).tag($0) }
+                } label: {
+                    RowLabel(title: "Alerts under the notch",
+                             subtitle: "Important keeps only the ones that ask something of you, like a meeting about to start.")
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("Alerts")
+            } footer: {
+                FooterText("Alerts drop down under the notch without moving your Glances, wait while a full-screen app is in front, and stay while the pointer rests on them. Volume, brightness and charging have their own switches.")
             }
         }
     }
@@ -1092,7 +1106,7 @@ private struct AgentsSettingsPane: View {
                               isOn: $s.agentsKeepAwake)
                 }
             } footer: {
-                FooterText("Pin “Agents” in Live Activities to keep a working count beside the notch. Click a session to jump to its terminal.")
+                FooterText("Pin “Agents” in Glances to keep a working count beside the notch. Click a session to jump to its terminal.")
             }
             Section {
                 // One form row holding all four: as separate rows, the form drew the last one

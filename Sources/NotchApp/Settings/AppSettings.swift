@@ -64,6 +64,23 @@ final class AppSettings: ObservableObject {
     @Published var customAccentHex: String { didSet { defaults.set(customAccentHex, forKey: "customAccentHex") } }
     @Published var animationStyle: AnimationStyle { didSet { defaults.set(animationStyle.rawValue, forKey: "animationStyle") } }
     @Published var showShadow: Bool { didSet { defaults.set(showShadow, forKey: "showShadow") } }
+    @Published var haptics: Bool { didSet { defaults.set(haptics, forKey: "haptics") } }
+    @Published var glanceDensity: GlanceDensity { didSet { defaults.set(glanceDensity.rawValue, forKey: "glanceDensity") } }
+    @Published var alertLevel: AlertLevel { didSet { defaults.set(alertLevel.rawValue, forKey: "alertLevel") } }
+
+    /// Which heads-ups drop down under the notch. Flashes (volume, brightness, charging) follow
+    /// their own switches.
+    enum AlertLevel: String, CaseIterable, Identifiable {
+        case all, important, none
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .all: "All"
+            case .important: "Important"
+            case .none: "None"
+            }
+        }
+    }
 
     // Media
     @Published var musicEnabled: Bool { didSet { defaults.set(musicEnabled, forKey: "musicEnabled") } }
@@ -191,6 +208,7 @@ final class AppSettings: ObservableObject {
             "customAccentHex": "#0A84FF",
             "animationStyle": AnimationStyle.smooth.rawValue,
             "showShadow": true,
+            "haptics": true,
             "musicEnabled": false,
             "musicLiveActivity": false,
             "showVisualizer": true,
@@ -279,6 +297,9 @@ final class AppSettings: ObservableObject {
         customAccentHex = defaults.string(forKey: "customAccentHex") ?? "#0A84FF"
         animationStyle = AnimationStyle(rawValue: defaults.string(forKey: "animationStyle") ?? "") ?? .smooth
         showShadow = defaults.bool(forKey: "showShadow")
+        haptics = defaults.bool(forKey: "haptics")
+        glanceDensity = GlanceDensity(rawValue: defaults.string(forKey: "glanceDensity") ?? "") ?? .regular
+        alertLevel = AlertLevel(rawValue: defaults.string(forKey: "alertLevel") ?? "") ?? .all
         musicEnabled = defaults.bool(forKey: "musicEnabled")
         musicLiveActivity = defaults.bool(forKey: "musicLiveActivity")
         showVisualizer = defaults.bool(forKey: "showVisualizer")

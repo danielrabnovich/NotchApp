@@ -759,7 +759,7 @@ final class CommandCenter: ObservableObject {
             }
         }
         guard let vm = NotchPresenter.shared.primary, vm.tabs.contains(tab) else { return }
-        if vm.isOpen { vm.select(tab) } else { vm.open(tab: tab) }
+        if vm.isOpen { vm.select(tab) } else { vm.open(tab: tab, reason: .system) }
     }
 }
 

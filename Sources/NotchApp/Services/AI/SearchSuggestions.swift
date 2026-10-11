@@ -50,6 +50,8 @@ final class SearchSuggestions: ObservableObject {
         loadingFiles = false
         guard !q.isEmpty else { set([]); return }
         AppIndex.shared.refreshIfNeeded()
+        // A search may look for pictures by description: have MobileCLIP loaded by the time it runs.
+        if q.count >= 3 { VisualSearch.prewarm() }
 
         // Commands ("task …", "note …", "timer 10m") lead; the "/" list shows nothing else.
         let commands = CommandParser.parse(q)

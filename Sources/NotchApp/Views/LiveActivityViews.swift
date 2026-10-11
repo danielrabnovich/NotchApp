@@ -2,31 +2,182 @@ import EventKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// One side of the closed notch with its pinned live activities: hugging the outer edge, where the
-/// notch's rounded corners are, rather than the hardware notch.
+/// One side of the closed notch with its pinned Glances: hugging the outer edge, where the
+/// notch's rounded corners are, rather than the hardware notch. Each one is a button.
 struct LiveSide: View {
-    let items: [LiveItem]
+    let row: GlanceRow
     let side: LiveSlot.Side
-    let notchHeight: CGFloat
+    let viewModel: NotchViewModel
 
     var body: some View {
+        let h = viewModel.notchSize.height
         HStack(spacing: LiveActivities.spacing) {
-            ForEach(items) { item in
-                LiveItemView(item: item, notchHeight: notchHeight)
-                    .frame(width: item.width(notchHeight: notchHeight), height: notchHeight)
-                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+            if side == .left, row.overflow > 0 { overflow }
+            ForEach(row.items, id: \.item) { entry in
+                GlanceButton(item: entry.item, viewModel: viewModel) {
+                    LiveItemView(item: entry.item, notchHeight: h, compact: entry.compact)
+                }
+                .frame(width: entry.item.width(notchHeight: h, compact: entry.compact), height: h)
+                .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
+            if side == .right, row.overflow > 0 { overflow }
         }
         .padding(side == .left ? .leading : .trailing, LiveActivities.outerPadding)
         .padding(side == .left ? .trailing : .leading, LiveActivities.innerPadding)
         .frame(maxWidth: .infinity, alignment: side == .left ? .leading : .trailing)
+        .animation(.spring(response: 0.36, dampingFraction: 0.8), value: row)
+    }
+
+    /// The Glances that didn't fit; a click opens the notch.
+    private var overflow: some View {
+        Text("+\(row.overflow)")
+            .font(.system(size: 9.5, weight: .bold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.6))
+            .frame(width: LiveActivities.overflowWidth, height: 16)
+            .background(Capsule().fill(.white.opacity(0.1)))
+            .help("\(row.overflow) more: there's no room beside the notch on this screen")
     }
 }
 
-/// An activity's compact form: one glyph and one reading, the same type size throughout.
+/// A Glance as a button: a soft highlight on hover, its action on click (play/pause, pause the
+/// timer, join the meeting…), and its options on right-click.
+struct GlanceButton<Label: View>: View {
+    let item: LiveItem
+    let viewModel: NotchViewModel
+    @ViewBuilder let label: () -> Label
+    @ObservedObject private var live = LiveActivities.shared
+    @State private var hovering = false
+    @State private var pressed = false
+    @State private var longPressed = false
+
+    var body: some View {
+        label()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                Capsule()
+                    .fill(.white.opacity(pressed ? 0.18 : hovering ? 0.1 : 0))
+                    .padding(.horizontal, -5)
+                    .padding(.vertical, 4)
+            }
+            .scaleEffect(pressed ? 0.94 : 1)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .onTapGesture {
+                // Releasing a long press also ends as a tap; that one's already been handled.
+                if longPressed { longPressed = false; return }
+                Haptics.tap()
+                GlanceActions.perform(item, in: viewModel)
+            }
+            // Press and hold: open the notch on this Glance's details instead.
+            .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 6) {
+                longPressed = true
+                Haptics.level()
+                GlanceActions.openDetail(item, in: viewModel)
+            } onPressingChanged: { pressed = $0 }
+            .help(GlanceActions.hint(for: item))
+            .contextMenu {
+                Button(GlanceActions.hint(for: item)) { GlanceActions.perform(item, in: viewModel) }
+                if GlanceActions.hasDetail(item) {
+                    Button("Open in Notch") { GlanceActions.openDetail(item, in: viewModel) }
+                }
+                Divider()
+                if let slot = live.slot(for: item) {
+                    Toggle("Compact", isOn: Binding(get: { slot.compact }, set: { on in live.update(item) { $0.compact = on } }))
+                    let other: LiveSlot.Side = slot.side == .left ? .right : .left
+                    Button(other == .left ? "Move to Left Side" : "Move to Right Side") {
+                        live.place(item, side: other, at: other == .left ? live.items(on: .left).count : 0)
+                    }
+                    .disabled(live.isFull(other))
+                    Button("Remove") { live.remove([item]) }
+                    Divider()
+                }
+                Button("Edit Glances…") { SettingsWindowController.shared.show(pane: .live) }
+            }
+            .animation(.easeOut(duration: 0.12), value: hovering)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: pressed)
+    }
+}
+
+/// What clicking a Glance does.
+@MainActor
+enum GlanceActions {
+    static func hint(for item: LiveItem) -> String {
+        switch item {
+        case .music: MediaController.shared.isPlaying ? "Pause" : "Play"
+        case .timer:
+            switch TimerStore.shared.state {
+            case .running: "Pause Timer"
+            case .paused: "Resume Timer"
+            case .idle: "Start Timer"
+            }
+        case .keepAwake: "Stop Keeping Awake"
+        case .nextEvent: LiveActivities.nextEvent().flatMap(MeetingLinks.find) != nil ? "Join Meeting" : "Show Calendar"
+        case .agents:
+            AgentMonitor.shared.waiting.first != nil ? "Go to the Agent Waiting for You" : "Show Agents"
+        case .cpu, .gpu, .memory, .temperature, .power, .battery: "Show in Stats"
+        case .tasks: "Show Tasks"
+        case .network: "Show Network"
+        case .vpn: "Show VPN"
+        case .devices, .privacy: "Show Devices"
+        case .disk: "Show Cleaner"
+        }
+    }
+
+    static func perform(_ item: LiveItem, in vm: NotchViewModel) {
+        switch item {
+        case .music:
+            MediaController.shared.togglePlayPause()
+        case .timer:
+            let timer = TimerStore.shared
+            switch timer.state {
+            case .running: timer.pause()
+            case .paused: timer.resume()
+            case .idle: timer.start()
+            }
+        case .keepAwake:
+            KeepAwake.shared.stop()
+        case .nextEvent:
+            if let link = LiveActivities.nextEvent().flatMap(MeetingLinks.find) { MeetingLinks.join(link) } else { openDetail(item, in: vm) }
+        case .agents:
+            let agents = AgentMonitor.shared
+            if let waiting = agents.waiting.first { agents.focus(waiting) } else { openDetail(item, in: vm) }
+        default:
+            openDetail(item, in: vm)
+        }
+    }
+
+    /// Whether "Open in Notch" adds anything: for the rest, clicking already opens the details.
+    static func hasDetail(_ item: LiveItem) -> Bool { [.music, .timer, .nextEvent, .agents, .keepAwake].contains(item) }
+
+    /// Opens the notch where this Glance's details are.
+    static func openDetail(_ item: LiveItem, in vm: NotchViewModel) {
+        let defaults = UserDefaults.standard
+        let tab: NotchTab
+        switch item {
+        case .music, .nextEvent: tab = .home
+        case .timer: tab = .timer
+        case .tasks: defaults.set(TasksPane.tasks.rawValue, forKey: "tasks.pane"); tab = .tasks
+        case .agents: tab = .agents
+        case .keepAwake: tab = .controls
+        case .cpu, .temperature: SystemMonitor.shared.requestCard(.cpu); tab = .stats
+        case .gpu: SystemMonitor.shared.requestCard(.gpu); tab = .stats
+        case .memory: SystemMonitor.shared.requestCard(.memory); tab = .stats
+        case .power, .battery: SystemMonitor.shared.requestCard(.power); tab = .stats
+        case .network: defaults.set(ToolsPane.network.rawValue, forKey: "tools.pane"); tab = .tools
+        case .vpn: defaults.set(ToolsPane.vpn.rawValue, forKey: "tools.pane"); tab = .tools
+        case .devices, .privacy: defaults.set(ToolsPane.devices.rawValue, forKey: "tools.pane"); tab = .tools
+        case .disk: defaults.set(ToolsPane.cleaner.rawValue, forKey: "tools.pane"); tab = .tools
+        }
+        vm.open(tab: vm.tabs.contains(tab) ? tab : nil, takeKeyboard: false, reason: .click)
+    }
+}
+
+/// A Glance: one glyph and one reading, the same type size throughout. Compact keeps just the
+/// reading, a small gauge, or the glyph.
 struct LiveItemView: View {
     let item: LiveItem
     let notchHeight: CGFloat
+    var compact = false
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var media: MediaController
     @EnvironmentObject private var battery: BatteryMonitor
@@ -35,6 +186,65 @@ struct LiveItemView: View {
     @EnvironmentObject private var timer: TimerStore
 
     var body: some View {
+        if compact { compactBody } else { regularBody }
+    }
+
+    @ViewBuilder private var compactBody: some View {
+        switch item {
+        case .music:
+            AlbumArtView(image: media.artwork, size: notchHeight - 14, cornerRadius: 5)
+                .opacity(media.isPlaying ? 1 : 0.55)
+        case .timer:
+            TimerReadout(clock: TimerStore.shared.clock)
+                .opacity(timer.isActive ? 1 : 0.45)
+        case .cpu:
+            Gauge(icon: "cpu", value: stats.snapshot.cpuTotal, tint: load(stats.snapshot.cpuTotal))
+        case .gpu:
+            Gauge(icon: "square.stack.3d.up.fill", value: stats.snapshot.gpu ?? 0, tint: load(stats.snapshot.gpu ?? 0))
+        case .memory:
+            let used = memoryUsed
+            Gauge(icon: "memorychip", value: used, tint: load(used, warm: 0.85, hot: 0.95))
+        case .temperature:
+            let temp = stats.snapshot.cpuTemp
+            Text(temp.map { "\(Int($0.rounded()))°" } ?? "–").font(Self.valueFont).fixedSize()
+                .foregroundStyle(temp.map(heat) ?? .white.opacity(0.6))
+        case .power:
+            Text(watts(stats.snapshot.systemPower)).font(Self.valueFont).fixedSize()
+                .foregroundStyle(.white.opacity(0.92))
+        case .battery:
+            BatteryIcon(level: battery.level, charging: battery.isCharging)
+        case .nextEvent:
+            NextEventReading(compact: true)
+        case .network:
+            NetworkReading(compact: true)
+        case .devices:
+            DeviceReading(compact: true)
+        case .privacy:
+            PrivacyReading()
+        case .agents:
+            AgentsReading(compact: true)
+        case .vpn:
+            VPNReading(compact: true)
+        case .keepAwake:
+            KeepAwakeReading(compact: true)
+        case .disk:
+            DiskReading(compact: true)
+        case .tasks:
+            regularBody
+        }
+    }
+
+    private var memoryUsed: Double {
+        stats.snapshot.memory.total > 0 ? Double(stats.snapshot.memory.used) / Double(stats.snapshot.memory.total) : 0
+    }
+
+    /// "14W", or "6.5W" under ten.
+    private func watts(_ value: Double?) -> String {
+        guard let value else { return "–" }
+        return value < 10 ? String(format: "%.1fW", value) : "\(Int(value.rounded()))W"
+    }
+
+    @ViewBuilder private var regularBody: some View {
         switch item {
         case .music:
             HStack(spacing: 6) {
@@ -58,10 +268,11 @@ struct LiveItemView: View {
             Reading(icon: "square.stack.3d.up.fill", value: stats.snapshot.gpu.map(percent) ?? "–",
                     tint: load(stats.snapshot.gpu ?? 0), meter: stats.snapshot.gpu ?? 0)
         case .memory:
-            let used = stats.snapshot.memory.total > 0
-                ? Double(stats.snapshot.memory.used) / Double(stats.snapshot.memory.total) : 0
+            let used = memoryUsed
             // macOS keeps memory busy on purpose: only warn when it's nearly full.
             Reading(icon: "memorychip", value: percent(used), tint: load(used, warm: 0.85, hot: 0.95), meter: used)
+        case .power:
+            Reading(icon: "bolt.fill", value: watts(stats.snapshot.systemPower), tint: .white.opacity(0.92))
         case .temperature:
             let temp = stats.snapshot.cpuTemp
             Reading(icon: "thermometer.medium", value: temp.map { "\(Int($0.rounded()))°" } ?? "–",
@@ -118,6 +329,28 @@ struct LiveItemView: View {
         }
     }
 
+    /// A load as a small ring around its glyph (the compact CPU, GPU and memory).
+    private struct Gauge: View {
+        let icon: String
+        let value: Double
+        let tint: Color
+
+        var body: some View {
+            ZStack {
+                Circle().stroke(.white.opacity(0.15), lineWidth: 2)
+                Circle()
+                    .trim(from: 0, to: min(max(value, 0.03), 1))
+                    .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Image(systemName: icon)
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            .frame(width: 17, height: 17)
+            .help("\(Int((value * 100).rounded()))%")
+        }
+    }
+
     /// A glyph, a value, and (for loads) a thin meter under the glyph.
     private struct Reading: View {
         let icon: String
@@ -152,18 +385,19 @@ struct LiveItemView: View {
 
 /// Download speed, with an arrow that lights up for whichever way is busier.
 private struct NetworkReading: View {
+    var compact = false
     @ObservedObject private var network = NetworkMonitor.shared
 
     var body: some View {
         let uploading = network.upRate > network.downRate * 1.5 && network.upRate > 50_000
         let r = formatRate(uploading ? network.upRate : network.downRate)
-        HStack(spacing: 4) {
+        HStack(spacing: compact ? 2 : 4) {
             Image(systemName: uploading ? "arrow.up" : "arrow.down")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(uploading ? ToolsPalette.up : ToolsPalette.down)
             HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text(r.value).font(LiveItemView.valueFont).foregroundStyle(.white.opacity(0.92))
-                Text(r.unit.replacingOccurrences(of: "/s", with: ""))
+                Text(compact ? String(r.unit.prefix(1)) : r.unit.replacingOccurrences(of: "/s", with: ""))
                     .font(.system(size: 8.5, weight: .semibold, design: .rounded)).foregroundStyle(.white.opacity(0.5))
             }
             .lineLimit(1)
@@ -174,26 +408,31 @@ private struct NetworkReading: View {
 
 /// The emptiest Bluetooth device's glyph and level.
 private struct DeviceReading: View {
+    var compact = false
     @ObservedObject private var devices = DeviceBatteries.shared
 
     var body: some View {
         if let device = devices.lowest, let level = device.level {
+            let low = level <= 20
             HStack(spacing: 4) {
                 Image(systemName: device.icon)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.7))
-                Text("\(level)%")
-                    .font(LiveItemView.valueFont)
-                    .foregroundStyle(level <= 20 ? Color(red: 1, green: 0.38, blue: 0.35) : .white.opacity(0.92))
-                    .fixedSize()
+                    .foregroundStyle(compact && low ? Color(red: 1, green: 0.38, blue: 0.35) : .white.opacity(0.7))
+                if !compact {
+                    Text("\(level)%")
+                        .font(LiveItemView.valueFont)
+                        .foregroundStyle(low ? Color(red: 1, green: 0.38, blue: 0.35) : .white.opacity(0.92))
+                        .fixedSize()
+                }
             }
-            .help(device.name)
+            .help("\(device.name): \(level)%")
         }
     }
 }
 
 /// Agents at work: a spinner and how many; a raised hand when one is waiting for you.
 private struct AgentsReading: View {
+    var compact = false
     @ObservedObject private var agents = AgentMonitor.shared
 
     var body: some View {
@@ -211,9 +450,11 @@ private struct AgentsReading: View {
             } else {
                 Image(systemName: "sparkle").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.45))
             }
-            Text("\(waiting > 0 ? waiting : working)")
-                .font(LiveItemView.valueFont)
-                .foregroundStyle(waiting > 0 ? .orange : .white.opacity(0.92))
+            if !compact {
+                Text("\(waiting > 0 ? waiting : working)")
+                    .font(LiveItemView.valueFont)
+                    .foregroundStyle(waiting > 0 ? .orange : .white.opacity(0.92))
+            }
         }
         .help(agents.sessions.filter { $0.state != .idle }.map { "\($0.tool.name) · \($0.project)" }.joined(separator: "\n"))
     }
@@ -221,6 +462,7 @@ private struct AgentsReading: View {
 
 /// A cup while the Mac is kept awake: time left for a timed session, "On" otherwise.
 private struct KeepAwakeReading: View {
+    var compact = false
     @ObservedObject private var keepAwake = KeepAwake.shared
 
     var body: some View {
@@ -229,10 +471,12 @@ private struct KeepAwakeReading: View {
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(keepAwake.forAgents ? Self.agentPurple : Color(red: 0.92, green: 0.75, blue: 0.55))
                 .fixedSize()
-            Text(keepAwake.endsAt == nil ? "On" : keepAwake.remainingText ?? "On")
-                .font(LiveItemView.valueFont)
-                .foregroundStyle(.white.opacity(0.92))
-                .fixedSize()
+            if !compact {
+                Text(keepAwake.endsAt == nil ? "On" : keepAwake.remainingText ?? "On")
+                    .font(LiveItemView.valueFont)
+                    .foregroundStyle(.white.opacity(0.92))
+                    .fixedSize()
+            }
         }
         .help(keepAwake.forAgents ? "Awake while your agents work" : "Keep Awake")
     }
@@ -244,12 +488,15 @@ extension KeepAwakeReading {
 
 /// Free space on the startup disk; red under 10 GB.
 private struct DiskReading: View {
+    var compact = false
     @ObservedObject private var cleaner = Cleaner.shared
 
     var body: some View {
         let free = cleaner.disk?.available ?? 0
         HStack(spacing: 4) {
-            Image(systemName: "internaldrive.fill").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
+            if !compact {
+                Image(systemName: "internaldrive.fill").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
+            }
             Text(free >= 1_000_000_000_000 ? String(format: "%.1fT", Double(free) / 1e12) : "\(free / 1_000_000_000)G")
                 .font(LiveItemView.valueFont)
                 .foregroundStyle(free < 10_000_000_000 ? Color(red: 1, green: 0.38, blue: 0.35) : .white.opacity(0.92))
@@ -261,6 +508,7 @@ private struct DiskReading: View {
 
 /// A shield (green when all traffic is protected) and the exit country.
 private struct VPNReading: View {
+    var compact = false
     @ObservedObject private var vpn = VPNMonitor.shared
 
     var body: some View {
@@ -269,9 +517,11 @@ private struct VPNReading: View {
             Image(systemName: protected ? "lock.shield.fill" : vpn.anyUp ? "shield.lefthalf.filled" : "shield.slash")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(protected ? Color.green : vpn.anyUp ? .white.opacity(0.7) : .orange)
-            Text(protected ? (vpn.exit?.countryCode?.uppercased() ?? "On") : vpn.anyUp ? "Split" : "Off")
-                .font(LiveItemView.valueFont)
-                .foregroundStyle(.white.opacity(0.92))
+            if !compact {
+                Text(protected ? (vpn.exit?.countryCode?.uppercased() ?? "On") : vpn.anyUp ? "Split" : "Off")
+                    .font(LiveItemView.valueFont)
+                    .foregroundStyle(.white.opacity(0.92))
+            }
         }
         .help(vpn.active.map { "\($0.name)" + (vpn.exit.map { " · \($0.place)" } ?? "") } ?? "No VPN")
     }
@@ -296,6 +546,7 @@ private struct PrivacyReading: View {
 
 /// The next meeting: its calendar's color, then "in 12m" or its start time.
 private struct NextEventReading: View {
+    var compact = false
     @EnvironmentObject private var calendar: CalendarManager
 
     var body: some View {
@@ -306,7 +557,8 @@ private struct NextEventReading: View {
                     Circle()
                         .fill(Color(cgColor: event.calendar.cgColor))
                         .frame(width: 7, height: 7)
-                    Text(minutes < 60 ? "in \(max(minutes, 1))m" : event.startDate.formatted(date: .omitted, time: .shortened))
+                    Text(minutes < 60 ? (compact ? "\(max(minutes, 1))m" : "in \(max(minutes, 1))m")
+                         : compact ? "\(minutes / 60)h" : event.startDate.formatted(date: .omitted, time: .shortened))
                         .font(LiveItemView.valueFont)
                         .foregroundStyle(minutes < 10 ? Color(cgColor: event.calendar.cgColor) : .white.opacity(0.92))
                         .lineLimit(1)
@@ -325,6 +577,7 @@ private struct NextEventReading: View {
 /// clicking or dragging onto the notch. The notch stays put above the gallery as it scrolls.
 struct LiveActivitiesPane: View {
     @ObservedObject private var live = LiveActivities.shared
+    @ObservedObject private var settings = AppSettings.shared
     @StateObject private var gallery = GalleryDrag()
     @State private var origin: CGPoint = .zero
 
@@ -337,7 +590,7 @@ struct LiveActivitiesPane: View {
                     .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
             } header: {
                 HStack {
-                    Text("Activities")
+                    Text("Glances")
                     Spacer()
                     if !live.slots.isEmpty {
                         Button("Remove All") { live.remove(live.slots.map(\.item)) }
@@ -346,7 +599,17 @@ struct LiveActivitiesPane: View {
                     }
                 }
             } footer: {
-                FooterText("Click to add or remove, or drag onto the notch. Quick alerts (volume, charging…) still appear over them for a moment.")
+                FooterText("Click to add or remove, or drag onto the notch (up to \(LiveActivities.perSide) a side). Click one beside the notch to use it (play/pause, pause the timer, join the meeting…), hold it to open its details, or right-click for its options.")
+            }
+            Section {
+                Picker(selection: $settings.glanceDensity) {
+                    ForEach(GlanceDensity.allCases) { Text($0.label).tag($0) }
+                } label: {
+                    RowLabel(title: "Density", subtitle: "How close together they sit.")
+                }
+                .pickerStyle(.segmented)
+            } footer: {
+                FooterText("When a side runs out of room on a smaller screen, the Glances farthest from the notch turn compact, then fold into a “+” you can click.")
             }
         }
         .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { origin = $0 }
@@ -601,14 +864,14 @@ private struct NotchStage: View {
     private func content(_ item: LiveItem) -> some View {
         Group {
             if live.isShowingNow(item) {
-                LiveItemView(item: item, notchHeight: base.height)
+                LiveItemView(item: item, notchHeight: base.height, compact: live.slot(for: item)?.compact ?? false)
             } else {
                 Image(systemName: item.icon)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(item.tint.opacity(0.5))
             }
         }
-        .frame(width: item.width(notchHeight: base.height), height: base.height)
+        .frame(width: live.width(item, notchHeight: base.height), height: base.height)
         .scaleEffect(scale)
     }
 
@@ -679,7 +942,7 @@ private struct NotchStage: View {
     private func sideWidth(_ left: [LiveItem], _ right: [LiveItem]) -> CGFloat {
         [left, right].map { items -> CGFloat in
             guard !items.isEmpty else { return 0 }
-            return items.reduce(0) { $0 + $1.width(notchHeight: base.height) } + CGFloat(items.count - 1) * LiveActivities.spacing
+            return items.reduce(0) { $0 + live.width($1, notchHeight: base.height) } + CGFloat(items.count - 1) * LiveActivities.spacing
                 + LiveActivities.outerPadding + LiveActivities.innerPadding
         }.max() ?? 0
     }
@@ -704,14 +967,14 @@ private struct NotchStage: View {
         var placed: [Placed] = []
         var x = center - half - side + outer
         for item in left {
-            let w = item.width(notchHeight: base.height) * scale
+            let w = live.width(item, notchHeight: base.height) * scale
             placed.append(Placed(item: item, x: x + w / 2, width: w))
             x += w + gap
         }
-        let rightTotal = right.reduce(0) { $0 + $1.width(notchHeight: base.height) * scale } + CGFloat(max(right.count - 1, 0)) * gap
+        let rightTotal = right.reduce(0) { $0 + live.width($1, notchHeight: base.height) * scale } + CGFloat(max(right.count - 1, 0)) * gap
         x = center + half + side - outer - rightTotal
         for item in right {
-            let w = item.width(notchHeight: base.height) * scale
+            let w = live.width(item, notchHeight: base.height) * scale
             placed.append(Placed(item: item, x: x + w / 2, width: w))
             x += w + gap
         }
@@ -779,6 +1042,15 @@ private struct ActivityOptions: View {
                         })) {
                             Text("Left").tag(LiveSlot.Side.left)
                             Text("Right").tag(LiveSlot.Side.right)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    }
+                    GridRow {
+                        Text("Size").foregroundStyle(.secondary)
+                        Picker("", selection: Binding(get: { slot.compact }, set: { on in live.update(item) { $0.compact = on } })) {
+                            Text("Regular").tag(false)
+                            Text("Compact").tag(true)
                         }
                         .pickerStyle(.segmented)
                         .labelsHidden()

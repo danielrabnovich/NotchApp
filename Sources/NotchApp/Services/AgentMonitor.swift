@@ -101,6 +101,7 @@ final class AgentMonitor: ObservableObject {
             refreshSessions()
             AgentUsageStore.shared.refresh()
             let t = Timer(timeInterval: 3, repeats: true) { _ in MainActor.assumeIsolated { AgentMonitor.shared.poll() } }
+            t.tolerance = 0.6 // lets macOS batch this wake-up with others
             RunLoop.main.add(t, forMode: .common)
             timer = t
         } else if !wanted, let t = timer {

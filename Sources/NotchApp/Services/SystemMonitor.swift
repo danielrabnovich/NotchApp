@@ -56,6 +56,18 @@ final class SystemMonitor: ObservableObject {
     /// Debug hook: "<card>#<nonce>" expands that card (anything else collapses).
     @Published var debugExpand = ""
 
+    /// Asks the Stats tab to open a card (a Glance was clicked); it picks this up as it appears.
+    func requestCard(_ kind: StatKind) {
+        debugExpand = "\(kind.rawValue)#\(Date().timeIntervalSince1970)"
+    }
+
+    /// A card asked for in the last couple of seconds, if any.
+    var pendingCard: StatKind? {
+        let parts = debugExpand.split(separator: "#")
+        guard parts.count == 2, let at = Double(parts[1]), Date().timeIntervalSince1970 - at < 2 else { return nil }
+        return StatKind(rawValue: String(parts[0]))
+    }
+
     /// Whether each core is in the fastest cluster, for colouring the core bars.
     let performanceCores = CPULoadReader.performanceCores()
     /// Names of the fastest and other clusters, e.g. "Super" / "Performance" on M5, "Performance" / "Efficiency" before.
@@ -112,7 +124,8 @@ final class SystemMonitor: ObservableObject {
         timer?.cancel()
         timer = nil
         guard enabled || liveDemand else { return }
-        let interval: Double = viewers > 0 ? 1 : liveDemand ? 2 : 4
+        // Nothing showing stats: a slow trickle that just keeps the graphs' history going.
+        let interval: Double = viewers > 0 ? 1 : liveDemand ? 2 : 10
         let details = viewers > 0 && detailViewers > 0
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(100))
