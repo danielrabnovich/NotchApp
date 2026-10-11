@@ -7,7 +7,8 @@ cd "$(dirname "$0")"
 
 APP_NAME="NotchApp"
 BUNDLE_ID="com.notchapp.NotchApp"
-VERSION="1.0.0"
+VERSION="${VERSION:-1.0.0}"
+BUILD="${BUILD:-1}"
 APP="build/$APP_NAME.app"
 
 echo "▸ Compiling Swift…"
@@ -44,7 +45,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>$APP_NAME</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleVersion</key><string>$BUILD</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.2</string>
   <key>LSUIElement</key><true/>
