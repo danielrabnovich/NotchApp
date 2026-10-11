@@ -674,6 +674,118 @@ private struct VisualSearchRow: View {
     }
 }
 
+/// A cloud provider's key (kept in the Keychain), model and address. "Check" lists the models the
+/// key can use, which also proves the key works.
+private struct CloudProviderSettings: View {
+    let provider: AIProvider
+    @EnvironmentObject private var s: AppSettings
+    @State private var key = ""
+    @State private var hasKey = false
+    @State private var models: [String] = []
+    @State private var checking = false
+    @State private var result: (ok: Bool, message: String)?
+
+    var body: some View {
+        Group {
+            LabeledContent {
+                HStack {
+                    SecureField("", text: $key, prompt: Text(hasKey ? "Saved in your Keychain" : provider.keyPlaceholder))
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(save)
+                    Button(hasKey && key.isEmpty ? "Check" : "Save", action: save)
+                        .disabled(checking || (key.isEmpty && !hasKey && provider.keyRequired))
+                    if hasKey {
+                        Button(role: .destructive) {
+                            APIKeys.set(nil, for: provider)
+                            hasKey = false
+                            models = []
+                            result = nil
+                            AssistantStore.shared.refreshStatus()
+                        } label: { Image(systemName: "trash") }
+                        .help("Remove the key")
+                    }
+                }
+            } label: {
+                RowLabel(title: "API key", subtitle: keySubtitle)
+            }
+            if let result {
+                Label(result.message, systemImage: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(result.ok ? .green : .orange)
+                    .font(.caption)
+            }
+            if models.isEmpty {
+                TextField(text: modelBinding, prompt: Text(provider.suggestedModel.isEmpty ? "Model name" : provider.suggestedModel)) {
+                    RowLabel(title: "Model name", subtitle: "Check the key to pick from the models it can use.")
+                }
+            } else {
+                Picker("Model name", selection: modelBinding) {
+                    ForEach(pickerModels, id: \.self) { Text($0).tag($0) }
+                }
+            }
+            if provider == .custom || provider == .openrouter || provider == .gemini {
+                TextField(text: Binding(get: { s.cloudBaseURL(for: provider) },
+                                        set: { s.cloudBaseURLs[provider.rawValue] = $0 }),
+                          prompt: Text(provider.defaultBaseURL)) {
+                    RowLabel(title: "Server", subtitle: provider == .custom ? "LM Studio, vLLM, Together, Mistral, xAI… anything that speaks the OpenAI chat API." : nil)
+                }
+            }
+        }
+        .onAppear(perform: load)
+        .onChange(of: provider) { _, _ in load() }
+    }
+
+    private var keySubtitle: String? {
+        guard let url = provider.keyURL else { return nil }
+        return "Get one at \(url.host() ?? url.absoluteString). Kept in your Mac's Keychain."
+    }
+
+    private var modelBinding: Binding<String> {
+        Binding(get: { s.cloudModel(for: provider) }, set: { s.cloudModels[provider.rawValue] = $0; AssistantStore.shared.refreshStatus() })
+    }
+
+    /// The listed models plus the chosen one, so the picker always shows the current choice.
+    private var pickerModels: [String] {
+        let chosen = s.cloudModel(for: provider)
+        return chosen.isEmpty || models.contains(chosen) ? models : [chosen] + models
+    }
+
+    private func load() {
+        key = ""
+        hasKey = APIKeys.get(provider) != nil
+        models = []
+        result = nil
+        if hasKey || !provider.keyRequired { check() }
+    }
+
+    private func save() {
+        if !key.isEmpty {
+            APIKeys.set(key, for: provider)
+            key = ""
+            hasKey = true
+        }
+        check()
+    }
+
+    private func check() {
+        let model = s.cloudModel(for: provider)
+        guard let url = URL(string: s.cloudBaseURL(for: provider)) else { return }
+        let config = CloudLLM.Config(provider: provider, key: APIKeys.get(provider), model: model, baseURL: url)
+        checking = true
+        Task {
+            do {
+                let list = try await CloudLLM.models(config)
+                models = list
+                if model.isEmpty, let first = list.first { s.cloudModels[provider.rawValue] = first }
+                result = (true, "Connected · \(list.count) models available")
+            } catch {
+                result = (false, error.localizedDescription)
+            }
+            checking = false
+            AssistantStore.shared.refreshStatus()
+        }
+    }
+}
+
 private struct AssistantPane: View {
     @EnvironmentObject private var s: AppSettings
     @ObservedObject private var assistant = AssistantStore.shared
@@ -709,7 +821,21 @@ private struct AssistantPane: View {
                 ToggleRow("Notify when a search finishes", subtitle: "A macOS notification if the notch is closed.",
                           isOn: $s.systemNotifications)
             } footer: {
-                FooterText("With a local model through Ollama, search understands what you mean, picks the right file and writes answers. Everything stays on your Mac except web searches.")
+                FooterText(s.aiProvider == .local
+                           ? "With a local model through Ollama, search understands what you mean, picks the right file and writes answers. Everything stays on your Mac except web searches."
+                           : "Search, briefs, nudges and screen questions use \(s.aiProvider.title) with your key. What you search for (and, if allowed below, the window you ask about) is sent to \(s.aiProvider.shortName).")
+            }
+            Section {
+                Picker(selection: $s.aiProvider) {
+                    ForEach(AIProvider.allCases) { Text($0.title).tag($0) }
+                } label: {
+                    RowLabel(title: "Model", subtitle: "Local stays private and free; a cloud model with your own key is smarter and faster.")
+                }
+                if s.aiProvider != .local {
+                    CloudProviderSettings(provider: s.aiProvider)
+                }
+            } header: {
+                Text("Intelligence")
             }
             Section("Files & folders") {
                 PermissionRow(title: "Desktop, Documents, Downloads & cloud folders",
@@ -729,9 +855,10 @@ private struct AssistantPane: View {
                 }
                 if s.imageIndexing { VisualSearchRow() }
             }
-            if assistant.pullingModel != nil || assistant.pullError != nil || assistant.justPulled != nil {
+            if s.aiProvider == .local, assistant.pullingModel != nil || assistant.pullError != nil || assistant.justPulled != nil {
                 Section { DownloadActivity() }
             }
+            if s.aiProvider == .local {
             Section("Ollama") {
                 LabeledContent("Status") {
                     if let pulling = assistant.pullingModel {
@@ -782,10 +909,18 @@ private struct AssistantPane: View {
                 }
                 .font(.caption).foregroundStyle(.secondary)
             }
+            }
             Section {
                 ToggleRow("Answer questions about your screen",
-                          subtitle: "“What’s the answer to this question” looks at the screen behind the notch. It’s read on this Mac and never saved.",
+                          subtitle: "“What’s the answer to this question” (or Ask about this) looks at the window in front. It’s never saved.",
                           isOn: $s.screenQuestions)
+                if s.screenQuestions, s.aiProvider != .local {
+                    ToggleRow("Use \(s.aiProvider.shortName) for screen questions",
+                              subtitle: s.cloudScreenQuestions
+                                ? "The window you ask about (a picture and its text) is sent to \(s.aiProvider.shortName) with the question."
+                                : "Screen questions stay on this Mac and use the local Ollama model.",
+                              isOn: $s.cloudScreenQuestions)
+                }
                 if s.screenQuestions && !ScreenQuestion.hasPermission {
                     LabeledContent {
                         Button("Open Settings") { ScreenQuestion.openPrivacySettings() }
@@ -804,6 +939,7 @@ private struct AssistantPane: View {
         }
         .task { assistant.refreshStatus() }
         .onChange(of: s.ollamaURL) { _, _ in assistant.refreshStatus() }
+        .onChange(of: s.aiProvider) { _, _ in assistant.refreshStatus() }
         .onChange(of: assistant.justPulled) { _, done in
             // Keep what was typed until it downloads, so a typo can be fixed and retried.
             if let done, done == cleanedCustom { customModel = "" }
@@ -818,6 +954,7 @@ private struct AssistantPane: View {
             Text(assistant.installed.isEmpty ? "No model downloaded" : "Selected model isn't downloaded")
                 .foregroundStyle(.orange)
         case .unknown: ProgressView().controlSize(.small)
+        case .needsKey: Text("Add an API key above").foregroundStyle(.orange)
         }
     }
 

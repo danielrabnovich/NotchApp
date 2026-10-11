@@ -172,6 +172,19 @@ final class AppSettings: ObservableObject {
     @Published var assistantEnabled: Bool { didSet { defaults.set(assistantEnabled, forKey: "assistantEnabled") } }
     @Published var ollamaURL: String { didSet { defaults.set(ollamaURL, forKey: "ollamaURL") } }
     @Published var ollamaModel: String { didSet { defaults.set(ollamaModel, forKey: "ollamaModel") } }
+    /// Where the intelligence comes from: the local model, or a cloud one with your own key.
+    @Published var aiProvider: AIProvider { didSet { defaults.set(aiProvider.rawValue, forKey: "aiProvider") } }
+    /// The model picked for each cloud provider, and each one's address (editable for custom servers).
+    @Published var cloudModels: [String: String] { didSet { defaults.set(cloudModels, forKey: "cloudModels") } }
+    @Published var cloudBaseURLs: [String: String] { didSet { defaults.set(cloudBaseURLs, forKey: "cloudBaseURLs") } }
+    /// Screen questions may use the cloud model (sending the captured window); off keeps them on this Mac.
+    @Published var cloudScreenQuestions: Bool { didSet { defaults.set(cloudScreenQuestions, forKey: "cloudScreenQuestions") } }
+
+    func cloudModel(for provider: AIProvider) -> String { cloudModels[provider.rawValue] ?? provider.suggestedModel }
+    func cloudBaseURL(for provider: AIProvider) -> String {
+        let custom = cloudBaseURLs[provider.rawValue]?.trimmingCharacters(in: .whitespaces) ?? ""
+        return custom.isEmpty ? provider.defaultBaseURL : custom
+    }
     @Published var systemNotifications: Bool { didSet { defaults.set(systemNotifications, forKey: "systemNotifications") } }
     @Published var imageIndexing: Bool { didSet { defaults.set(imageIndexing, forKey: "imageIndexing") } }
     @Published var homeCity: String { didSet { defaults.set(homeCity, forKey: "homeCity") } }
@@ -360,6 +373,10 @@ final class AppSettings: ObservableObject {
         assistantEnabled = defaults.bool(forKey: "assistantEnabled")
         ollamaURL = defaults.string(forKey: "ollamaURL") ?? "http://localhost:11434"
         ollamaModel = defaults.string(forKey: "ollamaModel") ?? OllamaModelCatalog.defaultModel
+        aiProvider = AIProvider(rawValue: defaults.string(forKey: "aiProvider") ?? "") ?? .local
+        cloudModels = defaults.dictionary(forKey: "cloudModels") as? [String: String] ?? [:]
+        cloudBaseURLs = defaults.dictionary(forKey: "cloudBaseURLs") as? [String: String] ?? [:]
+        cloudScreenQuestions = defaults.object(forKey: "cloudScreenQuestions") as? Bool ?? true
         systemNotifications = defaults.bool(forKey: "systemNotifications")
         imageIndexing = defaults.bool(forKey: "imageIndexing")
         homeCity = defaults.string(forKey: "homeCity") ?? ""

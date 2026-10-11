@@ -657,7 +657,7 @@ private struct ResultView: View {
                      : job.route == .weather ? "Getting the weather" : job.route == .actions ? "Turning that into actions"
                      : job.route == .calendar ? "Reading your calendar"
                      : job.route == .notes ? "Looking in your notes"
-                     : job.route == .screen ? "Only on this Mac · nothing is saved"
+                     : job.route == .screen ? ScreenQuestion.privacyLine
                      : "Working out where to look")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.3))
@@ -1197,7 +1197,7 @@ private struct AnswerText: View {
         VStack(alignment: .leading, spacing: 7) {
             ForEach(Array(paragraphs.enumerated()), id: \.offset) { i, para in
                 if para.isCode {
-                    CodeBlock(code: para.text)
+                    CodeBlock(code: para.text, language: para.language)
                 } else {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     if para.isBullet {
@@ -1217,30 +1217,34 @@ private struct AnswerText: View {
 
     /// Lines as paragraphs and bullets, and ``` fenced code as blocks (kept verbatim, indentation
     /// and all; a fence still open while the answer streams in is already a block).
-    private var paragraphs: [(text: String, isBullet: Bool, isCode: Bool)] {
-        var out: [(String, Bool, Bool)] = []
+    private var paragraphs: [(text: String, isBullet: Bool, isCode: Bool, language: String?)] {
+        var out: [(String, Bool, Bool, String?)] = []
         var code: [String]?
+        var language: String?
         // Models sometimes put "•" bullets inline; give each its own line.
         for raw in text.replacingOccurrences(of: " • ", with: "\n• ").components(separatedBy: .newlines) {
-            if raw.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+            let trimmed = raw.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") {
                 if let lines = code {
-                    if !lines.isEmpty { out.append((lines.joined(separator: "\n"), false, true)) }
+                    if !lines.isEmpty { out.append((lines.joined(separator: "\n"), false, true, language)) }
                     code = nil
                 } else {
                     code = []
+                    // "```python" names the language.
+                    let tag = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces)
+                    language = tag.isEmpty ? nil : tag
                 }
                 continue
             }
             if code != nil { code?.append(raw); continue }
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty else { continue }
-            if let prefix = ["• ", "- ", "* "].first(where: line.hasPrefix) {
-                out.append((String(line.dropFirst(prefix.count)), true, false))
+            guard !trimmed.isEmpty else { continue }
+            if let prefix = ["• ", "- ", "* "].first(where: trimmed.hasPrefix) {
+                out.append((String(trimmed.dropFirst(prefix.count)), true, false, nil))
             } else {
-                out.append((line, false, false))
+                out.append((trimmed, false, false, nil))
             }
         }
-        if let lines = code, !lines.isEmpty { out.append((lines.joined(separator: "\n"), false, true)) }
+        if let lines = code, !lines.isEmpty { out.append((lines.joined(separator: "\n"), false, true, language)) }
         return out
     }
 
@@ -1271,15 +1275,15 @@ private struct AnswerText: View {
     }
 }
 
-/// Code from an answer: monospaced on a soft panel, with a copy button.
+/// Code from an answer: syntax-coloured and monospaced on a soft panel, with a copy button.
 private struct CodeBlock: View {
     let code: String
+    var language: String?
     @State private var copied = false
 
     var body: some View {
-        Text(code)
+        Text(SyntaxHighlighter.highlight(code, language: language))
             .font(.system(size: 11.5, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.9))
             .lineSpacing(2)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
@@ -1886,7 +1890,7 @@ private struct ContextChip: View {
     private var helpText: String {
         guard case let .ready(c, _) = state else { return "" }
         let source = c.textSource == .accessibility ? "its text as the app reports it" : "its text read from the picture"
-        return "\(c.label)\nAsking about this window and \(source). Only on this Mac; nothing is saved."
+        return "\(c.label)\nAsking about this window and \(source). \(ScreenQuestion.privacyLine)."
     }
 }
 
@@ -1987,6 +1991,12 @@ private struct AIStatusLine: View {
                     HStack(spacing: 4) {
                         Text("Searching without AI ·")
                         DownloadModelMenu()
+                    }
+                case .needsKey(let provider):
+                    HStack(spacing: 4) {
+                        Text("Searching without AI ·")
+                        Button("Add your \(provider) key") { SettingsWindowController.shared.show(pane: .assistant) }
+                            .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
                     }
                 }
             }

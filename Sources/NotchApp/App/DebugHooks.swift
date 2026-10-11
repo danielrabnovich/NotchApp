@@ -173,8 +173,42 @@ enum DebugHooks {
             case .failed(let m)?: log("CTX failed: \(m)")
             case nil: log("CTX none")
             }
+        case "cloudtest": // cloudtest <provider> <key> [model]: one request straight through CloudLLM (no Keychain)
+            guard let provider = AIProvider(rawValue: parts[safe: 1] ?? ""), let url = URL(string: provider.defaultBaseURL) else { break }
+            let config = CloudLLM.Config(provider: provider, key: parts[safe: 2], model: parts[safe: 3] ?? provider.suggestedModel, baseURL: url)
+            Task {
+                do { log("CLOUD ok: " + (try await CloudLLM.chat(config, system: "", user: "Say hi", images: [], json: false, quick: true))) }
+                catch { log("CLOUD error: \(error.localizedDescription)") }
+                do { log("CLOUD models: \(try await CloudLLM.models(config).prefix(5))") }
+                catch { log("CLOUD models error: \(error.localizedDescription)") }
+            }
         case "compact": // compact <item> [0]: a pinned Glance's compact form on or off
             if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { LiveActivities.shared.update(item) { $0.compact = parts[safe: 2] != "0" } }
+        case "codeshot": // codeshot <path>: sample code in each language, highlighted
+            let samples: [(String?, String)] = [
+                ("python", "# average of the prices\ndef average(prices: list[float]) -> float:\n    if not prices:\n        return 0.0  # empty CSV\n    return sum(prices) / len(prices)\n\n@dataclass\nclass Item:\n    name: str = \"widget\""),
+                ("swift", "@MainActor\nfunc load(_ url: URL) async throws -> [Price] {\n    let (data, _) = try await URLSession.shared.data(from: url)\n    return try JSONDecoder().decode([Price].self, from: data) // 3 tries\n}"),
+                (nil, "const total = items.reduce((sum, x) => sum + x.price, 0);\nconsole.log(`Total: ${total.toFixed(2)}`);"),
+                ("json", "{\"name\": \"notch\", \"version\": 2, \"beta\": true, \"tags\": [\"mac\", null]}"),
+                ("bash", "#!/bin/zsh\n# rebuild and install\nexport APP=$HOME/Applications\nswift build -c release && ./build.sh install"),
+            ]
+            let view = VStack(alignment: .leading, spacing: 10) {
+                ForEach(samples.indices, id: \.self) { i in
+                    Text(SyntaxHighlighter.highlight(samples[i].1, language: samples[i].0))
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .padding(10)
+                        .frame(width: 560, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.07)))
+                }
+            }
+            .padding(14)
+            .background(Color.black)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/code.png"))
+            }
         case "pins": // pins item,item… (empty clears); saves nothing else
             let items = (parts[safe: 1] ?? "").split(separator: ",").compactMap { LiveItem(rawValue: String($0)) }
             LiveActivities.shared.slots.forEach { LiveActivities.shared.unpin($0.item) }

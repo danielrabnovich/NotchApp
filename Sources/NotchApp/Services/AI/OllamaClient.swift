@@ -4,6 +4,8 @@ import Foundation
 enum OllamaClient {
     enum Status: Equatable {
         case unknown, notRunning, modelMissing(String), ready
+        /// A cloud provider is chosen but has no key or model yet.
+        case needsKey(String)
     }
 
     struct OllamaError: LocalizedError {
@@ -62,6 +64,10 @@ enum OllamaClient {
     }
 
     static func status() async -> Status {
+        let provider = await AppSettings.shared.aiProvider
+        if provider != .local {
+            return await CloudLLM.active != nil ? .ready : .needsKey(provider.shortName)
+        }
         let wanted = await model
         guard let models = try? await installedModels() else { return .notRunning }
         return models.contains { matches(installed: $0, wanted: wanted) } ? .ready : .modelMissing(wanted)
@@ -169,6 +175,9 @@ enum OllamaClient {
 
     /// Single-shot chat. With `json: true` the model is constrained to emit a JSON object.
     static func chat(system: String, user: String, images: [Data] = [], json: Bool = false, temperature: Double = 0.2) async throws -> String {
+        if let cloud = await CloudLLM.active {
+            return try await CloudLLM.chat(cloud, system: system, user: user, images: images, json: json, quick: json)
+        }
         do {
             return try await chat(system: system, user: user, images: images, json: json, temperature: temperature, disableThinking: true)
         } catch let error as OllamaError where error.isThinkingUnsupported {
@@ -177,7 +186,9 @@ enum OllamaClient {
     }
 
     /// Whether the selected model can look at images (Ollama lists "vision" among its capabilities).
-    static func supportsVision() async -> Bool {
+    /// Cloud models are assumed to; one that can't is asked again without the picture.
+    static func supportsVision(allowCloud: Bool = true) async -> Bool {
+        if allowCloud, await CloudLLM.active != nil { return true }
         let name = await model
         if let known = await MainActor.run(body: { visionSupport[name] }) { return known }
         var request = URLRequest(url: await baseURL.appendingPathComponent("api/show"))
@@ -229,8 +240,13 @@ enum OllamaClient {
     }
 
     /// Streams the reply, calling `onText` with the full text so far.
-    static func chatStream(system: String, user: String, images: [Data] = [], temperature: Double = 0.3,
+    /// `allowCloud: false` keeps this request on the local model even when a cloud one is chosen
+    /// (screen questions, when Settings says the screen stays on this Mac).
+    static func chatStream(system: String, user: String, images: [Data] = [], temperature: Double = 0.3, allowCloud: Bool = true,
                            onText: @escaping @Sendable (String) async -> Void) async throws -> String {
+        if allowCloud, let cloud = await CloudLLM.active {
+            return try await CloudLLM.stream(cloud, system: system, user: user, images: images, onText: onText)
+        }
         do {
             return try await chatStream(system: system, user: user, images: images, temperature: temperature, disableThinking: true, onText: onText)
         } catch let error as OllamaError where error.isThinkingUnsupported {

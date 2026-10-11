@@ -143,7 +143,8 @@ final class AssistantStore: ObservableObject {
             self.status = s
             // Load the model ahead of the first search, but not on every check: a warm-up runs the
             // model on the GPU, which made the notch's animations stutter when done on each open.
-            if s == .ready, Date().timeIntervalSince(self.lastWarm) > 600 {
+            // (A cloud model has nothing to load.)
+            if s == .ready, AppSettings.shared.aiProvider == .local, Date().timeIntervalSince(self.lastWarm) > 600 {
                 self.lastWarm = Date()
                 Task.detached(priority: .background) { _ = try? await OllamaClient.chat(system: "", user: "hi") }
             }
@@ -375,7 +376,7 @@ final class AssistantStore: ObservableObject {
     private func answerAboutScreen(_ query: String, id: UUID, useAI: Bool,
                                    progress: @escaping @Sendable (String) async -> Void) async throws {
         guard useAI else {
-            throw OllamaClient.OllamaError(message: "Questions about your screen need the local model. Start Ollama in Settings → AI.")
+            throw OllamaClient.OllamaError(message: "Questions about your screen need an AI model: start Ollama, or add a cloud model's key, in Settings → Search.")
         }
         // The window captured by "Ask about this" (waiting for it if it's still being taken), or a fresh look.
         let captured: ScreenContext

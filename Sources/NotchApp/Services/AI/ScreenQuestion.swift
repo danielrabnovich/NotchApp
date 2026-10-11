@@ -17,7 +17,9 @@ enum ScreenQuestion {
     static func answer(_ question: String, context: ScreenContext, history: [Exchange] = [],
                        progress: @escaping @Sendable (String) async -> Void,
                        partial: @escaping @Sendable (String, [WebSource]) async -> Void) async throws -> (answer: String, sources: [WebSource]) {
-        let vision = await OllamaClient.supportsVision()
+        // The window goes to a cloud model only if Settings allows it; otherwise the local one reads it.
+        let cloud = await AppSettings.shared.cloudScreenQuestions
+        let vision = await OllamaClient.supportsVision(allowCloud: cloud)
         await progress(vision ? "Looking at \(context.appName ?? "your screen")" : "Reading \(context.appName ?? "your screen")")
         let images = vision ? [context.image.flatMap { jpeg($0, maxSide: 1600) }].compactMap { $0 } : []
         let screenText = context.text.isEmpty ? "(no readable text)" : String(context.text.prefix(8000))
@@ -48,7 +50,7 @@ enum ScreenQuestion {
         user += "Question: \(question)\n\nText in the window:\n\(screenText)"
 
         // Hold the reply back until it's clear it isn't a search request.
-        let text = try await OllamaClient.chatStream(system: system, user: user, images: images) { soFar in
+        let text = try await OllamaClient.chatStream(system: system, user: user, images: images, allowCloud: cloud) { soFar in
             let head = soFar.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
             guard head.count >= 7, !head.hasPrefix("SEARCH:") else { return }
             await partial(soFar, [])
@@ -69,6 +71,15 @@ enum ScreenQuestion {
         return ["explain", "summar", "translate", "rewrite", "reword", "fix", "grammar", "spelling", "key points", "tl;dr",
                 "tldr", "simplify", "what's this", "what is this", "error", "code", "reply", "respond", "shorten", "proofread"]
             .contains(where: q.contains)
+    }
+
+    /// Where a screen question goes, for the results and the chip.
+    @MainActor static var privacyLine: String {
+        let s = AppSettings.shared
+        if s.aiProvider != .local, s.cloudScreenQuestions, CloudLLM.active != nil {
+            return "Sent to \(s.aiProvider.shortName) · nothing is saved"
+        }
+        return "Only on this Mac · nothing is saved"
     }
 
     private static func line(_ prefix: String, in text: String) -> String? {

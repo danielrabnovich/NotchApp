@@ -143,7 +143,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .cpu, .gpu, .memory: 20
         case .temperature: 28
         case .power: 30
-        case .battery: BatteryGlyph.width(height: 13) + 2
+        // The bolt sits beside it while plugged in, as on iPhone.
+        case .battery: MainActor.assumeIsolated { BatteryGlyph.width(plugged: BatteryMonitor.shared.isPluggedIn) } + 2
         case .nextEvent: 40
         case .tasks: 22
         case .network: 40
