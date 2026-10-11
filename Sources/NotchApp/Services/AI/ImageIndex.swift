@@ -45,6 +45,8 @@ final class ImageIndex: ObservableObject {
             await MainActor.run {
                 let s = AppSettings.shared
                 self.indexed = ImageIndexStore.shared.count
+                // The first pass waits a minute after launch, so it doesn't compete with logging in
+                // (it can keep a core busy for a while); turning it on later starts at once.
                 s.$imageIndexing.removeDuplicates()
                     .sink { on in DispatchQueue.main.async { on ? self.refresh() : self.pause() } }
                     .store(in: &self.cancellables)
@@ -63,8 +65,15 @@ final class ImageIndex: ObservableObject {
         }
     }
 
+    private let launched = Date()
+
     func refresh() {
         guard AppSettings.shared.imageIndexing else { return }
+        let wait = 60 - Date().timeIntervalSince(launched)
+        if wait > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in self?.refresh() }
+            return
+        }
         guard task == nil else { again = true; return }
         again = false
         let folders = folders()

@@ -32,40 +32,116 @@ struct AudioVisualizer: View {
     var barCount = 4
 
     @ObservedObject private var spectrum = AudioSpectrum.shared
-    @State private var levels: [CGFloat] = [0.4, 0.8, 0.55, 0.7, 0.45, 0.65]
-    private let timer = Timer.publish(every: 0.28, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        GeometryReader { geo in
-            let spacing: CGFloat = 2
-            let barWidth = (geo.size.width - spacing * CGFloat(barCount - 1)) / CGFloat(barCount)
-            HStack(alignment: .center, spacing: spacing) {
-                ForEach(0..<barCount, id: \.self) { i in
-                    Capsule()
-                        .fill(color)
-                        .frame(width: barWidth, height: max(barWidth, geo.size.height * height(of: i)))
-                }
-            }
-            .frame(width: geo.size.width, height: geo.size.height)
-        }
-        .onReceive(timer) { _ in
-            guard isPlaying, !spectrum.isLive else { return }
-            withAnimation(.easeInOut(duration: 0.28)) {
-                levels = levels.map { _ in CGFloat.random(in: 0.25...1) }
-            }
-        }
-        .animation(.easeInOut(duration: 0.3), value: isPlaying)
-        .onAppear { AudioSpectrum.shared.viewerAppeared() }
-        .onDisappear { AudioSpectrum.shared.viewerDisappeared() }
+        VisualizerBars(color: NSColor(color), isPlaying: isPlaying, barCount: barCount,
+                       levels: spectrum.isLive ? bandLevels : nil)
+            .onAppear { AudioSpectrum.shared.viewerAppeared() }
+            .onDisappear { AudioSpectrum.shared.viewerDisappeared() }
     }
 
-    private func height(of bar: Int) -> CGFloat {
-        guard isPlaying else { return 0.18 }
-        guard spectrum.isLive else { return levels[bar % levels.count] }
-        // Spread the bars across the bands, bass to treble.
+    /// The live levels spread across the bars, bass to treble.
+    private var bandLevels: [CGFloat] {
         let bands = spectrum.levels
-        let band = min(bands.count - 1, Int((Double(bar) + 0.5) * Double(bands.count) / Double(barCount)))
-        return 0.15 + 0.85 * bands[band]
+        guard !bands.isEmpty else { return [] }
+        return (0..<barCount).map { bar in
+            let band = min(bands.count - 1, Int((Double(bar) + 0.5) * Double(bands.count) / Double(barCount)))
+            return 0.15 + 0.85 * bands[band]
+        }
+    }
+}
+
+/// The bars as Core Animation layers. The stand-in bounce (no permission to listen) is a looping
+/// layer animation that runs in the window server, costing the app nothing per frame; live levels
+/// just set each bar's scale. Drawn with SwiftUI, the bars re-rendered the closed notch 30–120
+/// times a second for as long as music played.
+private struct VisualizerBars: NSViewRepresentable {
+    let color: NSColor
+    let isPlaying: Bool
+    let barCount: Int
+    let levels: [CGFloat]?
+
+    func makeNSView(context: Context) -> BarsView { BarsView() }
+
+    func updateNSView(_ view: BarsView, context: Context) {
+        view.update(color: color, playing: isPlaying, count: barCount, levels: levels)
+    }
+
+    final class BarsView: NSView {
+        private var bars: [CALayer] = []
+        private var mode: String = ""
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+        }
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func layout() {
+            super.layout()
+            placeBars()
+        }
+
+        func update(color: NSColor, playing: Bool, count: Int, levels: [CGFloat]?) {
+            if bars.count != count {
+                bars.forEach { $0.removeFromSuperlayer() }
+                bars = (0..<count).map { _ in
+                    let bar = CALayer()
+                    bar.actions = ["bounds": NSNull(), "position": NSNull(), "transform": NSNull()]
+                    layer?.addSublayer(bar)
+                    return bar
+                }
+                mode = ""
+                placeBars()
+            }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            bars.forEach { $0.backgroundColor = color.cgColor }
+            let next = !playing ? "still" : levels == nil ? "bounce" : "live"
+            if next != mode {
+                mode = next
+                bars.forEach { $0.removeAllAnimations() }
+                if next == "still" { bars.forEach { $0.transform = scale(0.18) } }
+                if next == "bounce" { startBounce() }
+            }
+            if next == "live", let levels {
+                for (bar, level) in zip(bars, levels) { bar.transform = scale(level) }
+            }
+            CATransaction.commit()
+        }
+
+        private func placeBars() {
+            guard !bars.isEmpty else { return }
+            let spacing: CGFloat = 2
+            let w = (bounds.width - spacing * CGFloat(bars.count - 1)) / CGFloat(bars.count)
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for (i, bar) in bars.enumerated() {
+                let saved = bar.transform
+                bar.transform = CATransform3DIdentity
+                bar.frame = CGRect(x: CGFloat(i) * (w + spacing), y: 0, width: w, height: bounds.height)
+                bar.cornerRadius = w / 2
+                bar.transform = saved
+            }
+            CATransaction.commit()
+        }
+
+        private func scale(_ y: CGFloat) -> CATransform3D { CATransform3DMakeScale(1, max(0.15, min(1, y)), 1) }
+
+        /// Each bar on its own slow loop of heights, so together they never visibly repeat.
+        private func startBounce() {
+            let shapes: [[CGFloat]] = [[0.45, 0.95, 0.35, 0.8, 0.55, 0.45], [0.8, 0.4, 1, 0.5, 0.7, 0.8],
+                                       [0.55, 0.85, 0.45, 0.65, 0.95, 0.55], [0.7, 0.35, 0.75, 0.95, 0.4, 0.7]]
+            for (i, bar) in bars.enumerated() {
+                let a = CAKeyframeAnimation(keyPath: "transform.scale.y")
+                a.values = shapes[i % shapes.count]
+                a.duration = 1.5 + Double(i) * 0.23
+                a.calculationMode = .cubic
+                a.repeatCount = .infinity
+                a.timeOffset = Double(i) * 0.37
+                bar.add(a, forKey: "bounce")
+            }
+        }
     }
 }
 
