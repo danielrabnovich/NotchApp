@@ -116,8 +116,8 @@ private struct CPUCard: View {
                     MiniStat(label: "Load", value: s.loadAverage.first.map { String(format: "%.1f", $0) } ?? "–", color: .white)
                 }
                 VStack(spacing: 3) {
-                    MeterRow(label: monitor.clusterNames.fast, value: clusterLoad(s, fast: true), color: StatsPalette.cpuFast)
-                    MeterRow(label: monitor.clusterNames.other, value: clusterLoad(s, fast: false), color: StatsPalette.cpu)
+                    MeterRow(label: monitor.clusterNames.fast, value: clusterLoad(s, fast: true), color: StatsPalette.cpuFast, labelWidth: 72)
+                    MeterRow(label: monitor.clusterNames.other, value: clusterLoad(s, fast: false), color: StatsPalette.cpu, labelWidth: 72)
                 }
                 AppList(apps: s.topCPU, limit: 4, empty: "Measuring…") { app in
                     String(format: app.cpu < 0.1 ? "%.1f%%" : "%.0f%%", app.cpu * 100)
@@ -301,10 +301,10 @@ private struct PowerCard: View {
         let total = max(s.systemPower ?? known, known, 0.1)
         let other = s.systemPower.map { max(0, $0 - known) }
         VStack(alignment: .leading, spacing: 4) {
-            SectionLabel("Where it goes")
+            SectionLabel("Components")
             ForEach(parts.filter { $0.watts != nil }, id: \.label) { part in
                 MeterRow(label: part.label, value: (part.watts ?? 0) / total, color: part.color,
-                         text: (part.approx ? "≈" : "") + watts(part.watts ?? 0))
+                         text: watts(part.watts ?? 0))
                     .help(part.approx ? "Approximate: the memory controller's power, which follows memory traffic" : "")
             }
             if let other {
@@ -681,12 +681,14 @@ private struct MeterRow: View {
     let value: Double
     let color: Color
     var text: String? = nil
+    var labelWidth: CGFloat = 50
 
     var body: some View {
         HStack(spacing: 5) {
             Text(label)
                 .foregroundStyle(.white.opacity(0.5))
-                .frame(width: 50, alignment: .leading)
+                .minimumScaleFactor(0.8)
+                .frame(width: labelWidth, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.08))
@@ -699,10 +701,11 @@ private struct MeterRow: View {
                 .foregroundStyle(.white.opacity(0.85))
                 .rollingNumber(text ?? percent(value))
                 .frame(minWidth: 26, alignment: .trailing)
+                // The same size as the rows around it: the bar gives up the room, not the number.
+                .fixedSize()
         }
-        .font(.system(size: 9, weight: .medium).monospacedDigit())
+        .font(.system(size: 10, weight: .medium).monospacedDigit())
         .lineLimit(1)
-        .minimumScaleFactor(0.8)
     }
 }
 

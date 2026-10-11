@@ -669,8 +669,11 @@ private struct ClipCard: View {
             }
         case .image:
             if let image = clipboard.image(for: clip) {
-                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                // Filled over a fixed-size base: a filled image on its own reports its overflowing
+                // size, and the card grows past its neighbours to fit it.
+                Color.clear
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay { Image(nsImage: image).resizable().aspectRatio(contentMode: .fill) }
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
         case .files:

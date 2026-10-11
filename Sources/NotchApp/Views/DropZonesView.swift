@@ -86,6 +86,9 @@ struct DropZonesView: View {
                 }
             }
         }
+        // Room for a bin to grow when something's over it (3%): the outer ones would otherwise
+        // push their borders past the notch's edge.
+        .padding(5)
     }
 
     private func finish(on tab: NotchTab) {
