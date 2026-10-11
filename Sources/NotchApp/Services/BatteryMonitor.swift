@@ -9,11 +9,21 @@ final class BatteryMonitor: ObservableObject {
     @Published private(set) var isCharging = false
     @Published private(set) var isPluggedIn = false
     @Published private(set) var hasBattery = false
+    /// Low Power Mode is on (the battery turns yellow, as on iPhone).
+    @Published private(set) var lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
 
     private var source: CFRunLoopSource?
+    private var powerStateObserver: NSObjectProtocol?
 
     func start() {
         update(initial: true)
+        powerStateObserver = NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil,
+                                                                    queue: .main) { _ in
+            MainActor.assumeIsolated {
+                let on = ProcessInfo.processInfo.isLowPowerModeEnabled
+                if BatteryMonitor.shared.lowPowerMode != on { BatteryMonitor.shared.lowPowerMode = on }
+            }
+        }
         let context = Unmanaged.passUnretained(self).toOpaque()
         source = IOPSNotificationCreateRunLoopSource({ ctx in
             guard let ctx else { return }

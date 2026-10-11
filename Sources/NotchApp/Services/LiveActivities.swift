@@ -143,7 +143,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .cpu, .gpu, .memory: 20
         case .temperature: 28
         case .power: 30
-        case .battery: 28
+        case .battery: BatteryGlyph.width(height: 13) + 2
         case .nextEvent: 40
         case .tasks: 22
         case .network: 40

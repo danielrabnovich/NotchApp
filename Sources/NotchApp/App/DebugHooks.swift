@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Developer hooks for previewing states without touching the mouse.
 /// Enable with: defaults write com.notchapp.NotchApp debugHooks -bool YES
@@ -140,6 +141,27 @@ enum DebugHooks {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 SettingsWindowController.shared.snapshot(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/settings.png"))
             }
+        case "batteryglyphs": // batteryglyphs <path>: every battery state, rendered side by side
+            let states: [(Int, Bool, Bool, Bool)] = [(100, false, false, false), (82, false, false, false), (64, true, true, false),
+                                                     (100, false, true, false), (45, false, false, true), (18, false, false, false),
+                                                     (7, false, false, false), (7, true, true, false)]
+            let view = HStack(spacing: 14) {
+                ForEach(states.indices, id: \.self) { i in
+                    let s = states[i]
+                    BatteryGlyph(level: s.0, charging: s.1, pluggedIn: s.2, lowPower: s.3)
+                }
+            }
+            .padding(14)
+            .background(Color.black)
+            .environment(\.colorScheme, .dark)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 4
+            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/battery.png"))
+            }
+        case "compact": // compact <item> [0]: a pinned Glance's compact form on or off
+            if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { LiveActivities.shared.update(item) { $0.compact = parts[safe: 2] != "0" } }
         case "pins": // pins item,item… (empty clears); saves nothing else
             let items = (parts[safe: 1] ?? "").split(separator: ",").compactMap { LiveItem(rawValue: String($0)) }
             LiveActivities.shared.slots.forEach { LiveActivities.shared.unpin($0.item) }

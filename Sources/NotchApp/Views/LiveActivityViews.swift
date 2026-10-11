@@ -212,7 +212,8 @@ struct LiveItemView: View {
             Text(watts(stats.snapshot.systemPower)).font(Self.valueFont).fixedSize()
                 .foregroundStyle(.white.opacity(0.92))
         case .battery:
-            BatteryIcon(level: battery.level, charging: battery.isCharging)
+            BatteryGlyph(level: battery.level, charging: battery.isCharging, pluggedIn: battery.isPluggedIn,
+                         lowPower: battery.lowPowerMode)
         case .nextEvent:
             NextEventReading(compact: true)
         case .network:

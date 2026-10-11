@@ -131,6 +131,71 @@ struct BatteryIcon: View {
     }
 }
 
+/// The battery as on recent iPhones and iPads: the charge as a fill with the number inside it,
+/// green while charging, yellow in Low Power Mode, red when low, and a bolt while plugged in.
+struct BatteryGlyph: View {
+    let level: Int
+    let charging: Bool
+    var pluggedIn = false
+    var lowPower = false
+    /// Height of the body; everything else scales from it.
+    var height: CGFloat = 13
+
+    static func width(height: CGFloat) -> CGFloat { height * 2.25 + 2.5 }
+
+    /// Critically low and not charging: the whole battery tints red, not just the sliver of fill.
+    private var critical: Bool { level <= 10 && !charging && !pluggedIn }
+    private var trackColor: Color { critical ? Color(red: 1, green: 0.27, blue: 0.23).opacity(0.42) : .white.opacity(0.38) }
+
+    private var fillColor: Color {
+        if charging { return Color(red: 0.2, green: 0.84, blue: 0.35) }
+        if lowPower { return Color(red: 1, green: 0.84, blue: 0.04) }
+        if level <= 20 { return Color(red: 1, green: 0.27, blue: 0.23) }
+        return .white
+    }
+
+    var body: some View {
+        let w = height * 2.25
+        let radius = height * 0.32
+        let fraction = CGFloat(min(max(level, 0), 100)) / 100
+        HStack(spacing: 1) {
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(trackColor)
+                Rectangle()
+                    .fill(fillColor)
+                    .frame(width: w * fraction)
+                HStack(spacing: 0.5) {
+                    // "100" with a bolt is the widest: a touch smaller so it keeps clear of the ends.
+                    Text("\(level)")
+                        .font(.system(size: height * (level >= 100 && (charging || pluggedIn) ? 0.64 : 0.74),
+                                      weight: .bold, design: .rounded).monospacedDigit())
+                        .tracking(-0.3)
+                    if charging || pluggedIn {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: height * 0.52, weight: .black))
+                    }
+                }
+                .foregroundStyle(critical ? .white : .black.opacity(0.88))
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: w)
+            }
+            .frame(width: w, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            // The terminal nub: lit once the fill reaches it.
+            UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0,
+                                   bottomTrailingRadius: 1.2, topTrailingRadius: 1.2, style: .continuous)
+                .fill(level >= 99 ? fillColor : trackColor)
+                .frame(width: 1.5, height: height * 0.38)
+        }
+        .animation(.easeOut(duration: 0.4), value: level)
+        .animation(.easeOut(duration: 0.25), value: fillColor)
+        .accessibilityElement()
+        .accessibilityLabel("Battery \(level)%\(charging ? ", charging" : "")\(lowPower ? ", Low Power Mode" : "")")
+    }
+}
+
 /// Circular icon button with a soft hover highlight.
 struct NotchIconButtonStyle: ButtonStyle {
     var size: CGFloat = 30

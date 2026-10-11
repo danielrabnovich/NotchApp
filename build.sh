@@ -11,9 +11,14 @@ VERSION="1.0.0"
 APP="build/$APP_NAME.app"
 
 echo "▸ Compiling Swift…"
-swift build -c release 2>&1 | grep -vE "^\[|Compiling|Write swift-version" || true
+mkdir -p build
+# A failed build leaves the last good binary in place: stop here rather than package that.
+if ! swift build -c release > build/swift-build.log 2>&1; then
+  grep -E "error:" build/swift-build.log || tail -20 build/swift-build.log
+  echo "✗ Build failed"; exit 1
+fi
+grep -vE "^\[|Compiling|Write swift-version|Building for|Build complete" build/swift-build.log || true
 BIN=".build/release/$APP_NAME"
-[ -f "$BIN" ] || { echo "Build failed"; swift build -c release; exit 1; }
 
 echo "▸ Compiling media adapter…"
 mkdir -p build
