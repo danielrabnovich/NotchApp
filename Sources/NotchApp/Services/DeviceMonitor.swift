@@ -143,6 +143,8 @@ final class PrivacyMonitor: ObservableObject {
     var isActive: Bool { micInUse || cameraInUse }
 
     private var liveDemand = false
+    /// Meeting mode watches the microphone for calls.
+    var meetingDemand = false { didSet { if meetingDemand != oldValue { update() } } }
 
     func start() { update() }
 
@@ -154,7 +156,7 @@ final class PrivacyMonitor: ObservableObject {
     }
 
     func update() {
-        let enabled = AppSettings.shared.privacyAlerts || liveDemand
+        let enabled = AppSettings.shared.privacyAlerts || liveDemand || meetingDemand
         guard enabled != (timer != nil) else { return }
         timer?.invalidate()
         timer = nil

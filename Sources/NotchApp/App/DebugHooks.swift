@@ -289,6 +289,7 @@ enum DebugHooks {
                 if parts[0] == "apprun" { CommandCenter.shared.run([command]) } else { AppActions.shared.toggleStar(command) }
             }
             log("APPSTARS \(AppActions.shared.stars) glance=\(AppActions.shared.glanceActions.map(\.title))")
+        case "meeting": MeetingMonitor.shared.debugSimulate(parts[safe: 1] != "end")
         case "close": c.viewModel.close()
         case "hover": c.viewModel.isHovering = parts.count > 1 ? parts[1] == "1" : true
         case "volume": ActivityCenter.shared.show(.volume(level: Float(parts[safe: 1] ?? "0.6") ?? 0.6, muted: false), for: 5)

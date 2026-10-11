@@ -1481,6 +1481,8 @@ private struct CalendarPane: View {
             Section {
                 if s.calendarEnabled {
                     ToggleRow("Meeting alerts", subtitle: "A heads-up from the notch before each meeting.", isOn: $s.meetingAlerts)
+                    ToggleRow("Meeting mode", subtitle: "During a call (Zoom, Teams, FaceTime, Meet in a browser…), its time and a mute button beside the notch; after it, jot notes or a follow-up.",
+                              isOn: $s.meetingMode)
                     if s.meetingAlerts {
                         Stepper(value: $s.meetingAlertMinutes, in: 1...30) {
                             LabeledContent("Alert before") {

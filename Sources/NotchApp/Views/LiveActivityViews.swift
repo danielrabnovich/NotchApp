@@ -122,6 +122,7 @@ enum GlanceActions {
         case .disk: "Show Cleaner"
         case .askScreen: "Ask About This Window"
         case .appAction: AppActions.shared.glanceActions.map(\.title).joined(separator: " · ")
+        case .meeting: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
         case .quickDarkMode: ControlsService.shared.darkMode ? "Turn Dark Mode Off" : "Turn Dark Mode On"
         case .quickMic: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
         case .quickWiFi: ControlsService.shared.wifiOn ? "Turn Wi-Fi Off" : "Turn Wi-Fi On"
@@ -150,6 +151,9 @@ enum GlanceActions {
             if let waiting = agents.waiting.first { agents.focus(waiting) } else { openDetail(item, in: vm) }
         case .askScreen:
             HotKeys.askAboutScreen(vm, reason: .click)
+        case .meeting:
+            ControlsService.shared.toggleMic()
+            Haptics.tap()
         case .appAction:
             // One glyph: run it. Several: each glyph runs its own (see AppActionGlyphs).
             if let only = AppActions.shared.glanceActions.first, AppActions.shared.glanceActions.count == 1 {
@@ -184,6 +188,7 @@ enum GlanceActions {
         case .devices, .privacy: defaults.set(ToolsPane.devices.rawValue, forKey: "tools.pane"); tab = .tools
         case .disk: defaults.set(ToolsPane.cleaner.rawValue, forKey: "tools.pane"); tab = .tools
         case .askScreen, .appAction: tab = .ask
+        case .meeting: tab = .home
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift:
             tab = .controls
         }
@@ -249,6 +254,8 @@ struct LiveItemView: View {
             KeepAwakeReading(compact: true)
         case .disk:
             DiskReading(compact: true)
+        case .meeting:
+            MeetingReading(compact: true)
         case .tasks, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
              .quickWiFi, .quickNightShift, .appAction:
             regularBody
@@ -322,6 +329,8 @@ struct LiveItemView: View {
             KeepAwakeReading()
         case .disk:
             DiskReading()
+        case .meeting:
+            MeetingReading()
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
              .quickWiFi, .quickNightShift:
             ActionGlyph(item: item)
@@ -482,6 +491,40 @@ private struct AppActionGlyphs: View {
                 }
             }
         }
+    }
+}
+
+/// A call in progress: a red dot, how long it's been going, and the microphone (red while muted).
+private struct MeetingReading: View {
+    var compact = false
+    @ObservedObject private var meetings = MeetingMonitor.shared
+    @ObservedObject private var controls = ControlsService.shared
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: compact ? 4 : 5) {
+                Circle().fill(.red).frame(width: 6, height: 6)
+                    .opacity(Int(context.date.timeIntervalSinceReferenceDate) % 2 == 0 ? 1 : 0.45)
+                    .animation(.easeInOut(duration: 0.6), value: Int(context.date.timeIntervalSinceReferenceDate))
+                Text(elapsed(at: context.date))
+                    .font(LiveItemView.valueFont)
+                    .foregroundStyle(.white.opacity(0.92))
+                    .fixedSize()
+                if !compact {
+                    Image(systemName: controls.micMuted ? "mic.slash.fill" : "mic.fill")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(controls.micMuted ? .red : .white.opacity(0.6))
+                        .contentTransition(.symbolEffect(.replace))
+                }
+            }
+        }
+        .help(meetings.call.map { "\($0.title) · \($0.app)" } ?? "")
+    }
+
+    private func elapsed(at now: Date) -> String {
+        guard let call = meetings.call else { return "0:00" }
+        let s = max(0, Int(now.timeIntervalSince(call.started)))
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s % 3600 / 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
     }
 }
 

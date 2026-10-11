@@ -197,6 +197,8 @@ final class AppSettings: ObservableObject {
     @Published var dueNudges: Bool { didSet { defaults.set(dueNudges, forKey: "dueNudges") } }
     /// Ramble presses the dictation app's key as it opens, so talking can start straight away.
     @Published var rambleAutoDictate: Bool { didSet { defaults.set(rambleAutoDictate, forKey: "rambleAutoDictate") } }
+    /// A call timer and mute button beside the notch during calls, and notes or a follow-up after.
+    @Published var meetingMode: Bool { didSet { defaults.set(meetingMode, forKey: "meetingMode") } }
     @Published var nudgeLeadMinutes: Int { didSet { defaults.set(nudgeLeadMinutes, forKey: "nudgeLeadMinutes") } }
 
     // Calendar
@@ -290,6 +292,7 @@ final class AppSettings: ObservableObject {
             "briefHour": 6,
             "dueNudges": true,
             "rambleAutoDictate": false,
+            "meetingMode": true,
             "nudgeLeadMinutes": 120,
             "calendarEnabled": false,
             "defaultCalendarID": "",
@@ -388,6 +391,7 @@ final class AppSettings: ObservableObject {
         briefHour = defaults.integer(forKey: "briefHour")
         dueNudges = defaults.bool(forKey: "dueNudges")
         rambleAutoDictate = defaults.bool(forKey: "rambleAutoDictate")
+        meetingMode = defaults.bool(forKey: "meetingMode")
         nudgeLeadMinutes = defaults.integer(forKey: "nudgeLeadMinutes")
         calendarEnabled = defaults.bool(forKey: "calendarEnabled")
         defaultCalendarID = defaults.string(forKey: "defaultCalendarID") ?? ""
