@@ -801,7 +801,9 @@ private struct RouteFooter: View {
                 Text("finding more")
                     .transition(.opacity)
             }
-            if job.route == .write, let answer = job.answer, job.state == .done {
+            // What an action wrote (a summary, a drafted reply) is for copying; searching the web for
+            // its hidden instruction instead wouldn't mean anything.
+            if job.route == .write || job.actionTitle != nil, let answer = job.answer, job.state == .done {
                 Text("·")
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
@@ -810,7 +812,7 @@ private struct RouteFooter: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.white.opacity(0.65))
-            } else if job.route != .calendar {
+            } else if job.route != .calendar, job.actionTitle == nil {
                 Text("·")
                 Button(job.route == .web || job.route == .notes ? "Search my files instead" : "Search the web instead") {
                     assistant.switchRoute()

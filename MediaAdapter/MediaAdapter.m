@@ -102,6 +102,14 @@ void adapter_stream(void) {
             }];
         }
         refresh();
+        // Leave with NotchApp, however it ends (a crash or force quit included): otherwise this
+        // stream outlives it until it next has something to say, which may be never.
+        pid_t parent = getppid();
+        static dispatch_source_t watch;
+        watch = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, (uintptr_t)parent, DISPATCH_PROC_EXIT, dispatch_get_main_queue());
+        dispatch_source_set_event_handler(watch, ^{ exit(0); });
+        dispatch_resume(watch);
+        if (getppid() != parent || parent == 1) exit(0); // it ended before the watch began
         CFRunLoopRun();
     }
 }

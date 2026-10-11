@@ -6,6 +6,7 @@ struct SettingsPage<Content: View, Accessory: View>: View {
     let pane: SettingsPane
     @ViewBuilder var accessory: Accessory
     @ViewBuilder var content: Content
+    @EnvironmentObject private var s: AppSettings
 
     init(pane: SettingsPane, @ViewBuilder accessory: () -> Accessory, @ViewBuilder content: () -> Content) {
         self.pane = pane
@@ -15,7 +16,31 @@ struct SettingsPage<Content: View, Accessory: View>: View {
 
     var body: some View {
         Form {
-            content
+            // A feature that's off: what turns it on, rather than an empty page.
+            if pane.switchHidesPage, let on = pane.enabled(s), !on.wrappedValue {
+                Section {
+                    VStack(spacing: 10) {
+                        SettingsIcon(pane: pane, size: 44)
+                            .saturation(0.2)
+                            .opacity(0.7)
+                        Text("\(pane.title) is off")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text(pane.offDetail)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 360)
+                        Button("Turn On") { withAnimation(.snappy) { on.wrappedValue = true } }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .padding(.top, 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 26)
+                }
+            } else {
+                content
+            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
@@ -44,6 +69,7 @@ extension SettingsPage where Accessory == EmptyView {
 /// (hidden) title bar area.
 struct PaneHeader: View {
     let pane: SettingsPane
+    @EnvironmentObject private var s: AppSettings
 
     var body: some View {
         HStack(spacing: 14) {
@@ -58,6 +84,13 @@ struct PaneHeader: View {
             }
             Spacer(minLength: 8)
             PaneShortcuts(pane: pane)
+            // The feature's master switch, where you look first.
+            if let on = pane.enabled(s) {
+                Toggle("", isOn: Binding(get: { on.wrappedValue }, set: { v in withAnimation(.snappy) { on.wrappedValue = v } }))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .help(on.wrappedValue ? "Turn \(pane.title) off" : "Turn \(pane.title) on")
+            }
         }
         .padding(.horizontal, 28)
         .padding(.top, 34)
@@ -301,6 +334,19 @@ extension SettingsPane {
         guard !title.lowercased().contains(q) else { return nil }
         let hits = keywords.filter { $0.contains(q) }.prefix(3)
         return hits.isEmpty ? nil : hits.joined(separator: ", ")
+    }
+
+    /// Pages whose settings all belong to their feature: while it's off, the page offers to turn it
+    /// on instead. (Keyboard Shortcuts and Updates keep their settings in view.)
+    var switchHidesPage: Bool {
+        [.assistant, .shelf, .tasks, .timer, .stats, .tools, .agents, .calendar, .controls].contains(self)
+    }
+
+    var offDetail: String {
+        switch self {
+        case .calendar: "Turn it on for today's events on Home and a heads-up before meetings."
+        default: "Turn it on for its tab in the notch, and its settings here."
+        }
     }
 
     /// The feature's master switch, for pages that have one.

@@ -142,19 +142,19 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: "How and where the notch opens."
         case .appearance: "Accent color and motion."
         case .live: "Keep music, a timer, stats and more beside the notch, one click away."
-        case .assistant: "Find files, search the web and check the weather, with optional local AI."
+        case .assistant: "Files, the web and the weather, even without AI; add a model for answers and actions."
         case .media: "Now playing, the visualizer and per-app volume."
         case .hud: "Show volume and brightness changes in the notch."
         case .battery: "What the notch does when you plug in."
-        case .shelf: "Park files, catch screenshots and see recent downloads."
-        case .tasks: "Your list, reminders and a scratchpad."
-        case .timer: "Countdowns, Pomodoro and a stopwatch."
-        case .stats: "CPU, GPU, memory, temperatures and power."
+        case .shelf: "Drag files onto the notch to park them, then out to any app. Screenshots and downloads land here too."
+        case .tasks: "Your list, reminders and a scratchpad. Drop text, links or emails on the notch to add them."
+        case .timer: "Countdowns, Pomodoro and a stopwatch. Scroll the ruler or pick a preset."
+        case .stats: "CPU, GPU, memory, temperatures and power. Click a card for details."
         case .tools: "Network and speed test, a cleaner, an app uninstaller and Bluetooth batteries."
-        case .agents: "Claude Code, Codex, OpenCode and ZCode sessions, and today's token usage."
+        case .agents: "Claude Code, Codex, OpenCode and ZCode sessions (working, waiting for you or idle) and today's tokens."
         case .addOns: "Search, Shelf and Tasks are always there. Turn on anything else you want."
-        case .calendar: "Today's events and heads-ups before meetings."
-        case .controls: "Pick your quick actions, plus Keep Awake and a camera mirror."
+        case .calendar: "Today's events on Home, and a heads-up before meetings."
+        case .controls: "Volume and brightness, the quick actions you pick, Keep Awake and a camera mirror."
         case .mouse: "Scroll direction and middle click."
         case .updates: "Homebrew and app updates, checked for you."
         case .shortcuts: "Jump straight to any tab from anywhere."
@@ -476,8 +476,6 @@ private struct ShelfSettingsPane: View {
     var body: some View {
         SettingsPage(pane: .shelf) {
             Section {
-                ToggleRow("Shelf tab", subtitle: "Drag files onto the notch to park them, then drag them out to any app.",
-                          isOn: $s.shelfEnabled)
                 if s.shelfEnabled {
                     ToggleRow("Catch new screenshots", subtitle: "New screenshots land on the shelf automatically.", isOn: $s.screenshotCatcher)
                     if s.screenshotCatcher {
@@ -585,8 +583,6 @@ private struct TasksSettingsPane: View {
     var body: some View {
         SettingsPage(pane: .tasks) {
             Section {
-                ToggleRow("Tasks tab", subtitle: "Drop text, links, emails or files on the notch to add them. Drag a row right to complete, left to delete.",
-                          isOn: $s.tasksEnabled)
                 if s.tasksEnabled {
                     ToggleRow("Open count beside the notch", isOn: $s.showTaskCount)
                     ToggleRow("Notes scratchpad", subtitle: "A free-form note next to your tasks, saved automatically.", isOn: $s.notesEnabled)
@@ -1098,8 +1094,6 @@ private struct AssistantPane: View {
     var body: some View {
         SettingsPage(pane: .assistant) {
             Section {
-                ToggleRow("Search tab", subtitle: "Works without AI: files by name, web results as links, and weather.",
-                          isOn: $s.assistantEnabled)
                 ToggleRow("Notify when a search finishes", subtitle: "A macOS notification if the notch is closed.",
                           isOn: $s.systemNotifications)
             } footer: {
@@ -1398,7 +1392,6 @@ private struct TimerPane: View {
     var body: some View {
         SettingsPage(pane: .timer) {
             Section {
-                ToggleRow("Timer tab", subtitle: "Scroll the ruler or click a preset to pick a length.", isOn: $s.timerEnabled)
                 if s.timerEnabled {
                     ToggleRow("Countdown beside the notch", subtitle: "A progress ring and the time left while the notch is closed.",
                               isOn: $s.timerLiveActivity)
@@ -1417,18 +1410,41 @@ private struct TimerPane: View {
 
 private struct StatsPane: View {
     @EnvironmentObject private var s: AppSettings
+    @ObservedObject private var live = LiveActivities.shared
 
     var body: some View {
         SettingsPage(pane: .stats) {
             Section {
-                ToggleRow("Stats tab", subtitle: "Click a card for details. Updates every second while open, and every few seconds in the background.",
-                          isOn: $s.statsEnabled)
-                if s.statsEnabled {
-                    Picker("Temperature", selection: $s.useFahrenheit) {
-                        Text("Celsius").tag(false)
-                        Text("Fahrenheit").tag(true)
+                Picker("Temperature", selection: $s.useFahrenheit) {
+                    Text("Celsius").tag(false)
+                    Text("Fahrenheit").tag(true)
+                }
+                .pickerStyle(.segmented)
+            }
+            Section {
+                ForEach([LiveItem.cpu, .memory, .gpu, .temperature, .power], id: \.self) { item in
+                    Toggle(isOn: Binding(get: { live.slot(for: item) != nil },
+                                         set: { $0 ? live.pin(item) : live.unpin(item) })) {
+                        HStack(spacing: 10) {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 22, height: 22)
+                                .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(item.tint.gradient))
+                            RowLabel(title: item.title, subtitle: item.detail)
+                        }
                     }
-                    .pickerStyle(.segmented)
+                    .disabled(live.slot(for: item) == nil && live.isFull(.left) && live.isFull(.right))
+                }
+            } header: {
+                Text("Beside the notch")
+            } footer: {
+                HStack(spacing: 4) {
+                    FooterText("Readings stay in view while the notch is closed; click one for its card.")
+                    Button("Arrange Glances…") { SettingsRouter.shared.pane = .live }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .fixedSize()
                 }
             }
         }
@@ -1442,7 +1458,6 @@ private struct CalendarPane: View {
     var body: some View {
         SettingsPage(pane: .calendar) {
             Section {
-                ToggleRow("Today's events", subtitle: "Shown next to the music player on the Home tab.", isOn: $s.calendarEnabled)
                 if s.calendarEnabled {
                     ToggleRow("Meeting alerts", subtitle: "A heads-up from the notch before each meeting.", isOn: $s.meetingAlerts)
                     if s.meetingAlerts {
@@ -1480,7 +1495,6 @@ private struct ToolsSettingsPane: View {
     var body: some View {
         SettingsPage(pane: .tools) {
             Section {
-                ToggleRow("Tools tab", subtitle: "Network, Cleaner and Devices, one swipe away.", isOn: $s.toolsEnabled)
             }
             Section("Network") {
                 ToggleRow("Connection alerts", subtitle: "When you go offline or come back, a VPN connects or drops, or your public IP changes.",
@@ -1518,8 +1532,6 @@ private struct AgentsSettingsPane: View {
     var body: some View {
         SettingsPage(pane: .agents) {
             Section {
-                ToggleRow("Agents tab", subtitle: "Sessions that are working, waiting for you or recently idle, plus today's tokens per tool.",
-                          isOn: $s.agentsEnabled)
                 if s.agentsEnabled {
                     ToggleRow("Alerts", subtitle: "A heads-up when an agent finishes, or stops to ask you something.", isOn: $s.agentAlerts)
                     ToggleRow("Keep the Mac awake while agents work", subtitle: "Turns on Keep Awake while any session is working, and off two minutes after the last one stops.",
@@ -1628,8 +1640,6 @@ private struct ControlsPane: View {
     var body: some View {
         SettingsPage(pane: .controls) {
             Section {
-                ToggleRow("Controls tab", subtitle: "Volume and brightness sliders, and the quick actions you pick below.",
-                          isOn: $s.controlsEnabled)
             } footer: {
                 FooterText("Dark Mode and Empty Trash ask once for permission to control System Events and Finder.")
             }
