@@ -290,6 +290,7 @@ enum DebugHooks {
             }
             log("APPSTARS \(AppActions.shared.stars) glance=\(AppActions.shared.glanceActions.map(\.title))")
         case "meeting": MeetingMonitor.shared.debugSimulate(parts[safe: 1] != "end")
+        case "golden": log("GOLDEN \(GoldenHour.now().map { "\($0.text) golden=\($0.golden) near=\($0.near) \($0.detail)" } ?? "nil") days=\(TodayWeather.shared.report?.days.prefix(2).map { "\($0.sunrise.map(String.init(describing:)) ?? "-")/\($0.sunset.map(String.init(describing:)) ?? "-")" } ?? [])")
         case "close": c.viewModel.close()
         case "hover": c.viewModel.isHovering = parts.count > 1 ? parts[1] == "1" : true
         case "volume": ActivityCenter.shared.show(.volume(level: Float(parts[safe: 1] ?? "0.6") ?? 0.6, muted: false), for: 5)

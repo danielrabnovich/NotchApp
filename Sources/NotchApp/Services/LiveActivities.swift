@@ -9,6 +9,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
     case meeting
     /// Anything downloading, copying, converting or exporting: a ring and percent.
     case progress
+    case worldClock, weather, goldenHour, unread, countdown
     /// Actions: a button beside the notch rather than a reading.
     case askScreen, quickScreenshot, quickCopyText, quickColorPicker, quickLock, quickDarkMode, quickMic, quickWiFi, quickNightShift
     /// The actions starred for the app in front (right-click one under the search bar).
@@ -57,6 +58,11 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .disk: "Disk Space"
         case .meeting: "Meeting"
         case .progress: "Progress"
+        case .worldClock: "World Clock"
+        case .weather: "Weather"
+        case .goldenHour: "Golden Hour"
+        case .unread: "Unread"
+        case .countdown: "Countdown"
         case .askScreen: "Ask About This"
         case .appAction: "App Actions"
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.title
@@ -84,6 +90,11 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .disk: "Free space on the startup disk."
         case .meeting: "During a call: how long it's been, and a mute button."
         case .progress: "Downloads, copies, conversions and exports from Final Cut, HandBrake and more."
+        case .worldClock: "The time in another city you pick."
+        case .weather: "The temperature and sky outside now."
+        case .goldenHour: "Time until golden hour before sunset, for the best light."
+        case .unread: "Unread counts from Slack, Discord, Mail and the rest of your Dock, in one place."
+        case .countdown: "Days until a date you set: a launch, a trip, a deadline."
         case .askScreen: "Ask the AI about the window in front."
         case .appAction: "Actions you star for an app (right-click one under the search bar), while that app is in front."
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.detail
@@ -111,6 +122,11 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .disk: "internaldrive.fill"
         case .meeting: "phone.fill"
         case .progress: "circle.dashed"
+        case .worldClock: "globe"
+        case .weather: "cloud.sun.fill"
+        case .goldenHour: "sun.horizon.fill"
+        case .unread: "bubble.left.and.bubble.right.fill"
+        case .countdown: "flag.checkered"
         case .askScreen: "sparkle.magnifyingglass"
         case .appAction: "star.square.on.square"
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.icon
@@ -138,6 +154,11 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .disk: .pink
         case .meeting: .green
         case .progress: .blue
+        case .worldClock: .teal
+        case .weather: .cyan
+        case .goldenHour: .orange
+        case .unread: .red
+        case .countdown: .purple
         case .askScreen: .indigo
         case .appAction: .orange
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.tint
@@ -145,7 +166,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
     }
 
     /// Items that come and go: these can be shown only while there's something to show.
-    var canWaitForActivity: Bool { [.music, .timer, .nextEvent, .network, .devices, .agents, .vpn, .disk].contains(self) }
+    var canWaitForActivity: Bool { [.music, .timer, .nextEvent, .network, .devices, .agents, .vpn, .disk, .goldenHour, .unread].contains(self) }
 
     var whileActiveLabel: String {
         switch self {
@@ -159,6 +180,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .disk: "Only when low"
         case .meeting: "Only during calls"
         case .progress: "Only while something runs"
+        case .goldenHour: "Only near sunset"
+        case .unread: "Only with something unread"
         default: ""
         }
     }
@@ -184,6 +207,11 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .disk: 58
         case .meeting: 72
         case .progress: 54
+        case .worldClock: 76
+        case .weather: 50
+        case .goldenHour: 66
+        case .unread: 52
+        case .countdown: 56
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
         }
@@ -205,6 +233,11 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .disk: 32
         case .meeting: 46
         case .progress: 22
+        case .worldClock: 40
+        case .weather: 32
+        case .goldenHour: 40
+        case .unread: 26
+        case .countdown: 30
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
         }
@@ -310,6 +343,8 @@ final class LiveActivities: ObservableObject {
         AppActions.shared.$glanceActions.sink { _ in refresh() }.store(in: &cancellables)
         MeetingMonitor.shared.$call.sink { _ in refresh() }.store(in: &cancellables)
         ProgressCenter.shared.$items.sink { _ in refresh() }.store(in: &cancellables)
+        UnreadBadges.shared.$badges.sink { _ in refresh() }.store(in: &cancellables)
+        TodayWeather.shared.$report.sink { _ in refresh() }.store(in: &cancellables)
         Cleaner.shared.$disk.sink { _ in refresh() }.store(in: &cancellables)
         // Network "only while busy" follows the rate, which changes every second.
         NetworkMonitor.shared.$downRate.sink { _ in
@@ -491,6 +526,9 @@ final class LiveActivities: ObservableObject {
         NetworkMonitor.shared.setLiveDemand(slot(for: .network) != nil || previewing)
         PrivacyMonitor.shared.setLiveDemand(wantsPrivacy || previewing)
         AgentMonitor.shared.setLiveDemand(slot(for: .agents) != nil || previewing)
+        UnreadBadges.shared.setDemand(slot(for: .unread) != nil || previewing)
+        // The weather (and the sun's times) for their Glances, kept within half an hour.
+        if slot(for: .weather) != nil || slot(for: .goldenHour) != nil || previewing { TodayWeather.shared.refreshIfStale() }
     }
 
     private func isShowing(_ slot: LiveSlot) -> Bool {
@@ -542,6 +580,15 @@ final class LiveActivities: ObservableObject {
             return MeetingMonitor.shared.call != nil
         case .progress:
             return !ProgressCenter.shared.items.isEmpty
+        case .worldClock, .countdown:
+            return true
+        case .weather:
+            return TodayWeather.shared.report != nil
+        case .goldenHour:
+            guard let reading = GoldenHour.now() else { return false }
+            return !slot.whileActive || reading.near || reading.golden
+        case .unread:
+            return !slot.whileActive || UnreadBadges.shared.total > 0
         case .quickNightShift:
             return NightShift.isAvailable
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi:

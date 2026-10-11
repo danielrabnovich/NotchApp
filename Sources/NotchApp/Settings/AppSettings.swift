@@ -188,6 +188,11 @@ final class AppSettings: ObservableObject {
     @Published var systemNotifications: Bool { didSet { defaults.set(systemNotifications, forKey: "systemNotifications") } }
     @Published var imageIndexing: Bool { didSet { defaults.set(imageIndexing, forKey: "imageIndexing") } }
     @Published var homeCity: String { didSet { defaults.set(homeCity, forKey: "homeCity") } }
+    /// The World Clock Glance's city (its id in WorldClock.cities).
+    @Published var worldClockCity: String { didSet { defaults.set(worldClockCity, forKey: "worldClockCity") } }
+    /// The Countdown Glance: what it's to, and when (seconds since 1970; 0 when unset).
+    @Published var countdownTitle: String { didSet { defaults.set(countdownTitle, forKey: "countdownTitle") } }
+    @Published var countdownDate: Double { didSet { defaults.set(countdownDate, forKey: "countdownDate") } }
     /// "What's the answer to this question" looks at the screen (captured in memory, never saved).
     @Published var screenQuestions: Bool { didSet { defaults.set(screenQuestions, forKey: "screenQuestions") } }
 
@@ -289,6 +294,9 @@ final class AppSettings: ObservableObject {
             "systemNotifications": true,
             "imageIndexing": true,
             "homeCity": "",
+            "worldClockCity": "",
+            "countdownTitle": "Launch",
+            "countdownDate": 0.0,
             "screenQuestions": true,
             "morningBrief": false,
             "briefHour": 6,
@@ -389,6 +397,9 @@ final class AppSettings: ObservableObject {
         systemNotifications = defaults.bool(forKey: "systemNotifications")
         imageIndexing = defaults.bool(forKey: "imageIndexing")
         homeCity = defaults.string(forKey: "homeCity") ?? ""
+        worldClockCity = defaults.string(forKey: "worldClockCity") ?? ""
+        countdownTitle = defaults.string(forKey: "countdownTitle") ?? "Launch"
+        countdownDate = defaults.double(forKey: "countdownDate")
         screenQuestions = defaults.bool(forKey: "screenQuestions")
         morningBrief = defaults.bool(forKey: "morningBrief")
         briefHour = defaults.integer(forKey: "briefHour")

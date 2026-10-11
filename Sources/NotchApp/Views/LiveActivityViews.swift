@@ -123,6 +123,11 @@ enum GlanceActions {
         case .askScreen: "Ask About This Window"
         case .appAction: AppActions.shared.glanceActions.map(\.title).joined(separator: " · ")
         case .meeting: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
+        case .worldClock: "\(WorldClock.city.name) · \(WorldClock.offset(TimeZone(identifier: WorldClock.city.zone) ?? .current))"
+        case .weather: TodayWeather.shared.report?.summary ?? "Weather"
+        case .goldenHour: GoldenHour.now()?.detail ?? "Golden hour"
+        case .unread: UnreadBadges.shared.badges.map { "\($0.name): \($0.count)" }.joined(separator: "\n").nilIfEmpty ?? "Nothing unread"
+        case .countdown: Countdown.target.map { "\(AppSettings.shared.countdownTitle) · \($0.formatted(date: .complete, time: .omitted))" } ?? "Set a date in Settings → Glances"
         case .progress: ProgressCenter.shared.items.map { "\($0.title)\($0.fraction.map { " · \(Int($0 * 100))%" } ?? "")" }.joined(separator: "\n")
         case .quickDarkMode: ControlsService.shared.darkMode ? "Turn Dark Mode Off" : "Turn Dark Mode On"
         case .quickMic: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
@@ -157,6 +162,31 @@ enum GlanceActions {
             Haptics.tap()
         case .progress:
             ProgressCenter.shared.open()
+        case .worldClock:
+            let city = WorldClock.city, zone = TimeZone(identifier: city.zone) ?? .current
+            var style = Date.FormatStyle(date: .omitted, time: .shortened)
+            style.timeZone = zone
+            var day = Date.FormatStyle().weekday(.wide)
+            day.timeZone = zone
+            ActivityCenter.shared.show(.notice(title: "\(city.name) · \(Date().formatted(style))", detail: "\(Date().formatted(day)) · \(WorldClock.offset(zone))",
+                                               icon: "globe", tone: .info), for: 3)
+        case .weather:
+            vm.open(tab: .ask, takeKeyboard: false, reason: .click)
+            AssistantStore.shared.run("weather")
+        case .goldenHour:
+            if let reading = GoldenHour.now() {
+                ActivityCenter.shared.show(.notice(title: reading.golden ? "Golden hour" : "Golden hour later", detail: reading.detail,
+                                                   icon: reading.icon, tone: .info), for: 3.5)
+            }
+        case .unread:
+            UnreadBadges.shared.openTop()
+        case .countdown:
+            if let target = Countdown.target {
+                ActivityCenter.shared.show(.notice(title: "\(AppSettings.shared.countdownTitle) · \(Countdown.text())",
+                                                   detail: target.formatted(date: .complete, time: .omitted), icon: "flag.checkered", tone: .info), for: 3)
+            } else {
+                SettingsWindowController.shared.show(pane: .live)
+            }
         case .appAction:
             // One glyph: run it. Several: each glyph runs its own (see AppActionGlyphs).
             if let only = AppActions.shared.glanceActions.first, AppActions.shared.glanceActions.count == 1 {
@@ -193,6 +223,10 @@ enum GlanceActions {
         case .askScreen, .appAction: tab = .ask
         case .meeting: tab = .home
         case .progress: tab = .shelf
+        case .weather: tab = .home
+        case .worldClock, .goldenHour, .countdown, .unread:
+            SettingsWindowController.shared.show(pane: .live)
+            return
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift:
             tab = .controls
         }
@@ -262,6 +296,8 @@ struct LiveItemView: View {
             MeetingReading(compact: true)
         case .progress:
             ProgressReading(compact: true)
+        case .worldClock, .weather, .goldenHour, .unread, .countdown:
+            ExtraReading(item: item, compact: true)
         case .tasks, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
              .quickWiFi, .quickNightShift, .appAction:
             regularBody
@@ -339,6 +375,8 @@ struct LiveItemView: View {
             MeetingReading()
         case .progress:
             ProgressReading()
+        case .worldClock, .weather, .goldenHour, .unread, .countdown:
+            ExtraReading(item: item)
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
              .quickWiFi, .quickNightShift:
             ActionGlyph(item: item)
@@ -498,6 +536,92 @@ private struct AppActionGlyphs: View {
                         .frame(width: 24)
                 }
             }
+        }
+    }
+}
+
+/// The world clock, weather, golden hour, unread counts and countdown: a glyph and a reading
+/// (compact: the reading alone).
+private struct ExtraReading: View {
+    let item: LiveItem
+    var compact = false
+    @ObservedObject private var weather = TodayWeather.shared
+    @ObservedObject private var unread = UnreadBadges.shared
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            HStack(spacing: 5) {
+                glyph(at: context.date)
+                Text(value(at: context.date))
+                    .font(LiveItemView.valueFont)
+                    .foregroundStyle(tint(at: context.date))
+                    .fixedSize()
+            }
+        }
+    }
+
+    @ViewBuilder private func glyph(at date: Date) -> some View {
+        switch item {
+        case .worldClock:
+            if !compact {
+                Text(WorldClock.city.short)
+                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+        case .weather:
+            Image(systemName: weather.report.map { WeatherReport.symbol($0.currentCode) } ?? "cloud")
+                .symbolRenderingMode(.multicolor)
+                .font(.system(size: 11))
+        case .goldenHour:
+            if !compact {
+                Image(systemName: GoldenHour.now(date)?.icon ?? "sun.horizon")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(GoldenHour.now(date)?.golden == true ? Color.orange : .white.opacity(0.6))
+            }
+        case .unread:
+            if compact || unread.badges.isEmpty {
+                Image(systemName: "bubble.left.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
+            } else {
+                HStack(spacing: -5) {
+                    ForEach(unread.badges.prefix(2)) { badge in
+                        AppIcon(bundlePath: badge.appURL.path, size: 15)
+                    }
+                }
+            }
+        case .countdown:
+            if !compact {
+                Image(systemName: "flag.checkered").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.55))
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    private func value(at date: Date) -> String {
+        switch item {
+        case .worldClock:
+            var style = Date.FormatStyle(date: .omitted, time: .shortened)
+            style.timeZone = TimeZone(identifier: WorldClock.city.zone) ?? .current
+            return date.formatted(style).replacingOccurrences(of: " AM", with: "a").replacingOccurrences(of: " PM", with: "p")
+        case .weather:
+            return weather.report.map { "\(Int($0.currentTemp.rounded()))°" } ?? "–"
+        case .goldenHour:
+            return GoldenHour.now(date)?.text ?? "–"
+        case .unread:
+            return "\(unread.total)"
+        case .countdown:
+            return Countdown.text(at: date)
+        default:
+            return ""
+        }
+    }
+
+    private func tint(at date: Date) -> Color {
+        switch item {
+        case .goldenHour where GoldenHour.now(date)?.golden == true: Color(red: 1, green: 0.75, blue: 0.35)
+        case .unread where unread.total > 0: .white
+        default: .white.opacity(0.92)
         }
     }
 }
@@ -798,6 +922,31 @@ struct LiveActivitiesPane: View {
                 Text("Actions")
             } footer: {
                 FooterText("One click beside the notch: ask about the window in front, take a screenshot, copy text off the screen, pick a color, lock the Mac, or flip Dark Mode, the mic, Wi-Fi or Night Shift.")
+            }
+            Section {
+                Picker(selection: $settings.worldClockCity) {
+                    ForEach(WorldClock.cities) { city in
+                        Text("\(city.name)  \(WorldClock.offset(TimeZone(identifier: city.zone) ?? .current))").tag(city.id)
+                    }
+                } label: {
+                    RowLabel(title: "World Clock", subtitle: "The city it shows.")
+                }
+                .onAppear { if settings.worldClockCity.isEmpty { settings.worldClockCity = WorldClock.city.id } }
+                LabeledContent {
+                    HStack {
+                        TextField("", text: $settings.countdownTitle, prompt: Text("Launch"))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 140)
+                        DatePicker("", selection: Binding(get: { Countdown.target ?? Date().addingTimeInterval(14 * 86400) },
+                                                          set: { settings.countdownDate = $0.timeIntervalSince1970 }),
+                                   displayedComponents: .date)
+                            .labelsHidden()
+                    }
+                } label: {
+                    RowLabel(title: "Countdown", subtitle: Countdown.target == nil ? "Pick a date to count down to." : "\(Countdown.text()) to go.")
+                }
+            } header: {
+                Text("Glance options")
             }
             Section {
                 ToggleRow("Progress", subtitle: "A ring while anything downloads, copies, converts or exports (Final Cut, Compressor, HandBrake…).",

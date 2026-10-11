@@ -9,6 +9,8 @@ struct WeatherReport: Equatable, Sendable {
         let high: Double
         let low: Double
         let rainChance: Int
+        var sunrise: Date? = nil
+        var sunset: Date? = nil
     }
 
     let place: String
@@ -77,7 +79,7 @@ enum WeatherService {
             .init(name: "latitude", value: String(place.lat)),
             .init(name: "longitude", value: String(place.lon)),
             .init(name: "current", value: "temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m"),
-            .init(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"),
+            .init(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset"),
             .init(name: "temperature_unit", value: fahrenheit ? "fahrenheit" : "celsius"),
             .init(name: "wind_speed_unit", value: fahrenheit ? "mph" : "kmh"),
             .init(name: "timezone", value: "auto"),
@@ -94,12 +96,19 @@ enum WeatherService {
         let highs = daily["temperature_2m_max"] as? [NSNumber] ?? []
         let lows = daily["temperature_2m_min"] as? [NSNumber] ?? []
         let rain = daily["precipitation_probability_max"] as? [Any] ?? []
+        let sunrises = daily["sunrise"] as? [String] ?? [], sunsets = daily["sunset"] as? [String] ?? []
+        // Sun times come in the place's local time ("2026-10-11T18:21").
+        let clock = DateFormatter()
+        clock.dateFormat = "yyyy-MM-dd'T'HH:mm"
+        clock.timeZone = TimeZone(secondsFromGMT: (obj["utc_offset_seconds"] as? NSNumber)?.intValue ?? TimeZone.current.secondsFromGMT())
         let parser = DateFormatter()
         parser.dateFormat = "yyyy-MM-dd"
         let days: [WeatherReport.Day] = times.indices.compactMap { i in
             guard let date = parser.date(from: times[i]), codes.indices.contains(i), highs.indices.contains(i), lows.indices.contains(i) else { return nil }
             return .init(date: date, code: codes[i].intValue, high: highs[i].doubleValue, low: lows[i].doubleValue,
-                         rainChance: (rain.indices.contains(i) ? (rain[i] as? NSNumber)?.intValue : nil) ?? 0)
+                         rainChance: (rain.indices.contains(i) ? (rain[i] as? NSNumber)?.intValue : nil) ?? 0,
+                         sunrise: sunrises.indices.contains(i) ? clock.date(from: sunrises[i]) : nil,
+                         sunset: sunsets.indices.contains(i) ? clock.date(from: sunsets[i]) : nil)
         }
         return WeatherReport(place: place.name, unit: fahrenheit ? "F" : "C",
                              currentTemp: num(current, "temperature_2m"), feelsLike: num(current, "apparent_temperature"),
