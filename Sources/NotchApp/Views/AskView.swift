@@ -2027,9 +2027,20 @@ private struct ContextActions: View {
             .padding(.horizontal, 30)
         case .ready(let context, _):
             HStack(spacing: 6) {
-                ForEach(Self.suggestions(for: context), id: \.self) { question in
-                    Button(question) { ask(question) }
+                if context.hasSelection {
+                    // Selected text: your AI Commands (the ones that replace put the result back).
+                    ForEach(AICommandStore.shared.commands.prefix(4)) { command in
+                        Button { AICommandRunner.run(command) } label: {
+                            Label(command.name, systemImage: command.icon)
+                        }
                         .buttonStyle(NotchPillButtonStyle())
+                        .help(command.output == .replace ? "Replaces the selection in \(context.appName ?? "the app")" : command.prompt)
+                    }
+                } else {
+                    ForEach(Self.suggestions(for: context), id: \.self) { question in
+                        Button(question) { ask(question) }
+                            .buttonStyle(NotchPillButtonStyle())
+                    }
                 }
             }
         }

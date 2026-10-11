@@ -45,6 +45,12 @@ struct Command: Identifiable, Equatable {
         /// Translate text (nil: the clipboard) into a language, with the AI model.
         case translate(String?, to: String)
         case power(PaletteCommands.Power)
+        /// Run a saved AI Command on the selection.
+        case aiCommand(UUID)
+        /// Click an item in the menus of the app in front.
+        case menuItem(MenuSearch.Ref)
+        /// Snap the window in front.
+        case window(WindowManager.Action)
     }
 
     enum MediaAction: String, Equatable { case toggle, play, pause, next, previous }
@@ -89,7 +95,7 @@ enum CommandParser {
         if let c = port(lower) ?? uninstall(q, lower) ?? clip(q, lower) ?? media(q, lower) { return c }
         if let c = vpn(lower) { return c }
         if let c = PaletteCommands.translate(q, lower) ?? PaletteCommands.define(lower) ?? PaletteCommands.web(q, lower)
-            ?? PaletteCommands.power(lower) { return [c] }
+            ?? PaletteCommands.power(lower) ?? PaletteCommands.window(lower) { return [c] }
         if let c = utility(lower) ?? transform(lower) { return [c] }
         if let c = media(lower) { return [c] }
         if let c = timer(lower) ?? awake(lower) ?? control(lower) { return [c] }
@@ -766,6 +772,17 @@ final class CommandCenter: ObservableObject {
         case .power(let p):
             NotchPresenter.shared.primary?.close()
             PaletteCommands.run(p)
+            return nil
+        case .aiCommand(let id):
+            if let command = AICommandStore.shared.command(id) { AICommandRunner.run(command) }
+            return nil
+        case .menuItem(let ref):
+            MenuSearch.press(ref)
+            return nil
+        case .window(let action):
+            NotchPresenter.shared.primary?.close()
+            // Once the notch is out of the way, so the window in front is the one that moves.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { WindowManager.apply(action) }
             return nil
         case .addTasks, .completeTask, .appendNote, .template, .createEvent, .moveEvent, .deleteEvent, .media: return nil
         }

@@ -218,20 +218,22 @@ struct BatteryGlyph: View {
     /// Height of the body; everything else scales from it.
     var height: CGFloat = 13.5
 
-    /// Body plus nub, and the bolt when plugged in.
-    static func width(height: CGFloat = 13.5, plugged: Bool) -> CGFloat {
-        bodyWidth(height) + 1 + nubWidth(height) + (plugged ? boltWidth(height) + 2 : 0)
+    /// Body plus nub. The bolt sits inside while plugged in, so the width never changes.
+    static func width(height: CGFloat = 13.5, plugged: Bool = false) -> CGFloat {
+        bodyWidth(height) + 1 + nubWidth(height)
     }
     private static func bodyWidth(_ h: CGFloat) -> CGFloat { (h * 1.95).rounded() }
     private static func nubWidth(_ h: CGFloat) -> CGFloat { max(1.5, h * 0.11) }
-    private static func boltWidth(_ h: CGFloat) -> CGFloat { h * 0.62 }
 
-    /// Critically low and not charging: the whole battery tints red, not just the sliver of fill.
-    private var critical: Bool { level <= 10 && !charging && !pluggedIn }
+    /// On power: charging, or plugged in and holding the charge (macOS then says "not charging",
+    /// but iPhone and iPad still show it green with the bolt).
+    private var onPower: Bool { charging || pluggedIn }
+    /// Critically low and not on power: the whole battery tints red, not just the sliver of fill.
+    private var critical: Bool { level <= 10 && !onPower }
 
     private var fillColor: Color {
-        if charging { return Color(red: 0.2, green: 0.84, blue: 0.35) }
         if lowPower { return Color(red: 1, green: 0.84, blue: 0.04) }
+        if onPower { return Color(red: 0.2, green: 0.84, blue: 0.35) }
         if level <= 20 { return Color(red: 1, green: 0.27, blue: 0.23) }
         return .white
     }
@@ -244,20 +246,28 @@ struct BatteryGlyph: View {
         let w = Self.bodyWidth(height)
         let shape = RoundedRectangle(cornerRadius: height * 0.34, style: .continuous)
         let fraction = CGFloat(min(max(level, 0), 100)) / 100
+        // On power the bolt shares the inside with the number, so both get a little smaller.
+        let numberSize = height * (onPower ? (level >= 100 ? 0.58 : 0.7) : (level >= 100 ? 0.68 : 0.82))
         HStack(spacing: 1) {
             ZStack(alignment: .leading) {
                 shape.fill(trackColor)
                 Rectangle()
                     .fill(fillColor)
                     .frame(width: w * fraction)
-                Text("\(level)")
-                    // Heavy and tall, as iOS draws it; "100" a little smaller so it keeps off the ends.
-                    .font(.system(size: height * (level >= 100 ? 0.68 : 0.82), weight: .bold))
-                    .tracking(level >= 100 ? -0.4 : -0.2)
-                    .foregroundStyle(critical ? .white : .black.opacity(0.9))
-                    .lineLimit(1)
-                    .fixedSize()
-                    .frame(width: w)
+                HStack(spacing: 0.5) {
+                    Text("\(level)")
+                        .font(.system(size: numberSize, weight: .bold))
+                        .tracking(level >= 100 ? -0.4 : -0.2)
+                    if onPower {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: height * 0.56, weight: .black))
+                            .transition(.scale(scale: 0.3).combined(with: .opacity))
+                    }
+                }
+                .foregroundStyle(critical ? .white : .black.opacity(0.9))
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: w)
             }
             .frame(width: w, height: height)
             .clipShape(shape)
@@ -265,20 +275,12 @@ struct BatteryGlyph: View {
                                    bottomTrailingRadius: 1.5, topTrailingRadius: 1.5, style: .continuous)
                 .fill(level >= 99 ? fillColor : trackColor)
                 .frame(width: Self.nubWidth(height), height: height * 0.36)
-            if pluggedIn || charging {
-                Image(systemName: "bolt.fill")
-                    .font(.system(size: height * 0.7, weight: .bold))
-                    .foregroundStyle(charging ? fillColor : .white.opacity(0.85))
-                    .frame(width: Self.boltWidth(height))
-                    .padding(.leading, 1)
-                    .transition(.scale(scale: 0.4).combined(with: .opacity))
-            }
         }
         .animation(.easeOut(duration: 0.4), value: level)
         .animation(.easeOut(duration: 0.25), value: fillColor)
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: pluggedIn || charging)
+        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: onPower)
         .accessibilityElement()
-        .accessibilityLabel("Battery \(level)%\(charging ? ", charging" : "")\(lowPower ? ", Low Power Mode" : "")")
+        .accessibilityLabel("Battery \(level)%\(charging ? ", charging" : pluggedIn ? ", plugged in" : "")\(lowPower ? ", Low Power Mode" : "")")
     }
 }
 

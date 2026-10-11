@@ -315,6 +315,8 @@ final class NotchViewModel: ObservableObject {
             FrameProbe.mark("opened")
             self.isSettled = true
             self.prepareNeighbors()
+            // The menus of the app in front, ready before anything is typed.
+            if self.tab == .ask { MenuSearch.shared.prepare() }
         }
         // Take the keyboard as the open begins (before the content is built), so typing — or Esc on
         // a tab without a text field — works straight away; doing it after the animation re-rendered

@@ -11,6 +11,8 @@ struct ScreenContext: @unchecked Sendable {
     enum TextSource { case accessibility, ocr }
 
     let image: CGImage?
+    /// The app it came from, to paste an AI Command's result back into.
+    var pid: pid_t? = nil
     let appName: String?
     let bundleID: String?
     let windowTitle: String?
@@ -76,7 +78,7 @@ extension ScreenContext {
                 source = .ocr
             }
         }
-        return ScreenContext(image: image, appName: app?.localizedName, bundleID: app?.bundleIdentifier,
+        return ScreenContext(image: image, pid: app?.processIdentifier, appName: app?.localizedName, bundleID: app?.bundleIdentifier,
                              windowTitle: ax?.title, location: ax?.location, selection: ax?.selection,
                              text: text, textSource: source)
     }

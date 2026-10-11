@@ -13,7 +13,6 @@ struct NotchRootView: View {
     @ObservedObject private var speed = SpeedTest.shared // …and on a running speed test
     @ObservedObject private var videos = VideoDownloader.shared // …and on a video download
     @EnvironmentObject private var shelf: ShelfStore // collapsed height grows for the stack of quick drops
-    @EnvironmentObject private var battery: BatteryMonitor // the compact battery Glance widens for its bolt when plugged in
 
     var body: some View {
         let vm = viewModel

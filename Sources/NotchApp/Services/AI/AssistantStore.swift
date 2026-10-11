@@ -12,23 +12,32 @@ final class AssistantStore: ObservableObject {
     /// Text work for the model from the command bar.
     enum Writing {
         case translate(String, to: String)
+        /// An AI Command on some text; with a source app, the result replaces the selection there.
+        case command(AICommand, text: String, replaceIn: SelectionText.Source?)
 
         var query: String {
             switch self {
             case let .translate(text, target): "Translate to \(target): \(text.prefix(60))"
+            case let .command(command, text, _): "\(command.name): \(text.prefix(60))"
             }
         }
 
         var system: String {
             switch self {
             case let .translate(_, target):
-                "Translate the user's text into \(target). Reply with only the translation: keep the meaning, tone and formatting; no notes, no quotes."
+                return "Translate the user's text into \(target). Reply with only the translation: keep the meaning, tone and formatting; no notes, no quotes."
+            case let .command(command, _, replace):
+                let only = replace != nil
+                    ? "Reply with only the new text, ready to drop in place of the original: no preamble, no quotes, no notes, no markdown unless the original had it."
+                    : "Reply with only the result: no preamble. Plain text; code in a ``` block."
+                return "You apply an instruction to the user's text.\nInstruction: \(command.prompt)\n\(only)"
             }
         }
 
         var text: String {
             switch self {
             case let .translate(text, _): text
+            case let .command(_, text, _): text
             }
         }
     }
@@ -46,7 +55,7 @@ final class AssistantStore: ObservableObject {
         let id = job.id
         task = Task {
             guard aiAvailable else {
-                update(id) { $0.state = .failed("Translating needs an AI model: start Ollama, or add a cloud model's key, in Settings → Search.") }
+                update(id) { $0.state = .failed("This needs an AI model: start Ollama, or add a cloud model's key, in Settings → Search.") }
                 return
             }
             update(id) { $0.state = .running(stage: "Writing") }
@@ -56,6 +65,13 @@ final class AssistantStore: ObservableObject {
                 }
                 try Task.checkCancellation()
                 update(id) { $0.answer = result; $0.state = .done }
+                // A replace command: put the result where the selection was, and get out of the way.
+                if case let .command(command, _, source?) = writing, !result.isEmpty {
+                    NotchPresenter.shared.primary?.close()
+                    SelectionText.replace(with: result, in: source)
+                    ActivityCenter.shared.show(.notice(title: command.name, detail: "Replaced in \(source.appName ?? "the app") · ⌘Z to undo",
+                                                       icon: command.icon, tone: .success), for: 3)
+                }
             } catch is CancellationError {
             } catch {
                 update(id) { $0.state = .failed(error.localizedDescription) }

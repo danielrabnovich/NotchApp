@@ -67,6 +67,30 @@ final class SearchSuggestions: ObservableObject {
             set(settingRows.map { .command($0) })
             return
         }
+        // AI Commands: "ai …" lists them; a command's name on its own offers it.
+        let (aiCommands, explicitAI) = AICommandStore.shared.matches(q)
+        let aiRows = aiCommands.map { c in
+            Command(action: .aiCommand(c.id), title: c.name,
+                    subtitle: c.output == .replace ? "Replaces the selected text" : "On the selected text",
+                    icon: c.icon, verb: c.output == .replace ? "Replace" : "Run")
+        }
+        if explicitAI {
+            set(aiRows.map { .command($0) })
+            return
+        }
+        // Menus of the app in front: "menu …" searches them all; otherwise a couple of close ones.
+        MenuSearch.shared.prepare()
+        let explicitMenu = q.lowercased().hasPrefix("menu ")
+        let menuQuery = explicitMenu ? String(q.dropFirst(5)) : q
+        let menuRows = (explicitMenu || q.count >= 3) ? MenuSearch.shared.matches(menuQuery, limit: explicitMenu ? 6 : 2).map { ref in
+            Command(action: .menuItem(ref), title: ref.item.title,
+                    subtitle: ([ref.appName] + ref.item.path).joined(separator: " › ") + (ref.item.shortcut.map { "  \($0)" } ?? ""),
+                    icon: "filemenu.and.selection", verb: "Run")
+        } : []
+        if explicitMenu {
+            set(menuRows.map { .command($0) })
+            return
+        }
 
         var head: [Suggestion] = commands.map { .command($0) }
         // With a model, "plan a trip to Lisbon" or "remind me to … and …" can become a set of actions.
@@ -78,7 +102,9 @@ final class SearchSuggestions: ObservableObject {
         let strong = apps.first.map { explicit || ($0.score >= 85 && !q.contains(" ")) } ?? false
         if strong, let top = apps.first { head.append(.app(top.app)) }
         head.append(.search(q))
+        head += aiRows.prefix(2).map { .command($0) }
         head += settingRows.prefix(2).map { .command($0) }
+        head += menuRows.map { .command($0) }
         head += apps.dropFirst(strong ? 1 : 0).filter { explicit || $0.score >= 60 }.map { .app($0.app) }
         set(Array(head.prefix(6)))
 

@@ -856,6 +856,60 @@ private struct CloudProviderSettings: View {
     }
 }
 
+/// Settings → Search → AI Commands: saved prompts for selected text, each replacing the selection
+/// or showing its result. Used from "ai …" in the bar and from Ask About This with a selection.
+private struct AICommandsEditor: View {
+    @ObservedObject private var store = AICommandStore.shared
+    @State private var expanded: UUID?
+
+    var body: some View {
+        Section {
+            ForEach($store.commands) { $command in
+                DisclosureGroup(isExpanded: Binding(get: { expanded == command.id },
+                                                    set: { expanded = $0 ? command.id : nil })) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Name", text: $command.name)
+                        Picker("Result", selection: $command.output) {
+                            Text("Replace the selection").tag(AICommand.Output.replace)
+                            Text("Show in the notch").tag(AICommand.Output.show)
+                        }
+                        TextField("What to do with the text", text: $command.prompt, axis: .vertical)
+                            .lineLimit(2...5)
+                        HStack {
+                            Spacer()
+                            Button("Delete", role: .destructive) { store.remove(command.id) }
+                        }
+                    }
+                    .padding(.top, 4)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: command.icon).frame(width: 18).foregroundStyle(.secondary)
+                        Text(command.name)
+                        Spacer()
+                        Text(command.output == .replace ? "Replaces" : "Shows")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .onMove { store.commands.move(fromOffsets: $0, toOffset: $1) }
+            HStack {
+                Button("Add Command") {
+                    store.add()
+                    expanded = store.commands.last?.id
+                }
+                Spacer()
+                Button("Restore Defaults") { store.resetToDefaults() }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("AI Commands")
+        } footer: {
+            FooterText("Select text anywhere, then type “ai” in the bar or press Ask About This (\(HotKeys.combo(for: .askScreen)?.display ?? "its shortcut")); the first four show as buttons. Replace commands put the result back where the text was (⌘Z undoes it).")
+        }
+    }
+}
+
 private struct AssistantPane: View {
     @EnvironmentObject private var s: AppSettings
     @ObservedObject private var assistant = AssistantStore.shared
@@ -907,6 +961,7 @@ private struct AssistantPane: View {
             } header: {
                 Text("Intelligence")
             }
+            AICommandsEditor()
             Section("Files & folders") {
                 PermissionRow(title: "Desktop, Documents, Downloads & cloud folders",
                               subtitle: folderSubtitle,

@@ -83,12 +83,28 @@ final class HotKeys: ObservableObject {
     static func combo(for action: Action) -> Combo? {
         let s = AppSettings.shared
         if let own = s.hotKeyOverrides[action.rawValue] { return own.isNone ? nil : own }
-        return action.defaultCombo(s.hotKeyModifiers)
+        return action.onByDefault ? action.defaultCombo(s.hotKeyModifiers) : nil
     }
 
     enum Action: String, CaseIterable, Identifiable {
         // New actions go at the end: each one's position is its registered ID.
         case toggle, search, home, shelf, downloads, tasks, notes, timer, mixer, controls, camera, stats, tools, agents, clipboard, copyText, askScreen
+        case windowLeft, windowRight, windowMaximize, windowCenter, windowNextDisplay, windowRestore
+
+        /// Window keys that other window tools often claim start turned off; set them in Settings.
+        var onByDefault: Bool { ![.windowCenter, .windowNextDisplay, .windowRestore].contains(self) }
+
+        var windowAction: WindowManager.Action? {
+            switch self {
+            case .windowLeft: .leftHalf
+            case .windowRight: .rightHalf
+            case .windowMaximize: .maximize
+            case .windowCenter: .center
+            case .windowNextDisplay: .nextDisplay
+            case .windowRestore: .restore
+            default: nil
+            }
+        }
         var id: String { rawValue }
 
         var key: String {
@@ -110,6 +126,12 @@ final class HotKeys: ObservableObject {
             case .clipboard: "B"
             case .copyText: "X"
             case .askScreen: "S"
+            case .windowLeft: "←"
+            case .windowRight: "→"
+            case .windowMaximize: "↩"
+            case .windowCenter: "C"
+            case .windowNextDisplay: "N"
+            case .windowRestore: "⌫"
             }
         }
 
@@ -132,6 +154,12 @@ final class HotKeys: ObservableObject {
             case .clipboard: "Clipboard history"
             case .copyText: "Copy text from the screen"
             case .askScreen: "Ask about what's on screen"
+            case .windowLeft: "Window: left half"
+            case .windowRight: "Window: right half"
+            case .windowMaximize: "Window: maximize"
+            case .windowCenter: "Window: center"
+            case .windowNextDisplay: "Window: next display"
+            case .windowRestore: "Window: restore"
             }
         }
 
@@ -158,6 +186,12 @@ final class HotKeys: ObservableObject {
             case .clipboard: UInt32(kVK_ANSI_B)
             case .copyText: UInt32(kVK_ANSI_X)
             case .askScreen: UInt32(kVK_ANSI_S)
+            case .windowLeft: UInt32(kVK_LeftArrow)
+            case .windowRight: UInt32(kVK_RightArrow)
+            case .windowMaximize: UInt32(kVK_Return)
+            case .windowCenter: UInt32(kVK_ANSI_C)
+            case .windowNextDisplay: UInt32(kVK_ANSI_N)
+            case .windowRestore: UInt32(kVK_Delete)
             }
         }
     }
@@ -284,6 +318,9 @@ final class HotKeys: ObservableObject {
             return
         case .askScreen:
             Self.askAboutScreen(vm, reason: .keyboard)
+            return
+        case .windowLeft, .windowRight, .windowMaximize, .windowCenter, .windowNextDisplay, .windowRestore:
+            if let window = action.windowAction { WindowManager.apply(window) }
             return
         }
         guard let target, vm.tabs.contains(target) else { return }

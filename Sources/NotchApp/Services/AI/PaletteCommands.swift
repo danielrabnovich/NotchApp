@@ -216,6 +216,19 @@ enum PaletteCommands {
         if let error { DebugHooks.log("Power \(code) failed: \(error)") }
     }
 
+    // MARK: - Windows
+
+    /// "left half", "maximize", "window center", "next display"…
+    static func window(_ lower: String) -> Command? {
+        let q = lower.hasPrefix("window ") ? String(lower.dropFirst(7)) : lower
+        guard q.count >= 3 else { return nil }
+        guard let action = WindowManager.Action.allCases.first(where: {
+            $0.title.lowercased() == q || $0.words.contains(q) || (lower.hasPrefix("window ") && $0.title.lowercased().hasPrefix(q))
+        }) else { return nil }
+        return Command(action: .window(action), title: "Window: \(action.title)", subtitle: "The window in front",
+                       icon: action.icon, verb: "Move")
+    }
+
     static let templates: [Command] = [
         Command(action: .template("settings "), title: "settings …", subtitle: "Flip a switch or open a page · “turn off haptics”, “settings glances”",
                 icon: "gearshape.fill", verb: "Use"),
@@ -226,5 +239,10 @@ enum PaletteCommands {
                 icon: "magnifyingglass", verb: "Use"),
         Command(action: .template("sleep"), title: "sleep", subtitle: "Also: sleep displays, restart, shut down, log out",
                 icon: "moon.fill", verb: "Use"),
+        Command(action: .template("ai "), title: "ai …", subtitle: "Your AI Commands on the selected text · fix grammar, summarize…",
+                icon: "sparkles", verb: "Use"),
+        Command(action: .template("menu "), title: "menu …", subtitle: "Run any menu command of the app in front", icon: "filemenu.and.selection", verb: "Use"),
+        Command(action: .template("window "), title: "window …", subtitle: "left half, right half, maximize, center, thirds, next display, restore",
+                icon: "rectangle.split.2x1", verb: "Use"),
     ]
 }

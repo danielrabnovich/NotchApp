@@ -189,6 +189,12 @@ enum DebugHooks {
                       let id = obj["sessionId"] as? String, let cwd = obj["cwd"] as? String else { continue }
                 log("WORDS \((cwd as NSString).lastPathComponent): \(AgentReply.lastWords(sessionID: id, cwd: cwd)?.prefix(140) ?? "nil")")
             }
+        case "suggestrun": // runs the highlighted suggestion if it's a command
+            if case .command(let command)? = SearchSuggestions.shared.current { CommandCenter.shared.run([command]) }
+            log("SUGGESTIONS " + SearchSuggestions.shared.items.map { if case .command(let c) = $0 { c.title } else { $0.id } }.joined(separator: " | "))
+        case "aicmd": // aicmd <index>: runs an AI Command on the selection
+            let commands = AICommandStore.shared.commands
+            if let i = Int(parts[safe: 1] ?? ""), commands.indices.contains(i) { AICommandRunner.run(commands[i]) }
         case "compact": // compact <item> [0]: a pinned Glance's compact form on or off
             if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { LiveActivities.shared.update(item) { $0.compact = parts[safe: 2] != "0" } }
         case "codeshot": // codeshot <path>: sample code in each language, highlighted
