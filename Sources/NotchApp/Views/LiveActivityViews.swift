@@ -381,6 +381,7 @@ struct LiveItemView: View {
                 BatteryIcon(level: battery.level, charging: onPower, lowPower: battery.lowPowerMode)
                 Text("\(battery.level)%")
                     .font(Self.valueFont)
+                    .rollingDigits(battery.level)
                     .fixedSize()
                     .foregroundStyle(battery.level <= 20 && !onPower ? .red : .white.opacity(0.92))
             }
@@ -661,6 +662,7 @@ private struct ExtraReading: View {
                 glyph(at: context.date)
                 Text(value(at: context.date))
                     .font(LiveItemView.valueFont)
+                    .rollingDigits(value(at: context.date))
                     .foregroundStyle(tint(at: context.date))
                     .fixedSize()
             }
@@ -759,6 +761,7 @@ private struct ProgressReading: View {
             if !compact {
                 Text(lead?.fraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "…")
                     .font(LiveItemView.valueFont)
+                    .rollingDigits(lead?.fraction)
                     .foregroundStyle(.white.opacity(0.92))
                     .fixedSize()
                 if progress.items.count > 1 {
@@ -894,6 +897,7 @@ private struct KeepAwakeReading: View {
             if !compact {
                 Text(keepAwake.endsAt == nil ? "On" : keepAwake.remainingText ?? "On")
                     .font(LiveItemView.valueFont)
+                    .rollingDigits(keepAwake.remainingText)
                     .foregroundStyle(.white.opacity(0.92))
                     .fixedSize()
             }
@@ -919,6 +923,7 @@ private struct DiskReading: View {
             }
             Text(free >= 1_000_000_000_000 ? String(format: "%.1fT", Double(free) / 1e12) : "\(free / 1_000_000_000)G")
                 .font(LiveItemView.valueFont)
+                .rollingDigits(free / 1_000_000_000)
                 .foregroundStyle(free < 10_000_000_000 ? Color(red: 1, green: 0.38, blue: 0.35) : .white.opacity(0.92))
                 .fixedSize()
         }
@@ -980,6 +985,7 @@ private struct NextEventReading: View {
                     Text(minutes < 60 ? (compact ? "\(max(minutes, 1))m" : "in \(max(minutes, 1))m")
                          : compact ? "\(minutes / 60)h" : event.startDate.formatted(date: .omitted, time: .shortened))
                         .font(LiveItemView.valueFont)
+                        .rollingDigits(minutes)
                         .foregroundStyle(minutes < 10 ? Color(cgColor: event.calendar.cgColor) : .white.opacity(0.92))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)

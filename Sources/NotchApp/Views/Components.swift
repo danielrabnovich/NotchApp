@@ -489,3 +489,11 @@ struct PixelSnap: ViewModifier {
 extension View {
     func pixelSnapped() -> some View { modifier(PixelSnap()) }
 }
+
+extension View {
+    /// Digits that roll to their new value, as the Dynamic Island's do. For readings that change
+    /// now and then (a percent, a clock); ones that tick every second change in place, to stay calm.
+    func rollingDigits<V: Equatable>(_ value: V) -> some View {
+        contentTransition(.numericText()).animation(.snappy(duration: 0.35), value: value)
+    }
+}
