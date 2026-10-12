@@ -266,6 +266,12 @@ enum DebugHooks {
         case "stackhover": c.viewModel.stackHovered = parts[safe: 1] != "0"
         case "glancepeek": // glancepeek <item> (none: ends it): what resting the pointer on a Glance shows
             if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { c.viewModel.hoverGlance(item, true) } else { c.viewModel.endGlancePeek() }
+        case "focus": // what the Focus Glance sees
+            FocusMonitor.shared.refresh()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                let f = FocusMonitor.shared
+                DebugHooks.log("FOCUS readable=\(f.readable) current=\(f.current.map { "\($0.name) \($0.symbol) since=\(String(describing: $0.since)) until=\(String(describing: $0.until))" } ?? "none") shortcut=\(f.shortcut?.name ?? "-")")
+            }
         case "suggest": SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
         case "suggestlog": // suggestlog <query…>: what the list offers for it
             SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))

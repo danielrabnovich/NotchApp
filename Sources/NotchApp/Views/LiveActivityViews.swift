@@ -139,6 +139,7 @@ enum GlanceActions {
         case .appAction: AppActions.shared.glanceActions.map(\.title).joined(separator: " · ")
         case .shortcuts: ShortcutsApp.shared.glanceShortcuts.map(\.name).joined(separator: " · ").nilIfEmpty ?? "Pick Shortcuts in Settings → Glances"
         case .duo: DuoGlyph.summary
+        case .focus: FocusMonitor.shared.clickHint
         case .meeting: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
         case .worldClock: "\(WorldClock.city.name) · \(WorldClock.offset(TimeZone(identifier: WorldClock.city.zone) ?? .current))"
         case .weather: TodayWeather.shared.report?.summary ?? "Weather"
@@ -204,6 +205,8 @@ enum GlanceActions {
             } else {
                 SettingsWindowController.shared.show(pane: .live)
             }
+        case .focus:
+            FocusMonitor.shared.click()
         case .shortcuts:
             // One glyph: run it. Several: each glyph runs its own (see ShortcutGlyphs). None yet: pick some.
             let picked = ShortcutsApp.shared.glanceShortcuts
@@ -247,6 +250,9 @@ enum GlanceActions {
         case .disk: defaults.set(ToolsPane.cleaner.rawValue, forKey: "tools.pane"); tab = .tools
         case .askScreen, .appAction: tab = .ask
         case .duo: tab = .controls
+        case .focus:
+            FocusMonitor.shared.click()
+            return
         case .shortcuts:
             SettingsWindowController.shared.show(pane: .live)
             return
@@ -330,6 +336,8 @@ struct LiveItemView: View {
         case .tasks, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
              .quickWiFi, .quickNightShift, .appAction, .shortcuts, .duo, .rings:
             regularBody
+        case .focus:
+            FocusReading(compact: true)
         }
     }
 
@@ -420,6 +428,8 @@ struct LiveItemView: View {
             DuoGlyph(diameter: min(22, notchHeight - 10))
         case .rings:
             StatRings(diameter: min(22, notchHeight - 10))
+        case .focus:
+            FocusReading()
         case .tasks:
             Text("\(tasks.openCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
@@ -575,6 +585,44 @@ private struct AppActionGlyphs: View {
                 }
             }
         }
+    }
+}
+
+/// The Focus that's on: its own symbol in its color, and its name. With none on (pinned to show
+/// always), a dim moon; without Full Disk Access, the moon with a lock, to say what it needs.
+private struct FocusReading: View {
+    var compact = false
+    @ObservedObject private var focus = FocusMonitor.shared
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Group {
+                if !focus.readable {
+                    Image(systemName: "moon.fill")
+                        .foregroundStyle(.white.opacity(0.4))
+                        .overlay(alignment: .bottomTrailing) {
+                            Image(systemName: "lock.fill").font(.system(size: 6.5, weight: .bold)).foregroundStyle(.white.opacity(0.8))
+                                .offset(x: 3, y: 2)
+                        }
+                } else if let f = focus.current {
+                    Image(systemName: f.symbol).foregroundStyle(Color(nsColor: f.color))
+                } else {
+                    Image(systemName: "moon").foregroundStyle(.white.opacity(0.4))
+                }
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .contentTransition(.symbolEffect(.replace))
+            if !compact {
+                Text(focus.readable ? focus.current?.shortName ?? "Off" : "Focus")
+                    .font(LiveItemView.valueFont)
+                    .foregroundStyle(.white.opacity(focus.current == nil ? 0.5 : 0.92))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 52, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: focus.current)
     }
 }
 

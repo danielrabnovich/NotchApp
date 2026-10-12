@@ -72,6 +72,21 @@ enum GlancePeek {
             c.detail = [info.ssid.map { "Wi-Fi “\($0)”" } ?? info.interfaceName.nilIfEmpty, info.localIP].compactMap { $0 }.joined(separator: " · ")
         case .worldClock, .goldenHour, .countdown, .progress, .agents, .vpn, .timer, .keepAwake, .disk, .meeting:
             c.detail = GlanceActions.hint(for: item)
+        case .focus:
+            let f = FocusMonitor.shared
+            if !f.readable {
+                c.title = "Focus needs Full Disk Access"
+                c.detail = "macOS keeps which Focus is on where only Full Disk Access can read it"
+            } else if let on = f.current {
+                c.icon = on.symbol
+                c.tint = Color(nsColor: on.color)
+                c.title = on.name == "Do Not Disturb" ? on.name : "\(on.name) Focus"
+                c.detail = on.until.map { "On a schedule until \($0.formatted(date: .omitted, time: .shortened))" }
+                    ?? on.since.map { "On since \($0.formatted(date: .omitted, time: .shortened))" } ?? "On"
+            } else {
+                c.title = "No Focus on"
+                c.detail = f.shortcut.map { "Click to run “\($0.name)”" } ?? "Add a Shortcut with Focus in its name to turn one on from here"
+            }
         case .shortcuts:
             c.detail = ShortcutsApp.shared.glanceShortcuts.map(\.name).joined(separator: " · ").nilIfEmpty ?? "Pick Shortcuts in Settings → Glances"
         case .appAction:
@@ -88,6 +103,7 @@ enum GlancePeek {
         switch item {
         case .worldClock, .goldenHour, .countdown, .weather, .unread, .progress: nil
         case .duo: "Open Controls"
+        case .focus: FocusMonitor.shared.clickHint
         case .shortcuts: ShortcutsApp.shared.glanceShortcuts.count == 1 ? "Run" : nil
         case .appAction: AppActions.shared.glanceActions.count == 1 ? "Run" : nil
         case .cpu, .gpu, .memory, .temperature, .power, .battery, .rings: "Open Stats"

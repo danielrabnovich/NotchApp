@@ -10,7 +10,7 @@ final class Permissions: ObservableObject {
     static let shared = Permissions()
 
     enum Kind: String, CaseIterable, Identifiable {
-        case accessibility, screenRecording, files, calendar, finder, notifications, systemAudio, camera
+        case accessibility, screenRecording, files, calendar, finder, notifications, systemAudio, camera, fullDisk
         var id: String { rawValue }
     }
 
@@ -61,6 +61,10 @@ final class Permissions: ObservableObject {
             Info(title: "Camera", icon: "camera.fill", tint: .systemGreen,
                  unlocks: "The camera mirror, for a look at yourself before a call.",
                  level: .optional)
+        case .fullDisk:
+            Info(title: "Full Disk Access", icon: "internaldrive.fill", tint: .systemGray,
+                 unlocks: "The Focus Glance (which Focus is on), and the Trash's size in the Cleaner.",
+                 level: .optional)
         }
     }
 
@@ -97,6 +101,8 @@ final class Permissions: ObservableObject {
         case .denied, .restricted: s[.camera] = .denied
         default: s[.camera] = .notAsked
         }
+        // macOS never asks for this one, so it's on or not yet turned on.
+        s[.fullDisk] = FocusMonitor.canRead ? .granted : .notAsked
         s[.notifications] = status[.notifications] ?? .notAsked
         if s != status { status = s }
         UNUserNotificationCenter.current().getNotificationSettings { settings in
@@ -155,6 +161,8 @@ final class Permissions: ObservableObject {
             AudioCapturePermission.request { _ in Task { @MainActor in Permissions.shared.refresh() } }
         case .camera:
             AVCaptureDevice.requestAccess(for: .video) { _ in Task { @MainActor in Permissions.shared.refresh() } }
+        case .fullDisk:
+            openSettings(kind)
         }
     }
 
@@ -168,6 +176,7 @@ final class Permissions: ObservableObject {
         case .finder: anchor = "Privacy_Automation"
         case .systemAudio: anchor = "Privacy_AudioCapture"
         case .camera: anchor = "Privacy_Camera"
+        case .fullDisk: anchor = "Privacy_AllFiles"
         case .notifications:
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!)
             return
