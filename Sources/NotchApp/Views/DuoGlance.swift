@@ -18,8 +18,12 @@ struct DuoGlyph: View {
     @ObservedObject private var network = NetworkMonitor.shared
     @ObservedObject private var audio = AudioOutputManager.shared
     @ObservedObject private var stats = SystemMonitor.shared
+    /// Scroll on it to change the volume (off for the copy in a peek).
+    var scrollable = true
     /// Headphones that just took over the sound, shown in the middle for a moment.
     @State private var arrived: String?
+    /// Plugging in: the ring sweeps up from empty to the charge, once.
+    @State private var sweep: Double?
     @State private var arrivedTask: Task<Void, Never>?
 
     private static let gap = 120.0
@@ -31,7 +35,7 @@ struct DuoGlyph: View {
         ZStack {
             // The track, faint, so a low battery still reads as part of a ring.
             ring(to: 1).stroke(ringColor.opacity(onPower ? 0.28 : 0.16), style: StrokeStyle(lineWidth: stroke, lineCap: .round))
-            ring(to: progress).stroke(ringColor, style: StrokeStyle(lineWidth: stroke, lineCap: .round))
+            ring(to: sweep ?? progress).stroke(ringColor, style: StrokeStyle(lineWidth: stroke, lineCap: .round))
                 .animation(.easeInOut(duration: 0.5), value: progress)
             if battery.hasBattery, onPower {
                 // A bolt over the top of the ring, cut out of it with a black edge.
@@ -49,6 +53,13 @@ struct DuoGlyph: View {
         }
         .frame(width: d, height: d)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: onPower)
+        .overlay { if scrollable { ScrollCatcher(onScroll: Self.scrollVolume) } }
+        .onChange(of: onPower) { _, plugged in
+            guard plugged, battery.hasBattery else { return }
+            sweep = 0
+            withAnimation(.easeOut(duration: 1.1).delay(0.1)) { sweep = progress }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { sweep = nil }
+        }
         .onChange(of: audio.currentID) { _, _ in headphonesArrived() }
         .onDisappear { arrivedTask?.cancel() }
     }
@@ -146,6 +157,17 @@ struct DuoGlyph: View {
 
     // MARK: - Volume
 
+    /// A trackpad's fine deltas or a wheel's notches, up to raise the volume.
+    private static func scrollVolume(_ delta: CGFloat, precise: Bool) {
+        guard AudioOutputManager.canSetVolume else { return }
+        HUDController.quietUntil = Date().addingTimeInterval(0.8)
+        let step = Float(delta) * (precise ? 0.004 : 0.04)
+        let v = min(1, max(0, AudioOutputManager.volume + step))
+        AudioOutputManager.volume = v
+        AudioOutputManager.isMuted = v <= 0.001
+        if Int(v * 16) != Int((v - step) * 16) { Haptics.level() }
+    }
+
     /// Four dots on a shallow curve under the middle, as on DuoBar (its offsets, per 230 of ring).
     private func dots(_ d: CGFloat) -> some View {
         let xs: [CGFloat] = [-55.25, -19.5, 19.5, 55.25]
@@ -183,5 +205,35 @@ extension DuoGlyph {
                                       : "CPU \(Int((SystemMonitor.shared.snapshot.cpuTotal * 100).rounded()))%"
         let volume = audio.muted ? "Muted" : "Volume \(Int((audio.level * 100).rounded()))%"
         return [net, ring, volume + (audio.current.map { " on \($0.name)" } ?? "")].joined(separator: " · ")
+    }
+}
+
+/// Catches scrolling over a view and nothing else: clicks and hovers fall through to SwiftUI.
+private struct ScrollCatcher: NSViewRepresentable {
+    let onScroll: (CGFloat, Bool) -> Void
+
+    func makeNSView(context: Context) -> CatcherView { CatcherView(onScroll: onScroll) }
+    func updateNSView(_ view: CatcherView, context: Context) { view.onScroll = onScroll }
+
+    final class CatcherView: NSView {
+        var onScroll: (CGFloat, Bool) -> Void
+        init(onScroll: @escaping (CGFloat, Bool) -> Void) {
+            self.onScroll = onScroll
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { fatalError() }
+
+        // Only a scroll lands here; anything else goes to what's underneath.
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            NSApp.currentEvent?.type == .scrollWheel ? super.hitTest(point) : nil
+        }
+
+        override func scrollWheel(with event: NSEvent) {
+            // Natural scrolling flips the deltas; fingers up on the trackpad, or the wheel turned up,
+            // still means louder.
+            let dy = event.isDirectionInvertedFromDevice ? -event.scrollingDeltaY : event.scrollingDeltaY
+            guard dy != 0 else { return }
+            onScroll(dy, event.hasPreciseScrollingDeltas)
+        }
     }
 }

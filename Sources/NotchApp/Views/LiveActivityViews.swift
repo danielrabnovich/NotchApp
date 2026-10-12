@@ -83,6 +83,16 @@ struct GlanceButton<Label: View>: View {
                 if GlanceActions.hasDetail(item) {
                     Button("Open in Notch") { GlanceActions.openDetail(item, in: viewModel) }
                 }
+                if item == .duo {
+                    // Where the sound goes, as on DuoBar's popover.
+                    let audio = AudioOutputManager.shared
+                    Menu("Sound Output") {
+                        ForEach(audio.devices) { device in
+                            Toggle(device.name, isOn: Binding(get: { audio.currentID == device.id }, set: { _ in audio.select(device) }))
+                        }
+                    }
+                    Toggle("Mute", isOn: Binding(get: { AudioOutputManager.isMuted }, set: { AudioOutputManager.isMuted = $0 }))
+                }
                 Divider()
                 if let slot = live.slot(for: item) {
                     Toggle("Compact", isOn: Binding(get: { slot.compact }, set: { on in live.update(item) { $0.compact = on } }))

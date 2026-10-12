@@ -59,8 +59,7 @@ struct CollapsedNotchView: View {
             } else if viewModel.showsGlancePeek, let item = viewModel.peekedGlance {
                 // As wide as the notch is (the Glances may have made it wide), so the details fit.
                 GlancePeekCard(item: item)
-                    .frame(maxWidth: max(ActivityCenter.bannerWidth(notchWidth: viewModel.notchSize.width),
-                                         viewModel.notchSize.width + 2 * viewModel.sideWidth - 40))
+                    .frame(maxWidth: cardWidth)
                     .frame(maxWidth: .infinity)
                     .frame(height: ActivityCenter.bannerHeight)
                     .id(item)
@@ -306,8 +305,8 @@ struct CollapsedNotchView: View {
         .padding(.leading, 14)
         .padding(.trailing, 16)
         .padding(.bottom, 6)
-        // Card-sized and centred under the notch, however wide the Glances make the notch.
-        .frame(maxWidth: ActivityCenter.bannerWidth(notchWidth: viewModel.notchSize.width))
+        // Centred under the notch and as wide as the Glances make it, so the text has the room.
+        .frame(maxWidth: cardWidth)
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -348,6 +347,11 @@ struct CollapsedNotchView: View {
                 .contentTransition(.numericText())
                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: count)
         }
+    }
+
+    /// The width a Banner or peek gets under the notch: the notch's own, less its rounded corners.
+    private var cardWidth: CGFloat {
+        max(ActivityCenter.bannerWidth(notchWidth: viewModel.notchSize.width), viewModel.notchSize.width + 2 * viewModel.sideWidth - 40)
     }
 
     private var flashColor: Color { settings.accentMode == .custom ? settings.customAccent : .white }

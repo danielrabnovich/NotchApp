@@ -138,7 +138,12 @@ final class HUDController {
         }
     }
 
+    /// Set while the volume is being scrolled on the Duo Glance: its dots show the level, and a
+    /// Flash would cover the very Glance being scrolled.
+    static var quietUntil = Date.distantPast
+
     private func showVolume() {
+        guard Date() > Self.quietUntil else { return }
         let muted = AudioOutputManager.isMuted
         ActivityCenter.shared.show(.volume(level: muted ? 0 : AudioOutputManager.volume, muted: muted), for: 1.6)
     }
