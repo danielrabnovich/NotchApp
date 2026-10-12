@@ -303,7 +303,7 @@ extension SettingsPane {
         case .general: ["open", "hover", "click", "display", "monitor", "menu bar", "fake notch", "login", "startup"]
         case .addOns: ["features", "tabs", "enable", "disable", "music", "calendar", "timer", "mixer", "stats", "tools", "agents", "clipboard"]
         case .appearance: ["accent", "color", "colour", "animation", "bouncy", "shadow", "theme", "haptic", "haptics", "alerts", "notifications", "banners"]
-        case .live: ["glances", "live activities", "compact", "density", "spacing", "pin", "beside the notch", "menu bar", "cpu", "battery", "vpn", "network", "agents", "disk", "keep awake", "layout"]
+        case .live: ["glances", "live activities", "compact", "density", "spacing", "pin", "beside the notch", "menu bar", "cpu", "battery", "vpn", "network", "agents", "disk", "keep awake", "layout", "apple shortcuts", "shortcuts app", "duo", "duobar"]
         case .assistant: ["search", "ollama", "ai", "model", "web", "weather", "files", "pictures", "screenshots", "ocr", "notifications"]
         case .media: ["music", "spotify", "now playing", "visualizer", "volume", "mixer", "sound", "per-app"]
         case .hud: ["volume", "brightness", "overlay", "osd", "hud"]

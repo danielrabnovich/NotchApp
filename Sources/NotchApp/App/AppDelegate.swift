@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentMonitor.shared.start()
         FrontmostTracker.shared.start()
         AppActions.shared.start()
+        ShortcutsApp.shared.refreshIfStale()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Onboarding.showIfNeeded() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { CrashReports.checkAtLaunch() }
         AppUpdater.shared.start()

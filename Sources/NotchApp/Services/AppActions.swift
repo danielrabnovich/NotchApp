@@ -233,6 +233,7 @@ final class AppActions: ObservableObject {
             return
         }
         MenuSearch.shared.prepare()
+        ShortcutsApp.shared.refreshIfStale()
         prepare()
         watch = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
             MainActor.assumeIsolated {
@@ -275,6 +276,7 @@ final class AppActions: ObservableObject {
     /// Reads the app in front (in the background) and rebuilds the actions.
     func prepare() {
         guard let app = Self.frontmostOtherApp() else { return reset() }
+        ShortcutsApp.shared.refreshIfStale()
         let pid = app.processIdentifier
         if let lastRead, lastRead.pid == pid, Date().timeIntervalSince(lastRead.at) < 0.5 { return }
         // Another app: its actions only. The same app keeps the last ones up (they're usually still
@@ -315,6 +317,8 @@ final class AppActions: ObservableObject {
         let words = query.lowercased().split(separator: " ").map(String.init)
         guard query.count >= 3, !words.isEmpty else { return [] }
         return items.filter { command in
+            // Shortcuts are found by the list itself, for any app.
+            if command.key?.hasPrefix("shortcut:") == true { return false }
             switch command.action {
             case .aiCommand, .menuItem, .template: return false
             default: return words.allSatisfy(command.title.lowercased().contains)
@@ -339,7 +343,8 @@ final class AppActions: ObservableObject {
     static func actions(for c: AppContext) -> [Command] {
         let ai = AssistantStore.shared.aiAvailable
         let screen = ai && AppSettings.shared.screenQuestions
-        var out: [Command] = []
+        // The user's own first: Shortcuts in a folder named after this app.
+        var out: [Command] = ShortcutsApp.shared.forApp(named: c.appName).prefix(3).map { ShortcutsApp.shared.command($0, context: c) }
         if let selection = c.selection?.trimmingCharacters(in: .whitespacesAndNewlines), !selection.isEmpty {
             out += selectionActions(selection, editable: c.selectionEditable, in: c, ai: ai)
             // One for the app too, in case the selection was left over.

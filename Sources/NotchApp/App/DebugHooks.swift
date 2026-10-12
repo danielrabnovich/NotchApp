@@ -265,6 +265,18 @@ enum DebugHooks {
         case "shelfclearquick": ShelfStore.shared.remove(ShelfStore.shared.stack)
         case "stackhover": c.viewModel.stackHovered = parts[safe: 1] != "0"
         case "suggest": SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
+        case "suggestlog": // suggestlog <query…>: what the list offers for it
+            SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
+            log("SUGGEST " + SearchSuggestions.shared.items.map { item in
+                if case .command(let c) = item { return "[\(c.title) | \(c.subtitle ?? "")]" }
+                return "\(item)".prefix(40).description
+            }.joined(separator: " "))
+        case "shortcuts": // shortcuts [glance <name…>]: the Shortcuts app's list, or one added to/removed from the Glance
+            let sc = ShortcutsApp.shared
+            if parts[safe: 1] == "glance", let s = sc.all.first(where: { $0.name.lowercased() == parts.dropFirst(2).joined(separator: " ").lowercased() }) {
+                sc.toggleGlance(s)
+            }
+            log("SHORTCUTS \(sc.all.count): \(sc.all.prefix(8).map { "\($0.name)\($0.folder.map { " [\($0)]" } ?? "")" }) glance=\(sc.glanceShortcuts.map(\.name))")
         case "spectrum":
             let sp = AudioSpectrum.shared
             log("spectrum live=\(sp.isLive) permitted=\(AudioSpectrum.permitted) playing=\(MediaController.shared.isPlaying) app=\(MediaController.shared.bundleID ?? "-") levels=\(sp.levels.map { String(format: "%.2f", $0) })")

@@ -186,7 +186,7 @@ struct BatteryIcon: View {
                     .stroke(.white.opacity(0.45), lineWidth: 1)
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
                     .fill(color)
-                    .frame(width: max(2, 18 * fill))
+                    .frame(width: max(2, 19 * fill)) // the whole inside of the outline at 100%
                     .padding(1.5)
             }
             .frame(width: 22, height: 11)

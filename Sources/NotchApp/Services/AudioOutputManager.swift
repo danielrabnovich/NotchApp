@@ -36,12 +36,19 @@ final class AudioOutputManager: ObservableObject {
     @Published private(set) var devices: [AudioOutputDevice] = []
     @Published private(set) var currentID: AudioDeviceID = 0
 
+    /// The default output's volume and mute, kept current for what draws them (the Duo Glance).
+    @Published private(set) var level: Float = 0
+    @Published private(set) var muted = false
+
     /// Called when the default device's volume changes (from anywhere).
     var onVolumeChange: (() -> Void)?
 
     private var volumeListenerDevice: AudioDeviceID = 0
     private lazy var volumeListener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-        DispatchQueue.main.async { self?.onVolumeChange?() }
+        DispatchQueue.main.async {
+            self?.readVolume()
+            self?.onVolumeChange?()
+        }
     }
 
     var current: AudioOutputDevice? { devices.first { $0.id == currentID } }
@@ -73,6 +80,13 @@ final class AudioOutputManager: ObservableObject {
         }
         currentID = Self.defaultOutput
         attachVolumeListener()
+        readVolume()
+    }
+
+    private func readVolume() {
+        let (v, m) = (Self.volume, Self.isMuted)
+        if v != level { level = v }
+        if m != muted { muted = m }
     }
 
     func select(_ device: AudioOutputDevice) {

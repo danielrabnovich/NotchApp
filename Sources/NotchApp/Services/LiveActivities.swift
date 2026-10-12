@@ -10,14 +10,18 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
     /// Anything downloading, copying, converting or exporting: a ring and percent.
     case progress
     case worldClock, weather, goldenHour, unread, countdown
+    /// Battery, network and volume in one ring (after DuoBar).
+    case duo
     /// Actions: a button beside the notch rather than a reading.
     case askScreen, quickScreenshot, quickCopyText, quickColorPicker, quickLock, quickDarkMode, quickMic, quickWiFi, quickNightShift
     /// The actions starred for the app in front (right-click one under the search bar).
     case appAction
+    /// Shortcuts from the Shortcuts app, picked in Settings, one glyph each.
+    case shortcuts
 
     var id: String { rawValue }
 
-    static let actions: [LiveItem] = [.appAction, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock,
+    static let actions: [LiveItem] = [.appAction, .shortcuts, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock,
                                       .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift]
     static let readings: [LiveItem] = allCases.filter { !actions.contains($0) }
     var isAction: Bool { Self.actions.contains(self) }
@@ -63,6 +67,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .goldenHour: "Golden Hour"
         case .unread: "Unread"
         case .countdown: "Countdown"
+        case .duo: "Duo"
+        case .shortcuts: "Shortcuts"
         case .askScreen: "Ask About This"
         case .appAction: "App Actions"
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.title
@@ -95,6 +101,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .goldenHour: "Time until golden hour before sunset, for the best light."
         case .unread: "Unread counts from Slack, Discord, Mail and the rest of your Dock, in one place."
         case .countdown: "Days until a date you set: a launch, a trip, a deadline."
+        case .duo: "Battery, network and volume in one small ring, after DuoBar."
+        case .shortcuts: "Up to three of your Shortcuts, one click each (pick them under Glance options)."
         case .askScreen: "Ask the AI about the window in front."
         case .appAction: "Actions you star for an app (right-click one under the search bar), while that app is in front."
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.detail
@@ -127,6 +135,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .goldenHour: "sun.horizon.fill"
         case .unread: "bubble.left.and.bubble.right.fill"
         case .countdown: "flag.checkered"
+        case .duo: "circle.circle"
+        case .shortcuts: "square.2.layers.3d.fill"
         case .askScreen: "sparkle.magnifyingglass"
         case .appAction: "star.square.on.square"
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.icon
@@ -159,6 +169,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .goldenHour: .orange
         case .unread: .red
         case .countdown: .purple
+        case .duo: .mint
+        case .shortcuts: .pink
         case .askScreen: .indigo
         case .appAction: .orange
         case .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: controlAction!.tint
@@ -212,6 +224,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .goldenHour: 66
         case .unread: 52
         case .countdown: 56
+        case .duo: 30
+        case .shortcuts: CGFloat(max(1, ShortcutsApp.glanceCount)) * 24
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
         }
@@ -238,6 +252,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .goldenHour: 40
         case .unread: 26
         case .countdown: 30
+        case .duo: 30
+        case .shortcuts: CGFloat(max(1, ShortcutsApp.glanceCount)) * 24
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
         }
@@ -346,6 +362,7 @@ final class LiveActivities: ObservableObject {
         UnreadBadges.shared.$badges.sink { _ in refresh() }.store(in: &cancellables)
         TodayWeather.shared.$report.sink { _ in refresh() }.store(in: &cancellables)
         Cleaner.shared.$disk.sink { _ in refresh() }.store(in: &cancellables)
+        ShortcutsApp.shared.objectWillChange.sink { _ in refresh() }.store(in: &cancellables)
         // Network "only while busy" follows the rate, which changes every second.
         NetworkMonitor.shared.$downRate.sink { _ in
             if LiveActivities.shared.slot(for: .network)?.whileActive == true { refresh() }
@@ -490,7 +507,10 @@ final class LiveActivities: ObservableObject {
     static let innerPadding: CGFloat = 8
 
     /// Whether the stats sampler should keep values fresh for the notch.
-    var wantsStats: Bool { slots.contains { $0.item.usesStats } }
+    var wantsStats: Bool {
+        // Duo's ring shows the processor's load on a Mac without a battery.
+        slots.contains { $0.item.usesStats } || (slot(for: .duo) != nil && !BatteryMonitor.shared.hasBattery)
+    }
     var wantsPrivacy: Bool { slot(for: .privacy) != nil }
 
     private func recompute() {
@@ -523,7 +543,7 @@ final class LiveActivities: ObservableObject {
             }
         }
         SystemMonitor.shared.setLiveDemand(wantsStats || previewing)
-        NetworkMonitor.shared.setLiveDemand(slot(for: .network) != nil || previewing)
+        NetworkMonitor.shared.setLiveDemand(slot(for: .network) != nil || slot(for: .duo) != nil || previewing)
         PrivacyMonitor.shared.setLiveDemand(wantsPrivacy || previewing)
         AgentMonitor.shared.setLiveDemand(slot(for: .agents) != nil || previewing)
         UnreadBadges.shared.setDemand(slot(for: .unread) != nil || previewing)
@@ -580,8 +600,10 @@ final class LiveActivities: ObservableObject {
             return MeetingMonitor.shared.call != nil
         case .progress:
             return !ProgressCenter.shared.items.isEmpty
-        case .worldClock, .countdown:
+        case .worldClock, .countdown, .duo:
             return true
+        case .shortcuts:
+            return ShortcutsApp.isAvailable
         case .weather:
             return TodayWeather.shared.report != nil
         case .goldenHour:

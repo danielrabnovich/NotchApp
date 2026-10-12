@@ -122,6 +122,8 @@ enum GlanceActions {
         case .disk: "Show Cleaner"
         case .askScreen: "Ask About This Window"
         case .appAction: AppActions.shared.glanceActions.map(\.title).joined(separator: " · ")
+        case .shortcuts: ShortcutsApp.shared.glanceShortcuts.map(\.name).joined(separator: " · ").nilIfEmpty ?? "Pick Shortcuts in Settings → Glances"
+        case .duo: DuoGlyph.summary
         case .meeting: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
         case .worldClock: "\(WorldClock.city.name) · \(WorldClock.offset(TimeZone(identifier: WorldClock.city.zone) ?? .current))"
         case .weather: TodayWeather.shared.report?.summary ?? "Weather"
@@ -187,6 +189,14 @@ enum GlanceActions {
             } else {
                 SettingsWindowController.shared.show(pane: .live)
             }
+        case .shortcuts:
+            // One glyph: run it. Several: each glyph runs its own (see ShortcutGlyphs). None yet: pick some.
+            let picked = ShortcutsApp.shared.glanceShortcuts
+            if picked.isEmpty {
+                SettingsWindowController.shared.show(pane: .live)
+            } else if picked.count == 1 {
+                ShortcutsApp.shared.run(picked[0])
+            }
         case .appAction:
             // One glyph: run it. Several: each glyph runs its own (see AppActionGlyphs).
             if let only = AppActions.shared.glanceActions.first, AppActions.shared.glanceActions.count == 1 {
@@ -221,6 +231,10 @@ enum GlanceActions {
         case .devices, .privacy: defaults.set(ToolsPane.devices.rawValue, forKey: "tools.pane"); tab = .tools
         case .disk: defaults.set(ToolsPane.cleaner.rawValue, forKey: "tools.pane"); tab = .tools
         case .askScreen, .appAction: tab = .ask
+        case .duo: tab = .controls
+        case .shortcuts:
+            SettingsWindowController.shared.show(pane: .live)
+            return
         case .meeting: tab = .home
         case .progress: tab = .shelf
         case .weather: tab = .home
@@ -299,7 +313,7 @@ struct LiveItemView: View {
         case .worldClock, .weather, .goldenHour, .unread, .countdown:
             ExtraReading(item: item, compact: true)
         case .tasks, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
-             .quickWiFi, .quickNightShift, .appAction:
+             .quickWiFi, .quickNightShift, .appAction, .shortcuts, .duo:
             regularBody
         }
     }
@@ -384,6 +398,10 @@ struct LiveItemView: View {
             ActionGlyph(item: item)
         case .appAction:
             AppActionGlyphs()
+        case .shortcuts:
+            ShortcutGlyphs()
+        case .duo:
+            DuoGlyph(diameter: min(22, notchHeight - 10))
         case .tasks:
             Text("\(tasks.openCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
@@ -539,6 +557,53 @@ private struct AppActionGlyphs: View {
                 }
             }
         }
+    }
+}
+
+/// The Shortcuts kept beside the notch: each its initial on a colored tile, pulsing while it runs.
+/// With several, each runs its own; with one, the Glance's click does.
+private struct ShortcutGlyphs: View {
+    @ObservedObject private var shortcuts = ShortcutsApp.shared
+
+    var body: some View {
+        let picked = shortcuts.glanceShortcuts
+        HStack(spacing: 0) {
+            if picked.isEmpty {
+                Image(systemName: "square.2.layers.3d.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .frame(width: 24)
+            }
+            ForEach(picked) { s in
+                let tile = ShortcutTile(shortcut: s, running: shortcuts.running.contains(s.id))
+                    .frame(width: 24, height: 22)
+                if picked.count > 1 {
+                    tile.contentShape(Rectangle())
+                        .onTapGesture { Haptics.tap(); shortcuts.run(s) }
+                        .help(s.name)
+                } else {
+                    tile
+                }
+            }
+        }
+        .onAppear { shortcuts.refreshIfStale() }
+    }
+}
+
+/// A Shortcut's glyph: its initial on a rounded tile in its color.
+struct ShortcutTile: View {
+    let shortcut: ShortcutsApp.Shortcut
+    var running = false
+    var size: CGFloat = 15
+
+    var body: some View {
+        Text(shortcut.initial)
+            .font(.system(size: size * 0.62, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(shortcut.color.gradient))
+            .opacity(running ? 0.55 : 1)
+            .animation(running ? .easeInOut(duration: 0.6).repeatForever() : .default, value: running)
     }
 }
 
@@ -947,6 +1012,7 @@ struct LiveActivitiesPane: View {
                 } label: {
                     RowLabel(title: "Countdown", subtitle: Countdown.target == nil ? "Pick a date to count down to." : "\(Countdown.text()) to go.")
                 }
+                ShortcutGlancePicker()
             } header: {
                 Text("Glance options")
             }
@@ -1573,5 +1639,33 @@ private struct ItemTile: View {
                 RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
                     .fill(LinearGradient(colors: [item.tint.opacity(0.95), item.tint.opacity(0.75)], startPoint: .top, endPoint: .bottom))
             )
+    }
+}
+
+/// Glance options › Shortcuts: which of the Shortcuts app's shortcuts sit beside the notch.
+private struct ShortcutGlancePicker: View {
+    @ObservedObject private var shortcuts = ShortcutsApp.shared
+
+    var body: some View {
+        LabeledContent {
+            Menu {
+                if shortcuts.all.isEmpty {
+                    Text("No Shortcuts yet")
+                }
+                ForEach(shortcuts.all) { s in
+                    Toggle(s.name, isOn: Binding(get: { shortcuts.isInGlance(s) }, set: { _ in shortcuts.toggleGlance(s) }))
+                        .disabled(!shortcuts.isInGlance(s) && shortcuts.glance.count >= ShortcutsApp.glanceLimit)
+                }
+                Divider()
+                Button("Open Shortcuts…") { NSWorkspace.shared.open(URL(string: "shortcuts://")!) }
+            } label: {
+                Text(shortcuts.glanceShortcuts.isEmpty ? "Choose…" : shortcuts.glanceShortcuts.map(\.name).joined(separator: ", "))
+            }
+            .fixedSize()
+        } label: {
+            RowLabel(title: "Shortcuts",
+                     subtitle: "Up to \(ShortcutsApp.glanceLimit) beside the notch. Shortcuts in a folder named after an app also show under the search bar while it's in front.")
+        }
+        .onAppear { shortcuts.refreshIfStale() }
     }
 }

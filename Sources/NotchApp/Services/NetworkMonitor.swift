@@ -202,6 +202,11 @@ final class NetworkMonitor: ObservableObject {
             } else if primary.hasPrefix("utun") || primary.hasPrefix("ipsec") || primary.hasPrefix("ppp") {
                 new.kind = .vpn
                 new.interfaceName = "VPN"
+                // The tunnel rides on Wi-Fi more often than not: keep its name and signal.
+                if let wifi, wifi.powerOn(), wifi.rssiValue() != 0 {
+                    new.ssid = wifi.ssid()
+                    new.rssi = wifi.rssiValue()
+                }
             } else if primary.hasPrefix("pdp_ip") {
                 new.kind = .cellular
                 new.interfaceName = "Cellular"

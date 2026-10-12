@@ -94,6 +94,17 @@ final class SearchSuggestions: ObservableObject {
             set(menuRows.map { .command($0) })
             return
         }
+        // Shortcuts from the Shortcuts app: "shortcut …" lists them; a name (or "run …") offers it.
+        let shortcuts = ShortcutsApp.shared
+        shortcuts.refreshIfStale()
+        let lowerQ = q.lowercased()
+        if let prefix = ["shortcuts", "shortcut"].first(where: { lowerQ == $0 || lowerQ.hasPrefix($0 + " ") }) {
+            let rows = shortcuts.matches(String(q.dropFirst(prefix.count)), limit: 6).map { shortcuts.command($0, context: AppActions.shared.context) }
+            set(rows.isEmpty ? [.command(Command(action: .openURL(URL(string: "shortcuts://")!), title: "No Shortcut matches",
+                                                 subtitle: "Open the Shortcuts app", icon: "square.2.layers.3d", verb: "Open"))]
+                             : rows.map { .command($0) })
+            return
+        }
 
         var head: [Suggestion] = commands.map { .command($0) }
         // "export this as pdf" with an app in front: do it there.
@@ -107,10 +118,15 @@ final class SearchSuggestions: ObservableObject {
         if let answer = QuickAnswers.answer(q) { head.append(.answer(answer)) }
         let (appQuery, explicit) = AppIndex.stripLaunchPrefix(q)
         let apps = AppIndex.shared.search(appQuery, limit: explicit ? 3 : 2)
+        // A Shortcut whose name starts with what's typed leads, like a strong app match.
+        let shortcutHits = appQuery.count >= 3 ? shortcuts.matches(appQuery, limit: 2) : []
+        let leading = shortcutHits.filter { $0.name.lowercased().hasPrefix(appQuery.lowercased()) }
+        head += leading.map { .command(shortcuts.command($0, context: AppActions.shared.context)) }
         // A strong app match goes first; otherwise the full search does.
         let strong = apps.first.map { explicit || ($0.score >= 85 && !q.contains(" ")) } ?? false
         if strong, let top = apps.first { head.append(.app(top.app)) }
         head.append(.search(q))
+        head += shortcutHits.filter { !leading.contains($0) }.prefix(1).map { .command(shortcuts.command($0, context: AppActions.shared.context)) }
         head += aiRows.prefix(2).map { .command($0) }
         head += settingRows.prefix(2).map { .command($0) }
         head += menuRows.map { .command($0) }
