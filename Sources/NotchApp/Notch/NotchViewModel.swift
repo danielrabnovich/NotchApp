@@ -59,7 +59,10 @@ final class NotchViewModel: ObservableObject {
     @Published var isSettled = false
     @Published var isHovering = false {
         // The pointer on its way in: read the app in front now, so its actions are up as search opens.
-        didSet { if isHovering, !oldValue, !isOpen { AppActions.shared.prepare() } }
+        didSet {
+            if isHovering, !oldValue, !isOpen { AppActions.shared.prepare() }
+            if !isHovering { endGlancePeek() }
+        }
     }
     @Published var tab: NotchTab = AppSettings.shared.assistantEnabled ? .ask : .home
 
@@ -255,12 +258,47 @@ final class NotchViewModel: ObservableObject {
     /// The pointer is on the stack: it fans out into its files (set by the window controller).
     @Published var stackHovered = false
 
+    /// The Glance the pointer is resting on, whose details hang under the notch (instead of a tooltip).
+    @Published private(set) var peekedGlance: LiveItem?
+    private var peekWork: DispatchWorkItem?
+
+    /// The pointer came onto or left a Glance. A peek waits for it to rest a moment; once one is
+    /// up, moving along to the next Glance swaps it straight away.
+    func hoverGlance(_ item: LiveItem, _ inside: Bool) {
+        peekWork?.cancel()
+        let work: DispatchWorkItem
+        if inside {
+            work = DispatchWorkItem { [weak self] in
+                guard let self, !self.isOpen, ActivityCenter.shared.banner == nil, ActivityCenter.shared.peek == nil else { return }
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) { self.peekedGlance = item }
+            }
+            if peekedGlance != nil { return work.perform() }
+        } else {
+            // A moment's grace, so crossing the gap to the next Glance doesn't flicker.
+            work = DispatchWorkItem { [weak self] in self?.endGlancePeek() }
+        }
+        peekWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + (inside ? 0.45 : 0.12), execute: work)
+    }
+
+    func endGlancePeek() {
+        peekWork?.cancel()
+        guard peekedGlance != nil else { return }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { peekedGlance = nil }
+    }
+
+    /// A peek shows only on the closed notch, and gives way to a Banner.
+    var showsGlancePeek: Bool { peekedGlance != nil && !isOpen && ActivityCenter.shared.banner == nil && ActivityCenter.shared.reminder == nil }
+
     var collapsedSize: CGSize {
         var w = notchSize.width + 2 * sideWidth
         var h = notchSize.height
         // A Banner or a reminder tab hangs below; the Glances beside the notch stay as they are.
         let alerts = ActivityCenter.shared
         if alerts.banner != nil {
+            w = max(w, ActivityCenter.bannerWidth(notchWidth: notchSize.width))
+            h += ActivityCenter.bannerHeight
+        } else if showsGlancePeek {
             w = max(w, ActivityCenter.bannerWidth(notchWidth: notchSize.width))
             h += ActivityCenter.bannerHeight
         } else if alerts.reminder != nil {
@@ -299,6 +337,7 @@ final class NotchViewModel: ObservableObject {
     var closesOnPointerExit: Bool { openReason == .hover || pointerVisited }
 
     func open(tab: NotchTab? = nil, takeKeyboard: Bool = true, reason: OpenReason = .click) {
+        endGlancePeek()
         if takeKeyboard { wantsKeyboard = true }
         // A shortcut aimed at the open notch makes it stay put like a shortcut-opened one.
         if !isOpen || reason == .keyboard {

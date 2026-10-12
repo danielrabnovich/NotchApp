@@ -61,10 +61,14 @@ struct GlanceButton<Label: View>: View {
             }
             .scaleEffect(pressed ? 0.94 : 1)
             .contentShape(Rectangle())
-            .onHover { hovering = $0 }
+            .onHover { inside in
+                hovering = inside
+                viewModel.hoverGlance(item, inside)
+            }
             .onTapGesture {
                 // Releasing a long press also ends as a tap; that one's already been handled.
                 if longPressed { longPressed = false; return }
+                viewModel.endGlancePeek()
                 Haptics.tap()
                 GlanceActions.perform(item, in: viewModel)
             }
@@ -74,7 +78,6 @@ struct GlanceButton<Label: View>: View {
                 Haptics.level()
                 GlanceActions.openDetail(item, in: viewModel)
             } onPressingChanged: { pressed = $0 }
-            .help(GlanceActions.hint(for: item))
             .contextMenu {
                 Button(GlanceActions.hint(for: item)) { GlanceActions.perform(item, in: viewModel) }
                 if GlanceActions.hasDetail(item) {

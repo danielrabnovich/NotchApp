@@ -56,6 +56,16 @@ struct CollapsedNotchView: View {
                     .frame(height: ActivityCenter.bannerHeight)
                     .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.12)),
                                             removal: .opacity.animation(.easeOut(duration: 0.12))))
+            } else if viewModel.showsGlancePeek, let item = viewModel.peekedGlance {
+                // As wide as the notch is (the Glances may have made it wide), so the details fit.
+                GlancePeekCard(item: item)
+                    .frame(maxWidth: max(ActivityCenter.bannerWidth(notchWidth: viewModel.notchSize.width),
+                                         viewModel.notchSize.width + 2 * viewModel.sideWidth - 40))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: ActivityCenter.bannerHeight)
+                    .id(item)
+                    .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.18).delay(0.08)),
+                                            removal: .opacity.animation(.easeOut(duration: 0.1))))
             } else if let reminder = activity.reminder {
                 reminderTab(reminder)
                     .frame(height: ActivityCenter.reminderHeight)
@@ -458,7 +468,9 @@ private struct FlashReadout: View {
         HStack(spacing: 7) {
             Image(systemName: icon, variableValue: variable)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
+                // Muted, like 🔇: the slash red, the speaker white.
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(icon.contains(".slash") ? Color(red: 1, green: 0.27, blue: 0.23) : .white, .white)
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 22)
             Text(muted ? "Muted" : "\(Int((level * 100).rounded()))")

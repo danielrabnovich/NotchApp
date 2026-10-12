@@ -158,6 +158,11 @@ final class NotchWindowController {
         return p.y < screen.frame.maxY - viewModel.notchSize.height
     }
 
+    /// On the card a resting pointer dropped under the notch: it's for reading, not opening.
+    private func onGlancePeek(_ p: NSPoint) -> Bool {
+        viewModel.showsGlancePeek && p.y < screen.frame.maxY - viewModel.notchSize.height
+    }
+
     private var dragHotRect: NSRect {
         let n = viewModel.notchSize
         return rect(width: n.width + 260, height: n.height + 90)
@@ -210,7 +215,7 @@ final class NotchWindowController {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { viewModel.isDragActive = true }
                 }
                 viewModel.open(takeKeyboard: false, reason: .system) // a file drag: the drop bins, not typing
-            } else if onStack || onWings(p) || onBanner(p) {
+            } else if onStack || onWings(p) || onBanner(p) || onGlancePeek(p) {
                 // Resting on the stack is for its files, and on the Glances for clicking them; a
                 // click on either (off a Glance) opens the notch.
                 openWork?.cancel()

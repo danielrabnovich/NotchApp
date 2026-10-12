@@ -264,6 +264,8 @@ enum DebugHooks {
             ShelfStore.shared.add(parts.dropFirst().map { URL(fileURLWithPath: $0) })
         case "shelfclearquick": ShelfStore.shared.remove(ShelfStore.shared.stack)
         case "stackhover": c.viewModel.stackHovered = parts[safe: 1] != "0"
+        case "glancepeek": // glancepeek <item> (none: ends it): what resting the pointer on a Glance shows
+            if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { c.viewModel.hoverGlance(item, true) } else { c.viewModel.endGlancePeek() }
         case "suggest": SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
         case "suggestlog": // suggestlog <query…>: what the list offers for it
             SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
