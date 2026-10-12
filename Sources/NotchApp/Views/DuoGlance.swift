@@ -49,7 +49,9 @@ struct DuoGlyph: View {
             }
             middle
                 .frame(width: d * 0.62, height: d * 0.5)
-                .offset(y: -d * 0.06)
+                // The ring is closed by the dots now, so the middle is the middle (a touch high:
+                // Wi-Fi's weight is at its foot).
+                .offset(y: -d * 0.02)
             dots(d)
         }
         .frame(width: d, height: d)
@@ -170,22 +172,28 @@ struct DuoGlyph: View {
         if Int(v * 16) != Int((v - step) * 16) { Haptics.level() }
     }
 
-    /// Four dots on a shallow curve under the middle, as on DuoBar (its offsets, per 230 of ring).
-    /// Each is a whole number of pixels across (an even number, so it's shaded the same on every
-    /// side) with its corner on a pixel: dots this small look lopsided anywhere in between.
+    /// Four dots across the ring's opening, on the ring's own circle, so the arc and the dots
+    /// make one round shape (DuoBar sets them on a flatter curve inside the opening). Evenly
+    /// spaced: five equal steps from one end of the arc to the other. Each is an even number of
+    /// pixels across with its corner on a pixel, so it's shaded the same on every side; offsets
+    /// are rounded from the middle, so the two halves mirror.
     private func dots(_ d: CGFloat) -> some View {
-        let xs: [CGFloat] = [-55.25, -19.5, 19.5, 55.25]
-        let ys: [CGFloat] = [-6.5, 6.5, 6.5, -6.5]
         let lit = litDots
         let px = 1 / scale
+        let stroke = max(1.6, d * 0.08)
+        let radius = (d - stroke) / 2
         let size = max(2, (d * 0.1 * scale / 2).rounded() * 2) * px
         func snap(_ v: CGFloat) -> CGFloat { (v * scale).rounded() * px }
+        let step = Self.gap / 5
         return ZStack(alignment: .topLeading) {
             ForEach(0..<4, id: \.self) { i in
+                // Angles clockwise from 3 o'clock, as SwiftUI draws: 90° is straight down.
+                let angle = (90 + Self.gap / 2 - step * Double(i + 1)) * .pi / 180
                 Circle()
                     .fill(.white.opacity(i < lit ? 0.92 : 0.28))
                     .frame(width: size, height: size)
-                    .offset(x: snap(d / 2 + d * xs[i] / 230 - size / 2), y: snap(d / 2 + d * 0.3 + d * ys[i] / 230 - size / 2))
+                    .offset(x: d / 2 - size / 2 + snap(radius * CGFloat(cos(angle))),
+                            y: d / 2 - size / 2 + snap(radius * CGFloat(sin(angle))))
             }
         }
         .frame(width: d, height: d, alignment: .topLeading)
