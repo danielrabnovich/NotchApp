@@ -50,7 +50,8 @@ struct OpenNotchView: View {
                         Text("\(battery.level)%")
                             .font(.system(size: 11, weight: .medium).monospacedDigit())
                             .foregroundStyle(.white.opacity(0.75))
-                        BatteryIcon(level: battery.level, charging: battery.isCharging || battery.isPluggedIn)
+                        BatteryIcon(level: battery.level, charging: battery.isCharging || battery.isPluggedIn,
+                                    lowPower: battery.lowPowerMode)
                     }
                 }
                 if settings.cameraMirrorEnabled {

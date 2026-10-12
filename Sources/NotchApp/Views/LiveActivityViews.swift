@@ -349,11 +349,13 @@ struct LiveItemView: View {
                     tint: temp.map(heat) ?? .white.opacity(0.6))
         case .battery:
             HStack(spacing: 5) {
-                BatteryIcon(level: battery.level, charging: battery.isCharging)
+                // Plugged in counts as on power even when macOS holds the charge ("not charging").
+                let onPower = battery.isCharging || battery.isPluggedIn
+                BatteryIcon(level: battery.level, charging: onPower, lowPower: battery.lowPowerMode)
                 Text("\(battery.level)%")
                     .font(Self.valueFont)
                     .fixedSize()
-                    .foregroundStyle(battery.level <= 20 && !battery.isCharging ? .red : .white.opacity(0.92))
+                    .foregroundStyle(battery.level <= 20 && !onPower ? .red : .white.opacity(0.92))
             }
         case .nextEvent:
             NextEventReading()

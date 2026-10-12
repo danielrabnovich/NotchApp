@@ -167,11 +167,13 @@ struct LevelBar: View {
 struct BatteryIcon: View {
     let level: Int
     let charging: Bool
+    var lowPower = false
     var animated = false
 
     @State private var fill: CGFloat = 0
 
     private var color: Color {
+        if lowPower { return .yellow }
         if charging { return .green }
         if level <= 20 { return .red }
         return .white
@@ -217,6 +219,7 @@ struct BatteryGlyph: View {
     var lowPower = false
     /// Height of the body; everything else scales from it.
     var height: CGFloat = 13.5
+    @Environment(\.displayScale) private var displayScale
 
     /// Body plus nub. The bolt sits inside while plugged in, so the width never changes.
     static func width(height: CGFloat = 13.5, plugged: Bool = false) -> CGFloat {
@@ -258,22 +261,33 @@ struct BatteryGlyph: View {
         // On power the bolt shares the inside with the number: tucked right up against it, so the
         // number can stay nearly full size.
         let numberSize = height * (onPower ? (level >= 100 ? 0.64 : 0.78) : (level >= 100 ? 0.68 : 0.82))
+        // Digits have no descenders, so centring the line box leaves them high by an amount that
+        // varies with size. Centre on the digits instead (half the cap height above the baseline),
+        // with their offset from the top in whole pixels: otherwise, on a glance that lands on a
+        // fraction of a pixel, the text and the body round different ways and the number sits high.
+        let capHeight = NSFont.systemFont(ofSize: numberSize, weight: .bold).capHeight
+        let digitMiddle: (ViewDimensions) -> CGFloat = { d in
+            let middle = d[.firstTextBaseline] - capHeight / 2
+            let top = ((height / 2 - middle) * displayScale).rounded() / displayScale
+            return height / 2 - top
+        }
         HStack(spacing: 1) {
             ZStack(alignment: .leading) {
                 shape.fill(trackColor)
                 Rectangle()
                     .fill(fillColor)
                     .frame(width: w * fraction)
-                HStack(spacing: -0.5) {
+                HStack(alignment: .firstTextBaseline, spacing: -0.5) {
                     Text("\(level)")
                         .font(.system(size: numberSize, weight: .bold))
                         .tracking(level >= 100 ? -0.4 : -0.2)
-                        // The line box keeps room for descenders that digits don't have, so
-                        // centred text sits a touch high; nudge it down to the optical centre.
-                        .offset(y: numberSize * 0.05)
                     if onPower {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: height * 0.5, weight: .black))
+                            // Centred on the digits, not hanging below them as it would inline
+                            .alignmentGuide(.firstTextBaseline) { d in
+                                ((d.height + capHeight) / 2 * displayScale).rounded() / displayScale
+                            }
                             .transition(.scale(scale: 0.3).combined(with: .opacity))
                     }
                 }
@@ -281,6 +295,7 @@ struct BatteryGlyph: View {
                 .lineLimit(1)
                 .fixedSize()
                 .frame(width: w)
+                .alignmentGuide(VerticalAlignment.center, computeValue: digitMiddle)
             }
             .frame(width: w, height: height)
             .clipShape(shape)
