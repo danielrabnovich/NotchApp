@@ -104,9 +104,9 @@ struct CollapsedNotchView: View {
                 .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .live:
             LiveSide(row: viewModel.glanceRow(.left), side: .left, viewModel: viewModel)
-                .transition(.opacity)
+                .transition(.blurReplace)
         case .peek:
-            if let peek = activity.peek { peekLeading(peek).transition(.opacity) }
+            if let peek = activity.peek { peekLeading(peek).transition(.blurReplace) }
         }
     }
 
@@ -148,28 +148,19 @@ struct CollapsedNotchView: View {
             .transition(.scale(scale: 0.4).combined(with: .opacity))
         case .live:
             LiveSide(row: viewModel.glanceRow(.right), side: .right, viewModel: viewModel)
-                .transition(.opacity)
+                .transition(.blurReplace)
         case .peek:
-            if let peek = activity.peek { peekTrailing(peek).transition(.opacity) }
+            if let peek = activity.peek { peekTrailing(peek).transition(.blurReplace) }
         }
     }
 
     @ViewBuilder private func peekLeading(_ peek: SneakPeek) -> some View {
         switch peek {
         case let .volume(level, muted):
-            Image(systemName: Self.volumeIcon(level: level, muted: muted))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .contentTransition(.symbolEffect(.replace))
-                .frame(width: 22)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 14)
-        case .brightness:
-            Image(systemName: "sun.max.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 14)
+            let silent = muted || level <= 0.001
+            FlashReadout(icon: Self.outputIcon(muted: silent), variable: silent ? nil : Double(level), level: level, muted: muted)
+        case let .brightness(level):
+            FlashReadout(icon: level < 0.5 ? "sun.min.fill" : "sun.max.fill", level: level)
         case .charging:
             HStack(spacing: 4) {
                 Image(systemName: "bolt.fill")
@@ -219,16 +210,10 @@ struct CollapsedNotchView: View {
 
     @ViewBuilder private func peekTrailing(_ peek: SneakPeek) -> some View {
         switch peek {
-        case let .volume(level, _):
-            LevelBar(value: Double(level), color: settings.accentMode == .custom ? settings.customAccent : .white)
-                .frame(width: 44)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 14)
+        case let .volume(level, muted):
+            FlashBar(value: Double(level), color: flashColor, dimmed: muted)
         case let .brightness(level):
-            LevelBar(value: Double(level), color: settings.accentMode == .custom ? settings.customAccent : .white)
-                .frame(width: 44)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 14)
+            FlashBar(value: Double(level), color: flashColor)
         case let .charging(level):
             HStack(spacing: 5) {
                 Text("\(level)%")
@@ -355,6 +340,19 @@ struct CollapsedNotchView: View {
         }
     }
 
+    private var flashColor: Color { settings.accentMode == .custom ? settings.customAccent : .white }
+
+    /// The speaker (its waves lit to the level by the caller), or the headphones playing, as on
+    /// iPhone: AirPods show as AirPods.
+    @MainActor static func outputIcon(muted: Bool) -> String {
+        if muted { return "speaker.slash.fill" }
+        if let device = AudioOutputManager.shared.current, device.icon != "laptopcomputer", device.icon != "hifispeaker",
+           device.icon.contains("airpods") || device.icon.contains("headphones") || device.icon.contains("beats") {
+            return device.icon
+        }
+        return "speaker.wave.3.fill"
+    }
+
     static func volumeIcon(level: Float, muted: Bool) -> String {
         if muted || level <= 0.001 { return "speaker.slash.fill" }
         if level < 0.34 { return "speaker.wave.1.fill" }
@@ -445,5 +443,61 @@ private struct VideoDownloadPercent: View {
             .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
             .foregroundStyle(.white.opacity(0.92))
             .fixedSize()
+    }
+}
+
+/// The outer left of a volume or brightness Flash: the glyph (a speaker's waves lit to the level)
+/// and the percent, rolling as it changes.
+private struct FlashReadout: View {
+    let icon: String
+    var variable: Double? = nil
+    let level: Float
+    var muted = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon, variableValue: variable)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 22)
+            Text(muted ? "Muted" : "\(Int((level * 100).rounded()))")
+                .font(.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white.opacity(muted ? 0.5 : 0.9))
+                .contentTransition(.numericText(value: Double(level)))
+                .fixedSize()
+        }
+        .animation(.snappy(duration: 0.22), value: level)
+        .animation(.snappy(duration: 0.22), value: icon)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 14)
+    }
+}
+
+/// The outer right of a volume or brightness Flash: a bar that stretches with the wing it has
+/// (up to a comfortable length), with a soft glow on the fill; grey while muted.
+private struct FlashBar: View {
+    let value: Double
+    let color: Color
+    var dimmed = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let fill = min(1, max(0, value))
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.16))
+                Capsule()
+                    .fill(dimmed ? Color.white.opacity(0.35) : color)
+                    .frame(width: fill > 0 ? max(6, fill * geo.size.width) : 0)
+                    .shadow(color: color.opacity(dimmed ? 0 : 0.5), radius: 4)
+            }
+            .animation(.spring(response: 0.28, dampingFraction: 0.86), value: fill)
+            .animation(.easeOut(duration: 0.2), value: dimmed)
+        }
+        .frame(maxWidth: 180)
+        .frame(height: 6)
+        .padding(.leading, 12)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.trailing, 14)
     }
 }

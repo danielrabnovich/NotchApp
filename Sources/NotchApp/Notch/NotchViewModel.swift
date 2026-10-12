@@ -201,6 +201,11 @@ final class NotchViewModel: ObservableObject {
 
     var activity: CollapsedActivity {
         if let peek = ActivityCenter.shared.peek { return .peek(peek.kind) }
+        return restingActivity
+    }
+
+    /// What the collapsed notch shows when no Flash is up.
+    private var restingActivity: CollapsedActivity {
         let s = AppSettings.shared
         let media = MediaController.shared
         // The pinned layout holds; a running timer joins it rather than replacing it.
@@ -218,6 +223,13 @@ final class NotchViewModel: ObservableObject {
 
     /// Width added on each side of the hardware notch for live activities.
     var sideWidth: CGFloat {
+        // A Flash takes over the wings it finds, never narrower: the notch doesn't pull in for a
+        // volume change and spring back out after it.
+        if case .peek(let kind) = activity { return max(kind.sideWidth(notchHeight: notchSize.height), width(of: restingActivity)) }
+        return width(of: activity)
+    }
+
+    private func width(of activity: CollapsedActivity) -> CGFloat {
         switch activity {
         case .none: 0
         case .music: notchSize.height + 6 + (taskBadgeCount != nil ? 22 : 0)

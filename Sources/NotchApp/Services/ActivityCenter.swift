@@ -26,7 +26,7 @@ enum SneakPeek: Equatable {
 
         func sideWidth(notchHeight h: CGFloat) -> CGFloat {
             switch self {
-            case .volume, .brightness: 74
+            case .volume, .brightness: 92
             case .charging: 78
             case .meeting, .screenshot, .timer, .download, .taildrop, .notice: h + 14
             case .assistant: 72
