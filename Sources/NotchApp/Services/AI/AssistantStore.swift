@@ -632,7 +632,9 @@ enum Router {
         Not documents on the Mac ("my notes from biology class" is files).
         - "screen": a question about something on their screen right now, usually pointing at it with "this" \
         without saying what it is: "what's the answer to this question", "explain this error", "summarize this \
-        page", "is this right", "translate this", "what does this mean", "help me reply to this email".
+        page", "is this right", "translate this", "what does this mean", "help me reply to this email". \
+        So is rewriting text they typed after a colon: "rewrite this more politely: send me the report now", \
+        "make this shorter: …", "fix the grammar: …", "translate to french: …".
         - "web": questions and information from the internet: facts, news, sports, prices, places, hours, how-to, \
         definitions, recommendations.
         Reply with JSON only:
@@ -690,6 +692,9 @@ extension Router {
         // "What is this" alone is about the screen; "what is this weekend's forecast" isn't.
         let whole = ["what's this", "whats this", "what is this", "check this", "fix this", "read this"]
         if whole.contains(lower) { return true }
+        // "rewrite this more politely: …", "fix the grammar: …": the text is right there, after the colon.
+        if lower.range(of: #"^(rewrite|reword|rephrase|proofread|shorten|simplify|fix|make|translate|polish|tidy|clean up|summari[sz]e)\b[^:]{0,40}:\s*\S"#,
+                       options: .regularExpression) != nil { return true }
         return anywhere.contains { phrase in
             lower.range(of: "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b", options: .regularExpression) != nil
         }

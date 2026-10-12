@@ -1121,7 +1121,9 @@ private struct AssistantPane: View {
                 ToggleRow("Notify when a search finishes", subtitle: "A macOS notification if the notch is closed.",
                           isOn: $s.systemNotifications)
             } footer: {
-                FooterText(s.aiProvider == .local
+                FooterText(s.aiProvider == .apple
+                           ? "Apple's own model, built into macOS: search understands what you mean, picks the right file and writes answers, with nothing to install. Everything stays on your Mac except web searches. It reads text only, so screen questions read the window's text."
+                           : s.aiProvider == .local
                            ? "With a local model through Ollama, search understands what you mean, picks the right file and writes answers. Everything stays on your Mac except web searches."
                            : "Search, briefs, nudges and screen questions use \(s.aiProvider.title) with your key. What you search for (and, if allowed below, the window you ask about) is sent to \(s.aiProvider.shortName).")
             }
@@ -1129,9 +1131,11 @@ private struct AssistantPane: View {
                 Picker(selection: $s.aiProvider) {
                     ForEach(AIProvider.allCases) { Text($0.title).tag($0) }
                 } label: {
-                    RowLabel(title: "Model", subtitle: "Local stays private and free; a cloud model with your own key is smarter and faster.")
+                    RowLabel(title: "Model", subtitle: "On this Mac stays private and free; a cloud model with your own key is smarter and faster.")
                 }
-                if s.aiProvider != .local {
+                if s.aiProvider == .apple {
+                    LabeledContent("Status") { statusLabel }
+                } else if s.aiProvider.isCloud {
                     CloudProviderSettings(provider: s.aiProvider)
                 }
             } header: {
@@ -1215,7 +1219,7 @@ private struct AssistantPane: View {
                 ToggleRow("Answer questions about your screen",
                           subtitle: "“What’s the answer to this question” (or Ask about this) looks at the window in front. It’s never saved.",
                           isOn: $s.screenQuestions)
-                if s.screenQuestions, s.aiProvider != .local {
+                if s.screenQuestions, s.aiProvider.isCloud {
                     ToggleRow("Use \(s.aiProvider.shortName) for screen questions",
                               subtitle: s.cloudScreenQuestions
                                 ? "The window you ask about (a picture and its text) is sent to \(s.aiProvider.shortName) with the question."
@@ -1256,6 +1260,7 @@ private struct AssistantPane: View {
                 .foregroundStyle(.orange)
         case .unknown: ProgressView().controlSize(.small)
         case .needsKey: Text("Add an API key above").foregroundStyle(.orange)
+        case .appleUnavailable(let why): Text(why).foregroundStyle(.orange)
         }
     }
 

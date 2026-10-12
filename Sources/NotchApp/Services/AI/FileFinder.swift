@@ -119,7 +119,11 @@ enum FileFinder {
         }
 
         await progress("Picking the best one")
-        let ranked = try? await rank(description, described, visual: plan.visual)
+        let ranked: [FileHit]?
+        do { ranked = try await rank(description, described, visual: plan.visual) } catch {
+            DebugHooks.log("FileFinder rank failed: \(error)")
+            ranked = nil
+        }
         DebugHooks.log("FileFinder ranked (\(ContinuousClock.now - clock)): \(ranked?.map(\.url.lastPathComponent) ?? [])")
         if let ranked, !ranked.isEmpty {
             let hits = Array((ranked + related(to: ranked, from: described, plan: plan)).prefix(resultTarget))

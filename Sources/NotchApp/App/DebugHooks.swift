@@ -55,6 +55,9 @@ enum DebugHooks {
             }
         case "clear": AssistantStore.shared.clear()
         case "ask": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "))
+        case "askstate": // where the last question is up to, and its answer
+            let job = AssistantStore.shared.current
+            log("ASKSTATE status=\(AssistantStore.shared.status) route=\(String(describing: job?.route)) state=\(String(describing: job?.state)) answer=\((job?.answer ?? "").prefix(300))")
         case "plan": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "), route: .actions)
         case "doinapp": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "), route: .app)
         case "cmd": CommandCenter.shared.run(Array(CommandParser.parse(parts.dropFirst().joined(separator: " ")).prefix(1)))

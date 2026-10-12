@@ -398,7 +398,8 @@ final class AppSettings: ObservableObject {
         assistantEnabled = defaults.bool(forKey: "assistantEnabled")
         ollamaURL = defaults.string(forKey: "ollamaURL") ?? "http://localhost:11434"
         ollamaModel = defaults.string(forKey: "ollamaModel") ?? OllamaModelCatalog.defaultModel
-        aiProvider = AIProvider(rawValue: defaults.string(forKey: "aiProvider") ?? "") ?? .local
+        // Apple's model needs nothing set up, so it's where a new install starts (Ollama otherwise).
+        aiProvider = AIProvider(rawValue: defaults.string(forKey: "aiProvider") ?? "") ?? (AppleModel.isAvailable ? .apple : .local)
         cloudModels = defaults.dictionary(forKey: "cloudModels") as? [String: String] ?? [:]
         cloudBaseURLs = defaults.dictionary(forKey: "cloudBaseURLs") as? [String: String] ?? [:]
         cloudScreenQuestions = defaults.object(forKey: "cloudScreenQuestions") as? Bool ?? true

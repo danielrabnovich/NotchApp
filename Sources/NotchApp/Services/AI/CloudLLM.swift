@@ -1,11 +1,15 @@
 import Foundation
 import Security
 
-/// Where the intelligence comes from: the local Ollama model, or a cloud model with your own key.
+/// Where the intelligence comes from: Apple's model on this Mac, a local Ollama model, or a cloud
+/// model with your own key.
 enum AIProvider: String, CaseIterable, Identifiable {
-    case local, anthropic, deepseek, zai, customAnthropic, openai, openrouter, gemini, groq, custom
+    case apple, local, anthropic, deepseek, zai, customAnthropic, openai, openrouter, gemini, groq, custom
 
     var id: String { rawValue }
+
+    /// Sent to a company's servers (with your key), rather than run on this Mac.
+    var isCloud: Bool { self != .apple && self != .local }
 
     enum Wire { case anthropic, openAI }
 
@@ -14,6 +18,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .apple: "On this Mac (Apple Intelligence)"
         case .local: "On this Mac (Ollama)"
         case .anthropic: "Anthropic (Claude)"
         case .deepseek: "DeepSeek"
@@ -30,7 +35,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
     /// Short name for status lines ("Sent to Anthropic").
     var shortName: String {
         switch self {
-        case .local: "this Mac"
+        case .apple, .local: "this Mac"
         case .anthropic: "Anthropic"
         case .deepseek: "DeepSeek"
         case .zai: "Z.ai"
@@ -45,7 +50,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
 
     var defaultBaseURL: String {
         switch self {
-        case .local: ""
+        case .apple, .local: ""
         case .anthropic: "https://api.anthropic.com/v1"
         case .deepseek: "https://api.deepseek.com/anthropic/v1"
         case .zai: "https://api.z.ai/api/anthropic/v1"
@@ -152,7 +157,7 @@ enum CloudLLM {
     /// The cloud model in use, or nil for the local one (or a cloud provider not set up yet).
     @MainActor static var active: Config? {
         let s = AppSettings.shared
-        guard s.aiProvider != .local else { return nil }
+        guard s.aiProvider.isCloud else { return nil }
         return config(for: s.aiProvider)
     }
 

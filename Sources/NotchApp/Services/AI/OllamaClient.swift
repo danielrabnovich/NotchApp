@@ -6,6 +6,8 @@ enum OllamaClient {
         case unknown, notRunning, modelMissing(String), ready
         /// A cloud provider is chosen but has no key or model yet.
         case needsKey(String)
+        /// Apple Intelligence is chosen but can't run (off, not ready, or not on this Mac): why.
+        case appleUnavailable(String)
     }
 
     struct OllamaError: LocalizedError {
@@ -65,6 +67,9 @@ enum OllamaClient {
 
     static func status() async -> Status {
         let provider = await AppSettings.shared.aiProvider
+        if provider == .apple {
+            return AppleModel.isAvailable ? .ready : .appleUnavailable(AppleModel.unavailableReason ?? "Apple Intelligence isn't available")
+        }
         if provider != .local {
             return await CloudLLM.active != nil ? .ready : .needsKey(provider.shortName)
         }
@@ -175,6 +180,9 @@ enum OllamaClient {
 
     /// Single-shot chat. With `json: true` the model is constrained to emit a JSON object.
     static func chat(system: String, user: String, images: [Data] = [], json: Bool = false, temperature: Double = 0.2) async throws -> String {
+        if await AppSettings.shared.aiProvider == .apple {
+            return try await AppleModel.chat(system: system, user: user, json: json, temperature: temperature)
+        }
         if let cloud = await CloudLLM.active {
             return try await CloudLLM.chat(cloud, system: system, user: user, images: images, json: json, quick: json)
         }
@@ -188,6 +196,8 @@ enum OllamaClient {
     /// Whether the selected model can look at images (Ollama lists "vision" among its capabilities).
     /// Cloud models are assumed to; one that can't is asked again without the picture.
     static func supportsVision(allowCloud: Bool = true) async -> Bool {
+        // Apple's model reads text only: the screen is read for it instead.
+        if await AppSettings.shared.aiProvider == .apple { return false }
         if allowCloud, await CloudLLM.active != nil { return true }
         let name = await model
         if let known = await MainActor.run(body: { visionSupport[name] }) { return known }
@@ -244,6 +254,9 @@ enum OllamaClient {
     /// (screen questions, when Settings says the screen stays on this Mac).
     static func chatStream(system: String, user: String, images: [Data] = [], temperature: Double = 0.3, allowCloud: Bool = true,
                            onText: @escaping @Sendable (String) async -> Void) async throws -> String {
+        if await AppSettings.shared.aiProvider == .apple {
+            return try await AppleModel.stream(system: system, user: user, temperature: temperature, onText: onText)
+        }
         if allowCloud, let cloud = await CloudLLM.active {
             return try await CloudLLM.stream(cloud, system: system, user: user, images: images, onText: onText)
         }
@@ -296,7 +309,9 @@ enum OllamaClient {
     static func chatJSON(system: String, user: String, images: [Data] = []) async throws -> [String: Any] {
         let name = await model
         let text: String
-        if await noJSONMode.contains(name) {
+        if await AppSettings.shared.aiProvider == .apple {
+            text = try await AppleModel.chat(system: system, user: user, json: true, temperature: 0.1)
+        } else if await noJSONMode.contains(name) {
             text = try await chat(system: system + "\nReply with ONLY the JSON object: no prose, no code fences.",
                                   user: user, images: images, json: false, temperature: 0.1)
         } else {
@@ -315,7 +330,43 @@ enum OllamaClient {
            let obj = try? JSONSerialization.jsonObject(with: Data(text[start...end].utf8)) as? [String: Any] {
             return obj
         }
+        // A list asked for as {"matches": [ … ]} sometimes comes back as the items alone, one per
+        // line (Apple's model does this): gathered under the key the instructions asked for.
+        let items = looseObjects(in: text)
+        if !items.isEmpty, let regex = try? NSRegularExpression(pattern: #"\{\s*"(\w+)"\s*:\s*\["#),
+           let match = regex.firstMatch(in: system, range: NSRange(system.startIndex..., in: system)),
+           let range = Range(match.range(at: 1), in: system) {
+            return [String(system[range]): items]
+        }
+        DebugHooks.log("chatJSON: not JSON: \(text.prefix(600))")
         throw OllamaError(message: "The model didn't return valid JSON")
+    }
+
+    /// Every top-level {…} in the text that reads as a JSON object, in order.
+    static func looseObjects(in text: String) -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        var depth = 0, start: String.Index?, inString = false, escaped = false
+        for i in text.indices {
+            let c = text[i]
+            if inString {
+                if escaped { escaped = false } else if c == "\\" { escaped = true } else if c == "\"" { inString = false }
+                continue
+            }
+            switch c {
+            case "\"": inString = true
+            case "{":
+                if depth == 0 { start = i }
+                depth += 1
+            case "}" where depth > 0:
+                depth -= 1
+                if depth == 0, let s = start,
+                   let obj = try? JSONSerialization.jsonObject(with: Data(text[s...i].utf8)) as? [String: Any] {
+                    out.append(obj)
+                }
+            default: break
+            }
+        }
+        return out
     }
 
     private static func stripThinking(_ s: String) -> String {

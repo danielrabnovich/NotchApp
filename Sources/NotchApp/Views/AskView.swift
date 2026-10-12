@@ -893,7 +893,7 @@ private struct RouteFooter: View {
         case .calendar?: ("calendar", job.calendar?.tasks.isEmpty == false ? "Your calendar and tasks" : "Your calendar")
         case .notes?: ("note.text", "Your notes and tasks")
         case .screen?: ("macwindow", job.sources.isEmpty ? "Looked at your screen" : "Your screen and the web")
-        case .write?: ("character.bubble", "Written by \(AppSettings.shared.aiProvider == .local ? "the model on this Mac" : AppSettings.shared.aiProvider.shortName)")
+        case .write?: ("character.bubble", "Written by \(!AppSettings.shared.aiProvider.isCloud ? "the model on this Mac" : AppSettings.shared.aiProvider.shortName)")
         default: ("globe", "Searched the web")
         }
     }
@@ -2444,6 +2444,12 @@ private struct AIStatusLine: View {
                     HStack(spacing: 4) {
                         Text("Searching without AI ·")
                         Button("Add your \(provider) key") { SettingsWindowController.shared.show(pane: .assistant) }
+                            .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
+                    }
+                case .appleUnavailable(let why):
+                    HStack(spacing: 4) {
+                        Text("Searching without AI ·")
+                        Button(why) { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension")!) }
                             .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
                     }
                 }

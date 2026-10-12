@@ -84,7 +84,7 @@ enum ScreenQuestion {
     /// Where a screen question goes, for the results and the chip.
     @MainActor static var privacyLine: String {
         let s = AppSettings.shared
-        if s.aiProvider != .local, s.cloudScreenQuestions, CloudLLM.active != nil {
+        if s.aiProvider.isCloud, s.cloudScreenQuestions, CloudLLM.active != nil {
             return "Sent to \(s.aiProvider.shortName) · nothing is saved"
         }
         return "Only on this Mac · nothing is saved"
