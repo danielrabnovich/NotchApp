@@ -11,9 +11,7 @@ struct AudioOutputDevice: Identifiable, Hashable {
         switch transport {
         case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
             let n = name.lowercased()
-            if n.contains("airpods max") { return "airpodsmax" }
-            if n.contains("airpods pro") { return "airpodspro" }
-            if n.contains("airpods") { return "airpods" }
+            if n.contains("airpods") || n.contains("beats") { return DeviceBatteries.Device.headphoneSymbol(productID: nil, name: n) }
             if n.contains("beats") { return "beats.headphones" }
             return "headphones"
         case kAudioDeviceTransportTypeBuiltIn:

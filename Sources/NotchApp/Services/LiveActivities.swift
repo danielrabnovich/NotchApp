@@ -114,7 +114,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .nextEvent: "calendar"
         case .tasks: "checklist"
         case .network: "arrow.up.arrow.down"
-        case .devices: "airpods"
+        case .devices: "airpods.pro"
         case .privacy: "mic.fill"
         case .agents: "sparkles.rectangle.stack.fill"
         case .vpn: "lock.shield.fill"

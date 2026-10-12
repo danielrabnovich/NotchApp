@@ -860,7 +860,7 @@ private struct DevicesPane: View {
             if devices.devices.isEmpty {
                 Card {
                     VStack(spacing: 6) {
-                        Image(systemName: "airpods").font(.system(size: 20))
+                        Image(systemName: "airpods.pro").font(.system(size: 20))
                         Text("No Bluetooth devices with a battery are connected")
                             .font(.system(size: 11)).multilineTextAlignment(.center)
                     }

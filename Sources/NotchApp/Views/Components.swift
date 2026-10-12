@@ -238,6 +238,15 @@ struct BatteryGlyph: View {
         return .white
     }
 
+    /// White on the green and red fills (as on iPhone), and when critically low; black on white
+    /// and on Low Power yellow.
+    private var textColor: Color {
+        if critical { return .white }
+        if lowPower { return .black.opacity(0.9) }
+        if onPower || level <= 20 { return .white }
+        return .black.opacity(0.9)
+    }
+
     private var trackColor: Color {
         critical ? Color(red: 1, green: 0.27, blue: 0.23).opacity(0.45) : .white.opacity(0.35)
     }
@@ -246,25 +255,26 @@ struct BatteryGlyph: View {
         let w = Self.bodyWidth(height)
         let shape = RoundedRectangle(cornerRadius: height * 0.34, style: .continuous)
         let fraction = CGFloat(min(max(level, 0), 100)) / 100
-        // On power the bolt shares the inside with the number, so both get a little smaller.
-        let numberSize = height * (onPower ? (level >= 100 ? 0.58 : 0.7) : (level >= 100 ? 0.68 : 0.82))
+        // On power the bolt shares the inside with the number: tucked right up against it, so the
+        // number can stay nearly full size.
+        let numberSize = height * (onPower ? (level >= 100 ? 0.64 : 0.78) : (level >= 100 ? 0.68 : 0.82))
         HStack(spacing: 1) {
             ZStack(alignment: .leading) {
                 shape.fill(trackColor)
                 Rectangle()
                     .fill(fillColor)
                     .frame(width: w * fraction)
-                HStack(spacing: 0.5) {
+                HStack(spacing: -0.5) {
                     Text("\(level)")
                         .font(.system(size: numberSize, weight: .bold))
                         .tracking(level >= 100 ? -0.4 : -0.2)
                     if onPower {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: height * 0.56, weight: .black))
+                            .font(.system(size: height * 0.5, weight: .black))
                             .transition(.scale(scale: 0.3).combined(with: .opacity))
                     }
                 }
-                .foregroundStyle(critical ? .white : .black.opacity(0.9))
+                .foregroundStyle(textColor)
                 .lineLimit(1)
                 .fixedSize()
                 .frame(width: w)

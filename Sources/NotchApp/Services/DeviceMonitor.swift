@@ -19,13 +19,41 @@ final class DeviceBatteries: ObservableObject {
         var left: Int?
         var right: Int?
         var caseLevel: Int?
+        /// Apple's Bluetooth product ID ("0x2024"), which says which AirPods or Beats they are.
+        var productID: Int? = nil
 
         /// The level that matters: the emptier bud, or the device itself.
         var level: Int? { [main, left, right].compactMap { $0 }.min() }
 
+        /// The symbol for the model, by Apple's product ID, else by name; the current AirPods
+        /// shape when nothing says more.
+        nonisolated static func headphoneSymbol(productID: Int?, name: String) -> String {
+            switch productID {
+            case 0x2002, 0x200F: return "airpods"                         // AirPods (1st, 2nd generation)
+            case 0x2013: return "airpods.gen3"                            // AirPods (3rd generation)
+            case 0x2019, 0x201B: return "airpods.gen4"                    // AirPods 4, with and without ANC
+            case 0x200E, 0x2014, 0x2024, 0x2027: return "airpods.pro"     // AirPods Pro, every generation
+            case 0x200A, 0x201F: return "airpods.max"                     // AirPods Max (Lightning, USB-C)
+            case 0x200B: return "beats.powerbeats.pro"
+            case 0x201D: return "beats.powerbeats.pro.2"
+            case 0x2011: return "beats.studiobuds"
+            case 0x2016: return "beats.studiobuds.plus"
+            case 0x2012: return "beats.fitpro"
+            default: break
+            }
+            let n = name.lowercased()
+            if n.contains("max") { return "airpods.max" }
+            if n.contains("pro") && n.contains("airpods") { return "airpods.pro" }
+            if n.contains("powerbeats") { return "beats.powerbeats.pro" }
+            if n.contains("studio buds") { return "beats.studiobuds" }
+            if n.contains("beats") { return "beats.headphones" }
+            if n.contains("airpods") { return "airpods.gen4" }
+            return "headphones"
+        }
+
         var icon: String {
             switch kind {
-            case .headphones: name.lowercased().contains("max") ? "airpodsmax" : name.lowercased().contains("pro") ? "airpodspro" : "airpods"
+            case .headphones: Self.headphoneSymbol(productID: productID, name: name)
             case .mouse: "magicmouse.fill"
             case .keyboard: "keyboard.fill"
             case .trackpad: "rectangle.and.hand.point.up.left.fill"
@@ -97,8 +125,10 @@ final class DeviceBatteries: ObservableObject {
                     let kind: Device.Kind = minor.contains("headphone") || minor.contains("headset") || left != nil ? .headphones
                         : minor.contains("mouse") ? .mouse : minor.contains("keyboard") ? .keyboard
                         : minor.contains("trackpad") ? .trackpad : minor.contains("gamepad") || minor.contains("joystick") ? .gamepad : .other
+                    let product = (info["device_productID"] as? String).flatMap { Int($0.replacingOccurrences(of: "0x", with: ""), radix: 16) }
                     devices.append(Device(name: name, address: info["device_address"] as? String ?? "", kind: kind,
-                                          main: main, left: left, right: right, caseLevel: percent(info["device_batteryLevelCase"])))
+                                          main: main, left: left, right: right, caseLevel: percent(info["device_batteryLevelCase"]),
+                                          productID: product))
                 }
             }
         }
