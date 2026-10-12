@@ -268,6 +268,9 @@ struct BatteryGlyph: View {
                     Text("\(level)")
                         .font(.system(size: numberSize, weight: .bold))
                         .tracking(level >= 100 ? -0.4 : -0.2)
+                        // The line box keeps room for descenders that digits don't have, so
+                        // centred text sits a touch high; nudge it down to the optical centre.
+                        .offset(y: numberSize * 0.05)
                     if onPower {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: height * 0.5, weight: .black))
