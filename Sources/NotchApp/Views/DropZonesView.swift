@@ -157,5 +157,8 @@ private struct DropBin: View {
             .onDrop(of: [UTType.item], isTargeted: Binding(get: { targeted }, set: { targeted = $0 && enabled })) { _ in
                 enabled ? onDrop() : false
             }
+            // Felt while the finger is still down: the drop itself lands as it lifts, when a
+            // trackpad can't be felt any more.
+            .onChange(of: targeted) { _, over in if over { Haptics.level() } }
     }
 }

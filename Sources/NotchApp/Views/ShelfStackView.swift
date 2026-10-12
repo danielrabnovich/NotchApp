@@ -136,7 +136,8 @@ final class DragSourceView: NSView, NSDraggingSource {
         let origin = convert(down.locationInWindow, from: nil)
         let dragItems = items.enumerated().map { i, item -> NSDraggingItem in
             // A saved web link drops as the link itself (into a browser, Messages, a doc…).
-            let writer: NSPasteboardWriting = ShelfStore.webLink(in: item.url).map { $0 as NSURL } ?? item.url as NSURL
+            let writer: NSPasteboardWriting = ShelfStore.webLink(in: item.url).map { $0 as NSURL }
+                ?? MainActor.assumeIsolated { ShelfNames.outgoing(item.url) } as NSURL
             let dragItem = NSDraggingItem(pasteboardWriter: writer)
             let offset = CGFloat(min(i, 4)) * 4
             dragItem.setDraggingFrame(NSRect(x: origin.x - 24 + offset, y: origin.y - 24 - offset, width: 48, height: 48),

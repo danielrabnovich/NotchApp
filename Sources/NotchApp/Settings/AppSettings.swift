@@ -102,6 +102,10 @@ final class AppSettings: ObservableObject {
     @Published var shelfStack: Bool { didSet { defaults.set(shelfStack, forKey: "shelfStack") } }
     /// Whatever was just added to the shelf goes on the clipboard too, ready to paste.
     @Published var copyShelfAdds: Bool { didSet { defaults.set(copyShelfAdds, forKey: "copyShelfAdds") } }
+    /// Files on the shelf go by a made-up name, and leave under it (a copy; the original keeps its own).
+    @Published var shelfRandomNames: Bool { didSet { defaults.set(shelfRandomNames, forKey: "shelfRandomNames") } }
+    /// Copied links lose their tracking (utm_…, fbclid, si…) on the clipboard itself.
+    @Published var cleanLinks: Bool { didSet { defaults.set(cleanLinks, forKey: "cleanLinks") } }
     /// Caught screenshots are thrown away 15 minutes after they're taken, or a minute after a paste.
     @Published var screenshotCleanup: Bool { didSet { defaults.set(screenshotCleanup, forKey: "screenshotCleanup") } }
     @Published var shelfExpiry: ShelfExpiry { didSet { defaults.set(shelfExpiry.rawValue, forKey: "shelfExpiry") } }
@@ -244,6 +248,8 @@ final class AppSettings: ObservableObject {
             "airDropZone": true,
             "shelfStack": true,
             "copyShelfAdds": true,
+            "shelfRandomNames": false,
+            "cleanLinks": true,
             "screenshotCleanup": true,
             "shelfExpiry": ShelfExpiry.hour.rawValue,
             "tasksEnabled": true,
@@ -341,6 +347,8 @@ final class AppSettings: ObservableObject {
         airDropZone = defaults.bool(forKey: "airDropZone")
         shelfStack = defaults.bool(forKey: "shelfStack")
         copyShelfAdds = defaults.bool(forKey: "copyShelfAdds")
+        shelfRandomNames = defaults.bool(forKey: "shelfRandomNames")
+        cleanLinks = defaults.bool(forKey: "cleanLinks")
         screenshotCleanup = defaults.bool(forKey: "screenshotCleanup")
         shelfExpiry = ShelfExpiry(rawValue: defaults.string(forKey: "shelfExpiry") ?? "") ?? .hour
         tasksEnabled = defaults.bool(forKey: "tasksEnabled")

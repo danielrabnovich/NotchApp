@@ -490,6 +490,8 @@ private struct ShelfSettingsPane: View {
                     }
                     ToggleRow("AirDrop drop zone", isOn: $s.airDropZone)
                     ToggleRow("Copy what you add", subtitle: "The latest thing added to the shelf is also copied, so you can paste it anywhere.", isOn: $s.copyShelfAdds)
+                    ToggleRow("Random file names", subtitle: "Files on the shelf go by a made-up name (amber-harbor-27.png) and leave under it when dragged or copied out. The originals keep theirs.",
+                              isOn: $s.shelfRandomNames)
                 }
             }
             if s.shelfEnabled {
@@ -527,7 +529,8 @@ private struct ShelfSettingsPane: View {
                 Section {
                     ToggleRow("Clipboard history", subtitle: "Text, links, images and files you copy, next to the shelf. Click one to copy it again.",
                               isOn: $s.clipboardHistory)
-
+                    ToggleRow("Clean copied links", subtitle: "Tracking (utm_…, fbclid, gclid, si…) comes off links as you copy them, and redirect links become where they lead.",
+                              isOn: $s.cleanLinks)
                 } header: {
                     Text("Clipboard")
                 } footer: {

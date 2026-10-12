@@ -240,7 +240,7 @@ private struct ShelfTile: View {
         .onDrag {
             // A saved web link drops as the link itself (into a browser, Messages, a doc…).
             if let web = ShelfStore.webLink(in: item.url) { return NSItemProvider(object: web as NSURL) }
-            return NSItemProvider(object: item.url as NSURL)
+            return NSItemProvider(object: ShelfNames.outgoing(item.url) as NSURL)
         }
         .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
         .contextMenu {
@@ -311,6 +311,7 @@ private struct AirDropZone: View {
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: targeted)
             .contentShape(RoundedRectangle(cornerRadius: 16))
             .onTapGesture { ShelfStore.airDrop(shelf.items.map(\.url)) }
+            .onChange(of: targeted) { _, over in if over { Haptics.level() } } // felt while the finger's still down
             .onDrop(of: [UTType.fileURL], isTargeted: $targeted) { providers in
                 ShelfStore.urls(from: providers) { ShelfStore.airDrop($0) }
                 return true
@@ -380,6 +381,7 @@ private struct TaildropZone: View {
                 guard taildrop.sending == nil, !shelf.items.isEmpty else { return }
                 taildrop.offer(shelf.items.map(\.url))
             }
+            .onChange(of: targeted) { _, over in if over { Haptics.level() } } // felt while the finger's still down
             .onDrop(of: [UTType.fileURL], isTargeted: $targeted) { providers in
                 ShelfStore.urls(from: providers) { TaildropService.shared.offer($0) }
                 return true

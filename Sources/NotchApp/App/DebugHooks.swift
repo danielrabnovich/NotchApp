@@ -277,6 +277,14 @@ enum DebugHooks {
             let path = parts.dropFirst().joined(separator: " ")
             ShelfStore.shared.remove(ShelfStore.shared.items.filter { $0.url.path == path })
             log("SHELF " + ShelfStore.shared.items.suffix(3).map { $0.url.path }.joined(separator: " ; "))
+        case "shelfname": // shelfname <path>: its made-up name and the file it would leave as
+            let url = URL(fileURLWithPath: parts.dropFirst().joined(separator: " "))
+            log("SHELFNAME on=\(ShelfNames.isOn(for: url)) alias=\(ShelfNames.alias(for: url)) out=\(ShelfNames.outgoing(url).path)")
+        case "clipdrop": // clipdrop <text>: deletes clipboard-history entries with exactly that text
+            let text = parts.dropFirst().joined(separator: " ")
+            let gone = ClipboardHistory.shared.clips.filter { $0.text == text }
+            gone.forEach { ClipboardHistory.shared.delete($0) }
+            log("CLIPDROP \(gone.count)")
         case "shotcatch": // shotcatch <path>|<path>…: screenshots arriving at once (twins make one)
             ScreenshotWatcher.shared.debugCatch(parts.dropFirst().joined(separator: " ").split(separator: "|").map { URL(fileURLWithPath: String($0)) })
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {

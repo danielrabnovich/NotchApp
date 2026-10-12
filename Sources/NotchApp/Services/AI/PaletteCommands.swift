@@ -36,6 +36,8 @@ enum PaletteCommands {
         .init(title: "Shelf", pane: .shelf, words: ["drop files"], key: \.shelfEnabled),
         .init(title: "Catch screenshots on the Shelf", pane: .shelf, words: ["screenshot catcher", "screenshots"], key: \.screenshotCatcher),
         .init(title: "Copy what lands on the Shelf", pane: .shelf, words: ["copy shelf"], key: \.copyShelfAdds),
+        .init(title: "Random file names on the Shelf", pane: .shelf, words: ["random names", "rename", "anonymous files"], key: \.shelfRandomNames),
+        .init(title: "Clean copied links", pane: .shelf, words: ["tracking", "utm", "clean links", "strip tracking"], key: \.cleanLinks),
         .init(title: "Clipboard history", pane: .shelf, words: ["clipboard", "copies"], key: \.clipboardHistory),
         .init(title: "Tasks", pane: .tasks, words: ["todo", "to-do"], key: \.tasksEnabled),
         .init(title: "Task count beside the notch", pane: .tasks, words: ["task badge", "badge"], key: \.showTaskCount),

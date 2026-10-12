@@ -56,8 +56,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.$agentsEnabled.combineLatest(settings.$agentAlerts, settings.$agentsKeepAwake).sink { _ in
             DispatchQueue.main.async { AgentMonitor.shared.update() }
         }.store(in: &cancellables)
-        settings.$clipboardHistory.removeDuplicates().sink { enabled in
-            DispatchQueue.main.async { ClipboardHistory.shared.apply(enabled) }
+        // The clipboard is watched for its history, and for links to clean.
+        settings.$clipboardHistory.combineLatest(settings.$cleanLinks).sink { history, clean in
+            DispatchQueue.main.async { ClipboardHistory.shared.apply(history || clean) }
         }.store(in: &cancellables)
         settings.$privacyAlerts.removeDuplicates().sink { _ in
             DispatchQueue.main.async { PrivacyMonitor.shared.update() }

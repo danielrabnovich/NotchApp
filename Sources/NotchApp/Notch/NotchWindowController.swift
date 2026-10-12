@@ -211,6 +211,8 @@ final class NotchWindowController {
                 openWork?.cancel()
                 openWork = nil
                 if !viewModel.isDragActive {
+                    // A detent as the notch takes the drag, felt through the finger holding it.
+                    Haptics.align()
                     viewModel.dragPreview = TaskStore.preview(of: NSPasteboard(name: .drag))
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { viewModel.isDragActive = true }
                 }

@@ -64,7 +64,7 @@ final class ClipboardHistory: ObservableObject {
 
     func start() {
         load()
-        apply(AppSettings.shared.clipboardHistory)
+        apply(AppSettings.shared.clipboardHistory || AppSettings.shared.cleanLinks)
     }
 
     func apply(_ enabled: Bool) {
@@ -107,8 +107,23 @@ final class ClipboardHistory: ObservableObject {
         guard !types.contains(where: { private_.contains($0) }) else { return }
         let source = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         if let source, Self.skippedApps.contains(source) { return }
-        guard let clip = capture(pb, source: source) else { return }
+        if AppSettings.shared.cleanLinks { cleanLink(pb) }
+        guard AppSettings.shared.clipboardHistory, let clip = capture(pb, source: source) else { return }
         add(clip)
+    }
+
+    /// A copied link without its tracking, put back on the clipboard in its place. Only a copy that
+    /// is a link and nothing else (not files, not a passage with a link in it).
+    private func cleanLink(_ pb: NSPasteboard) {
+        let types = pb.types ?? []
+        guard !types.contains(.fileURL), let string = pb.string(forType: .string), let cleaned = LinkCleaner.clean(string) else { return }
+        pb.clearContents()
+        pb.setString(cleaned.link, forType: .string)
+        pb.setString(cleaned.link, forType: .URL)
+        lastChange = pb.changeCount
+        let host = URL(string: cleaned.link)?.host()?.replacingOccurrences(of: "www.", with: "") ?? "Link"
+        let what = cleaned.removed == 1 ? "1 tracker" : "\(cleaned.removed) trackers"
+        ActivityCenter.shared.show(.notice(title: "Link cleaned", detail: "\(host) · took off \(what)", icon: "link"), for: 2)
     }
 
     private func capture(_ pb: NSPasteboard, source: String?) -> Clip? {

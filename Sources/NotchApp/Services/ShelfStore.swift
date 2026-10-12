@@ -38,7 +38,8 @@ final class ShelfItem: ObservableObject, Identifiable {
         }
     }
 
-    var name: String { url.lastPathComponent }
+    /// What the shelf calls it: its own name, or a made-up one (Random file names).
+    @MainActor var name: String { ShelfNames.isOn(for: url) ? ShelfNames.alias(for: url) : url.lastPathComponent }
 }
 
 /// Files parked in the notch. Persisted across launches.
@@ -186,7 +187,9 @@ final class ShelfStore: ObservableObject {
     /// An image also goes on as image data, for places that paste pictures but not files
     /// (chat apps in the browser, Notes, documents).
     static func copy(_ urls: [URL]) {
-        let urls = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        let originals = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        // What goes on the clipboard: under a made-up name, with Random file names on.
+        let urls = originals.map(ShelfNames.outgoing)
         guard !urls.isEmpty else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
@@ -194,8 +197,8 @@ final class ShelfStore: ObservableObject {
             pb.writeObjects([link as NSURL])
             pb.setString(link.absoluteString, forType: .string)
         } else if urls.count == 1, AppSettings.shared.screenshotCleanup,
-                  ShelfStore.shared.items.contains(where: { $0.url == urls[0] && $0.isScreenshot }),
-                  let provider = ScreenshotPaste(url: urls[0]) {
+                  ShelfStore.shared.items.contains(where: { $0.url == originals[0] && $0.isScreenshot }),
+                  let provider = ScreenshotPaste(url: originals[0], handed: urls[0]) {
             let entry = NSPasteboardItem()
             screenshotOnClipboard = provider
             entry.setDataProvider(provider, forTypes: provider.types)
@@ -423,21 +426,25 @@ final class ShelfStore: ObservableObject {
 /// Puts a screenshot on the clipboard lazily, so the app hears when something actually pastes it.
 /// Reads in the first moment are clipboard managers looking at the new copy, not a paste.
 private final class ScreenshotPaste: NSObject, NSPasteboardItemDataProvider {
+    /// The screenshot on the shelf (reported when pasted), and the file handed over (the same, or a
+    /// copy under a made-up name).
     let url: URL
+    let handed: URL
     let png: Data
     let copiedAt = Date()
     let types: [NSPasteboard.PasteboardType] = [.fileURL, .png, .tiff]
     private var reported = false
 
-    init?(url: URL) {
+    init?(url: URL, handed: URL) {
         guard let data = try? Data(contentsOf: url) else { return nil }
         self.url = url
+        self.handed = handed
         png = data
     }
 
     func pasteboard(_ pasteboard: NSPasteboard?, item: NSPasteboardItem, provideDataForType type: NSPasteboard.PasteboardType) {
         switch type {
-        case .fileURL: item.setString(url.absoluteString, forType: .fileURL)
+        case .fileURL: item.setString(handed.absoluteString, forType: .fileURL)
         case .png: item.setData(png, forType: .png)
         case .tiff: if let tiff = NSImage(data: png)?.tiffRepresentation { item.setData(tiff, forType: .tiff) }
         default: return
@@ -446,5 +453,59 @@ private final class ScreenshotPaste: NSObject, NSPasteboardItemDataProvider {
         reported = true
         let url = url
         DispatchQueue.main.async { MainActor.assumeIsolated { ShelfStore.shared.screenshotPasted(url) } }
+    }
+}
+
+
+/// Made-up names for files on the shelf (Settings → Shelf → Random file names): "amber-harbor-27.png".
+/// The name comes from the file's path and a secret kept on this Mac, so it stays the same for as
+/// long as the file is there and can't be traced back to the original name. Nothing is renamed:
+/// what's dragged or copied out is a copy under the made-up name (a clone, so it takes no space).
+@MainActor
+enum ShelfNames {
+    static func isOn(for url: URL) -> Bool {
+        AppSettings.shared.shelfRandomNames && url.isFileURL && ShelfStore.webLink(in: url) == nil
+    }
+
+    private static let first = ["amber", "quiet", "silver", "misty", "golden", "velvet", "hollow", "crisp", "lunar", "copper",
+                                "mellow", "frosted", "drifting", "sunny", "pale", "brisk", "dusky", "gentle", "wild", "still",
+                                "coral", "ivory", "olive", "slate", "rosy", "hazy", "bright", "calm", "nimble", "sleepy", "tidal", "woven"]
+    private static let second = ["harbor", "meadow", "comet", "pebble", "willow", "lantern", "canyon", "orchid", "falcon", "glacier",
+                                 "ember", "thistle", "lagoon", "summit", "maple", "otter", "prism", "fern", "dune", "heron",
+                                 "aurora", "cove", "ripple", "birch", "quarry", "sparrow", "tundra", "cedar", "marble", "breeze", "atlas", "kite"]
+
+    /// A secret made on first use, so the names say nothing about the files.
+    private static var salt: String {
+        if let s = UserDefaults.standard.string(forKey: "shelfNameSalt") { return s }
+        let s = UUID().uuidString
+        UserDefaults.standard.set(s, forKey: "shelfNameSalt")
+        return s
+    }
+
+    static func alias(for url: URL) -> String {
+        let hash = (salt + url.standardizedFileURL.path).unicodeScalars
+            .reduce(UInt64(14_695_981_039_346_656_037)) { ($0 ^ UInt64($1.value)) &* 1_099_511_628_211 }
+        let a = first[Int(hash % UInt64(first.count))]
+        let b = second[Int((hash >> 16) % UInt64(second.count))]
+        let n = Int((hash >> 32) % 90) + 10
+        let ext = url.pathExtension
+        return ext.isEmpty ? "\(a)-\(b)-\(n)" : "\(a)-\(b)-\(n).\(ext.lowercased())"
+    }
+
+    /// The file to hand over when it leaves the shelf: the original, or a copy under its made-up
+    /// name (in a temporary folder macOS clears by itself).
+    static func outgoing(_ url: URL) -> URL {
+        guard isOn(for: url) else { return url }
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent("NotchApp Shelf/\(abs(url.path.hashValue))", isDirectory: true)
+        let target = folder.appendingPathComponent(alias(for: url))
+        if fm.fileExists(atPath: target.path) { return target }
+        do {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            try fm.copyItem(at: url, to: target) // a clone on APFS: instant, no extra space
+            return target
+        } catch {
+            return url
+        }
     }
 }
