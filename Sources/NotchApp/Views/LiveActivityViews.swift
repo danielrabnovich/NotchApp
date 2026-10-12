@@ -16,7 +16,7 @@ struct LiveSide: View {
             ForEach(row.items, id: \.item) { entry in
                 GlanceButton(item: entry.item, viewModel: viewModel) {
                     // On whole pixels: a side's Glances can land on quarter points.
-                    LiveItemView(item: entry.item, notchHeight: h, compact: entry.compact)
+                    LiveItemView(item: entry.item, notchHeight: h, compact: entry.compact, side: side)
                         .pixelSnapped()
                 }
                 .frame(width: entry.item.width(notchHeight: h, compact: entry.compact), height: h)
@@ -63,6 +63,7 @@ struct GlanceButton<Label: View>: View {
             }
             .scaleEffect(pressed ? 0.94 : 1)
             .contentShape(Rectangle())
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .named(CollapsedNotchView.space)).midX } action: { viewModel.glanceMidX[item] = $0 }
             .onHover { inside in
                 hovering = inside
                 viewModel.hoverGlance(item, inside)
@@ -85,16 +86,7 @@ struct GlanceButton<Label: View>: View {
                 if GlanceActions.hasDetail(item) {
                     Button("Open in Notch") { GlanceActions.openDetail(item, in: viewModel) }
                 }
-                if item == .duo {
-                    // Where the sound goes, as on DuoBar's popover.
-                    let audio = AudioOutputManager.shared
-                    Menu("Sound Output") {
-                        ForEach(audio.devices) { device in
-                            Toggle(device.name, isOn: Binding(get: { audio.currentID == device.id }, set: { _ in audio.select(device) }))
-                        }
-                    }
-                    Toggle("Mute", isOn: Binding(get: { AudioOutputManager.isMuted }, set: { AudioOutputManager.isMuted = $0 }))
-                }
+                if item == .duo { DuoSoundMenu() }
                 Divider()
                 if let slot = live.slot(for: item) {
                     Toggle("Compact", isOn: Binding(get: { slot.compact }, set: { on in live.update(item) { $0.compact = on } }))
@@ -110,6 +102,23 @@ struct GlanceButton<Label: View>: View {
             }
             .animation(.easeOut(duration: 0.12), value: hovering)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: pressed)
+    }
+}
+
+/// Duo's right-click: where the sound goes (each output with its own symbol, AirPods by model),
+/// as on DuoBar's popover, and Mute.
+private struct DuoSoundMenu: View {
+    @ObservedObject private var audio = AudioOutputManager.shared
+
+    var body: some View {
+        Menu("Sound Output") {
+            ForEach(audio.devices) { device in
+                Toggle(isOn: Binding(get: { audio.currentID == device.id }, set: { _ in audio.select(device) })) {
+                    Label(device.name, systemImage: device.icon)
+                }
+            }
+        }
+        Toggle("Mute", isOn: Binding(get: { audio.muted }, set: { AudioOutputManager.isMuted = $0 }))
     }
 }
 
@@ -275,6 +284,8 @@ struct LiveItemView: View {
     let item: LiveItem
     let notchHeight: CGFloat
     var compact = false
+    /// Which side of the notch it's on: a reading beside a glyph goes on the notch's side of it.
+    var side: LiveSlot.Side = .left
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var media: MediaController
     @EnvironmentObject private var battery: BatteryMonitor
@@ -334,8 +345,12 @@ struct LiveItemView: View {
         case .worldClock, .weather, .goldenHour, .unread, .countdown:
             ExtraReading(item: item, compact: true)
         case .tasks, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
-             .quickWiFi, .quickNightShift, .appAction, .shortcuts, .duo, .rings:
+             .quickWiFi, .quickNightShift, .appAction, .shortcuts:
             regularBody
+        case .duo:
+            DuoGlyph(diameter: min(22, notchHeight - 10))
+        case .rings:
+            StatRings(diameter: min(22, notchHeight - 10))
         case .focus:
             FocusReading(compact: true)
         }
@@ -425,9 +440,9 @@ struct LiveItemView: View {
         case .shortcuts:
             ShortcutGlyphs()
         case .duo:
-            DuoGlyph(diameter: min(22, notchHeight - 10))
+            towardNotch(DuoGlyph(diameter: min(22, notchHeight - 10)), DuoReading())
         case .rings:
-            StatRings(diameter: min(22, notchHeight - 10))
+            towardNotch(StatRings(diameter: min(22, notchHeight - 10)), RingsReading(alignment: side == .left ? .leading : .trailing))
         case .focus:
             FocusReading()
         case .tasks:
@@ -440,6 +455,19 @@ struct LiveItemView: View {
     }
 
     static let valueFont = Font.system(size: 12, weight: .semibold, design: .rounded).monospacedDigit()
+
+    /// A glyph and its reading, the reading on the notch's side: numbers gather towards the middle.
+    @ViewBuilder private func towardNotch(_ glyph: some View, _ reading: some View) -> some View {
+        HStack(spacing: 5) {
+            if side == .left {
+                glyph
+                reading
+            } else {
+                reading
+                glyph
+            }
+        }
+    }
 
     private func percent(_ value: Double) -> String { "\(Int((value * 100).rounded()))%" }
 
@@ -585,6 +613,45 @@ private struct AppActionGlyphs: View {
                 }
             }
         }
+    }
+}
+
+/// Beside Duo: the battery's percent, red when low, as the Battery Glance shows it; on a Mac
+/// without a battery, the processor's load (what its ring shows there).
+private struct DuoReading: View {
+    @ObservedObject private var battery = BatteryMonitor.shared
+    @ObservedObject private var stats = SystemMonitor.shared
+
+    var body: some View {
+        let onPower = battery.isCharging || battery.isPluggedIn
+        let text = battery.hasBattery ? "\(battery.level)%" : "\(Int((stats.snapshot.cpuTotal * 100).rounded()))%"
+        Text(text)
+            .font(LiveItemView.valueFont)
+            .foregroundStyle(battery.hasBattery && battery.level <= 20 && !onPower ? .red : .white.opacity(0.92))
+            .fixedSize()
+            .rollingDigits(battery.level)
+    }
+}
+
+/// Beside Stats Rings: the temperature over the power, small, as the rings say how busy and
+/// these say how hot and how hungry. One of them alone when the Mac doesn't report the other.
+private struct RingsReading: View {
+    let alignment: HorizontalAlignment
+    @ObservedObject private var stats = SystemMonitor.shared
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        let s = stats.snapshot
+        let temp = s.cpuTemp.map { settings.useFahrenheit ? "\(Int(($0 * 9 / 5 + 32).rounded()))°" : "\(Int($0.rounded()))°" }
+        let power = s.systemPower.map { $0 < 10 ? String(format: "%.1fW", $0) : "\(Int($0.rounded()))W" }
+        VStack(alignment: alignment, spacing: -1) {
+            ForEach([temp, power].compactMap { $0 }, id: \.self) { line in
+                Text(line)
+            }
+        }
+        .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+        .foregroundStyle(.white.opacity(0.88))
+        .fixedSize()
     }
 }
 
@@ -1384,7 +1451,8 @@ private struct NotchStage: View {
     private func content(_ item: LiveItem) -> some View {
         Group {
             if live.isShowingNow(item) {
-                LiveItemView(item: item, notchHeight: base.height, compact: live.slot(for: item)?.compact ?? false)
+                LiveItemView(item: item, notchHeight: base.height, compact: live.slot(for: item)?.compact ?? false,
+                             side: live.slot(for: item)?.side ?? .left)
             } else {
                 Image(systemName: item.icon)
                     .font(.system(size: 11, weight: .semibold))

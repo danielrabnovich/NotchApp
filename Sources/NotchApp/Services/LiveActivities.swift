@@ -72,7 +72,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .unread: "Unread"
         case .countdown: "Countdown"
         case .duo: "Duo"
-        case .rings: "Rings"
+        case .rings: "Stats Rings"
         case .focus: "Focus"
         case .shortcuts: "Shortcuts"
         case .askScreen: "Ask About This"
@@ -180,7 +180,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .unread: .red
         case .countdown: .purple
         case .duo: .mint
-        case .rings: .cyan
+        case .rings: StatsPalette.cpu
         case .focus: .indigo
         case .shortcuts: .pink
         case .askScreen: .indigo
@@ -237,8 +237,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .goldenHour: 66
         case .unread: 52
         case .countdown: 56
-        case .duo: 30
-        case .rings: 28
+        case .duo: 66
+        case .rings: 60
         case .focus: 76
         case .shortcuts: CGFloat(max(1, ShortcutsApp.glanceCount)) * 24
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24

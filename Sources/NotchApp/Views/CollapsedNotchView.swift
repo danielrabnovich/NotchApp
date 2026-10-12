@@ -28,6 +28,8 @@ enum BannerActions {
 
 /// Live activities shown on either side of the hardware notch.
 struct CollapsedNotchView: View {
+    /// The coordinates a peek's caret and the Glance it points at are both measured in.
+    static let space = "collapsedNotch"
     @ObservedObject var viewModel: NotchViewModel
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var media: MediaController
@@ -58,11 +60,11 @@ struct CollapsedNotchView: View {
                                             removal: .opacity.animation(.easeOut(duration: 0.12))))
             } else if viewModel.showsGlancePeek, let item = viewModel.peekedGlance {
                 // As wide as the notch is (the Glances may have made it wide), so the details fit.
-                GlancePeekCard(item: item)
+                GlancePeekCard(item: item, anchorX: viewModel.peekAnchorX)
                     .frame(maxWidth: cardWidth)
                     .frame(maxWidth: .infinity)
                     .frame(height: ActivityCenter.bannerHeight)
-                    .id(item)
+
                     .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.18).delay(0.08)),
                                             removal: .opacity.animation(.easeOut(duration: 0.1))))
             } else if let reminder = activity.reminder {
@@ -77,6 +79,7 @@ struct CollapsedNotchView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .coordinateSpace(name: Self.space)
     }
 
     // MARK: - Sides

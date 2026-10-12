@@ -266,6 +266,7 @@ enum DebugHooks {
         case "stackhover": c.viewModel.stackHovered = parts[safe: 1] != "0"
         case "glancepeek": // glancepeek <item> (none: ends it): what resting the pointer on a Glance shows
             if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { c.viewModel.hoverGlance(item, true) } else { c.viewModel.endGlancePeek() }
+            log("GLANCEMIDX \(c.viewModel.glanceMidX.map { "\($0.key.rawValue)=\(Int($0.value))" }.sorted())")
         case "focus": // what the Focus Glance sees
             FocusMonitor.shared.refresh()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

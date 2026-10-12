@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import AudioToolbox
 import CoreAudio
 
@@ -6,12 +7,17 @@ struct AudioOutputDevice: Identifiable, Hashable {
     let id: AudioDeviceID
     let name: String
     let transport: UInt32
+    /// Apple's Bluetooth product ID, from the Bluetooth device of the same name: which AirPods or
+    /// Beats these are, for their own symbol.
+    var productID: Int? = nil
 
     var icon: String {
         switch transport {
         case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
             let n = name.lowercased()
-            if n.contains("airpods") || n.contains("beats") { return DeviceBatteries.Device.headphoneSymbol(productID: nil, name: n) }
+            if productID != nil || n.contains("airpods") || n.contains("beats") {
+                return DeviceBatteries.Device.headphoneSymbol(productID: productID, name: n)
+            }
             if n.contains("beats") { return "beats.headphones" }
             return "headphones"
         case kAudioDeviceTransportTypeBuiltIn:
@@ -44,6 +50,7 @@ final class AudioOutputManager: ObservableObject {
     var onVolumeChange: (() -> Void)?
 
     private var volumeListenerDevice: AudioDeviceID = 0
+    private var cancellables = Set<AnyCancellable>()
     private lazy var volumeListener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
         DispatchQueue.main.async {
             self?.readVolume()
@@ -62,6 +69,9 @@ final class AudioOutputManager: ObservableObject {
         }
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &devicesAddr, .main, block)
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &defaultAddr, .main, block)
+        // The Bluetooth list says which model each pair of headphones is; it can arrive later.
+        DeviceBatteries.shared.$devices.dropFirst().sink { _ in DispatchQueue.main.async { AudioOutputManager.shared.refresh() } }
+            .store(in: &cancellables)
     }
 
     func refresh() {
@@ -76,7 +86,8 @@ final class AudioOutputManager: ObservableObject {
             guard Self.hasOutput(id), let name = Self.name(of: id) else { return nil }
             let transport: UInt32 = Self.property(id, kAudioDevicePropertyTransportType) ?? 0
             if transport == kAudioDeviceTransportTypeAggregate || transport == kAudioDeviceTransportTypeVirtual { return nil }
-            return AudioOutputDevice(id: id, name: name, transport: transport)
+            let model = DeviceBatteries.shared.devices.first { $0.productID != nil && $0.name.caseInsensitiveCompare(name) == .orderedSame }
+            return AudioOutputDevice(id: id, name: name, transport: transport, productID: model?.productID)
         }
         currentID = Self.defaultOutput
         attachVolumeListener()

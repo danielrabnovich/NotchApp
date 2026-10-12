@@ -260,17 +260,25 @@ final class NotchViewModel: ObservableObject {
 
     /// The Glance the pointer is resting on, whose details hang under the notch (instead of a tooltip).
     @Published private(set) var peekedGlance: LiveItem?
+    /// The peeked Glance's middle (in the collapsed notch's coordinates), for the card's caret.
+    @Published private(set) var peekAnchorX: CGFloat?
+    /// Where each Glance's middle is (in the collapsed notch's coordinates), as laid out.
+    var glanceMidX: [LiveItem: CGFloat] = [:]
     private var peekWork: DispatchWorkItem?
 
     /// The pointer came onto or left a Glance. A peek waits for it to rest a moment; once one is
     /// up, moving along to the next Glance swaps it straight away.
     func hoverGlance(_ item: LiveItem, _ inside: Bool) {
         peekWork?.cancel()
+        let anchorX = glanceMidX[item]
         let work: DispatchWorkItem
         if inside {
             work = DispatchWorkItem { [weak self] in
                 guard let self, !self.isOpen, ActivityCenter.shared.banner == nil, ActivityCenter.shared.peek == nil else { return }
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) { self.peekedGlance = item }
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
+                    self.peekedGlance = item
+                    self.peekAnchorX = anchorX
+                }
             }
             if peekedGlance != nil { return work.perform() }
         } else {

@@ -11,8 +11,31 @@ enum GlancePeek {
         var tint: Color
         var title: String
         var detail: String
-        /// What a click does ("Open Stats"), shown faintly at the right.
+        /// What a click on the Glance does ("Open Stats"), said at the start of the detail line.
         var action: String?
+        /// An app the Glance is about (the music player, the app with the most unread), whose icon
+        /// stands for it.
+        var appPath: String?
+
+        /// The detail with the click in front: "Click to pause · Artist — Album".
+        var line: String {
+            guard let action else { return detail }
+            return (["Click to " + GlancePeek.phrase(action)] + [detail].filter { !$0.isEmpty }).joined(separator: " · ")
+        }
+    }
+
+    /// "Open Stats" → "open Stats", "Turn Wi-Fi Off" → "turn Wi-Fi off": names keep their capitals.
+    nonisolated static func phrase(_ hint: String) -> String {
+        let names: Set<String> = ["Stats", "Network", "VPN", "Devices", "Cleaner", "Controls", "Calendar", "Tasks", "Agents",
+                                  "Wi-Fi", "Dark", "Mode", "Night", "Shift", "Full", "Disk", "Access", "Focus", "Settings", "Ask"]
+        var inQuote = false
+        return hint.split(separator: " ", omittingEmptySubsequences: false).enumerated().map { i, word in
+            let w = String(word)
+            if w.hasPrefix("“") { inQuote = true }
+            defer { if w.hasSuffix("”") { inQuote = false } }
+            if inQuote || (i > 0 && names.contains(w)) { return w }
+            return w.lowercased()
+        }.joined(separator: " ")
     }
 
     static func content(for item: LiveItem) -> Content {
@@ -40,6 +63,7 @@ enum GlancePeek {
             let m = MediaController.shared
             c.title = m.title.isEmpty ? "Nothing playing" : m.title
             c.detail = [m.artist, m.album].filter { !$0.isEmpty }.joined(separator: " — ")
+            c.appPath = m.bundleID.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0)?.path }
         case .weather:
             if let r = TodayWeather.shared.report {
                 c.icon = WeatherReport.symbol(r.currentCode)
@@ -53,6 +77,7 @@ enum GlancePeek {
             let badges = UnreadBadges.shared.badges
             c.title = badges.isEmpty ? "Nothing unread" : "\(UnreadBadges.shared.total) unread"
             c.detail = badges.map { "\($0.name) \($0.count)" }.joined(separator: " · ")
+            c.appPath = badges.first?.appURL.path
         case .devices:
             let devices = DeviceBatteries.shared.devices.filter { $0.level != nil }
             if let low = DeviceBatteries.shared.lowest { c.title = "\(low.name) · \(low.level ?? 0)%" }
@@ -91,6 +116,7 @@ enum GlancePeek {
             c.detail = ShortcutsApp.shared.glanceShortcuts.map(\.name).joined(separator: " · ").nilIfEmpty ?? "Pick Shortcuts in Settings → Glances"
         case .appAction:
             c.title = AppActions.shared.context?.appName ?? "App Actions"
+            c.appPath = AppActions.shared.context?.bundlePath
             c.detail = AppActions.shared.glanceActions.map(\.title).joined(separator: " · ")
         default:
             break
@@ -148,9 +174,14 @@ enum GlancePeek {
     }
 }
 
-/// The card itself: the Glance's glyph in a tinted circle, two lines, and the click at the right.
+/// The card itself: the Glance's glyph (or its app's icon), two lines, and a hairline across the
+/// top with a caret pointing up at the Glance it's about, so it reads as that Glance's (and the
+/// Glance as the thing to click).
 struct GlancePeekCard: View {
     let item: LiveItem
+    /// The hovered Glance's middle, in the collapsed notch's coordinates.
+    var anchorX: CGFloat?
+    @State private var frame: CGRect = .zero
 
     var body: some View {
         // Live values (network rates, the weather) keep current while it's up.
@@ -159,24 +190,27 @@ struct GlancePeekCard: View {
             HStack(spacing: 11) {
                 Group {
                     if item == .duo {
-                        DuoGlyph(diameter: 20, scrollable: false)
+                        DuoGlyph(diameter: 22, scrollable: false)
                     } else if item == .rings {
-                        StatRings(diameter: 20)
+                        StatRings(diameter: 22)
+                    } else if let app = c.appPath {
+                        AppIcon(bundlePath: app, size: 28)
                     } else {
                         Image(systemName: c.icon)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(c.tint)
+                            .frame(width: 30, height: 30)
+                            .background(Circle().fill(c.tint.opacity(0.16)))
                     }
                 }
                 .frame(width: 30, height: 30)
-                .background(Circle().fill(item == .duo || item == .rings ? .white.opacity(0.08) : c.tint.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(c.title)
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(.white)
                         .contentTransition(.numericText())
-                    if !c.detail.isEmpty {
-                        Text(c.detail)
+                    if !c.line.isEmpty {
+                        Text(c.line)
                             .font(.system(size: 11.5))
                             .foregroundStyle(.white.opacity(0.62))
                             .truncationMode(.tail)
@@ -184,18 +218,43 @@ struct GlancePeekCard: View {
                 }
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                if let action = c.action {
-                    Text(action)
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.4))
-                        .lineLimit(1)
-                        .fixedSize()
-                }
             }
             .animation(.snappy(duration: 0.25), value: c)
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 16)
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
         .padding(.bottom, 6)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(CollapsedNotchView.space)) } action: { frame = $0 }
+        .overlay(alignment: .top) {
+            if let anchorX, frame.width > 0 {
+                PeekRule(caret: min(max(anchorX - frame.minX, 24), frame.width - 24))
+                    .stroke(.white.opacity(0.14), lineWidth: 1)
+                    .frame(height: 6)
+                    .padding(.horizontal, 10)
+                    .offset(y: -2)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: anchorX)
+            }
+        }
+    }
+}
+
+/// A hairline with a small caret rising from it at `caret` (measured from the card's left edge).
+private struct PeekRule: Shape {
+    var caret: CGFloat
+    var animatableData: CGFloat {
+        get { caret }
+        set { caret = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let x = caret - 10 // the rule is inset by 10
+        let y = rect.maxY - 0.5
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: y))
+        p.addLine(to: CGPoint(x: x - 5, y: y))
+        p.addLine(to: CGPoint(x: x, y: rect.minY + 0.5))
+        p.addLine(to: CGPoint(x: x + 5, y: y))
+        p.addLine(to: CGPoint(x: rect.maxX, y: y))
+        return p
     }
 }
