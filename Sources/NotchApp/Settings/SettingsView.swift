@@ -133,6 +133,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .hud: "Volume & Brightness"
         case .tasks: "Tasks & Notes"
         case .controls: "Controls & Camera"
+        case .calendar: "Calendar & Meetings"
         case .mouse: "Mouse & Trackpad"
         case .shortcuts: "Keyboard Shortcuts"
         default: rawValue
@@ -598,9 +599,9 @@ private struct TasksSettingsPane: View {
                 }
             }
             Section {
-                if let dictation = Dictation.app {
-                    ToggleRow("Start \(dictation.name) when Ramble opens",
-                              subtitle: "Presses \(dictation.keyLabel) for you, so you can just start talking. Or hold \(dictation.keyLabel) yourself.",
+                if RambleStore.canDictate {
+                    ToggleRow("Dictate when Ramble opens",
+                              subtitle: "Start talking straight away: it's turned into text on this Mac. Any dictation app can type into the box too.",
                               isOn: $s.rambleAutoDictate)
                 } else {
                     LabeledContent("Dictation") {

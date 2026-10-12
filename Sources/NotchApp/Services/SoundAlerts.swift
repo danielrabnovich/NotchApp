@@ -13,6 +13,8 @@ final class SoundAlerts {
     /// The classifier's names for the sounds worth a Banner, and how to say them.
     private static let watched: [String: (title: String, icon: String)] = [
         "door_bell": ("Doorbell", "bell.fill"), "knock": ("Someone's knocking", "door.left.hand.closed"),
+        // Most doorbells are chimes, which the classifier calls a bell (sometimes a telephone).
+        "bell": ("A bell or chime", "bell.fill"),
         "smoke_detector": ("Smoke alarm", "smoke.fill"), "alarm_clock": ("An alarm", "alarm.fill"),
         "baby_crying": ("A baby's crying", "figure.and.child.holdinghands"), "crying_sobbing": ("Someone's crying", "person.wave.2.fill"),
         "dog_bark": ("A dog's barking", "dog.fill"), "siren": ("A siren", "light.beacon.max.fill"),
@@ -21,6 +23,12 @@ final class SoundAlerts {
         "ringtone": ("A phone's ringing", "phone.fill"), "glass_breaking": ("Glass breaking", "exclamationmark.triangle.fill"),
         "shout": ("Someone's calling out", "person.wave.2.fill"), "screaming": ("Someone screamed", "exclamationmark.triangle.fill"),
     ]
+
+    /// How sure the classifier has to be. Short sounds in a room (a chime through a door, a knock)
+    /// rarely score high, so they need less; voices and dogs need more, to stay quiet otherwise.
+    fileprivate nonisolated static func threshold(_ identifier: String) -> Double {
+        ["door_bell", "bell", "knock", "smoke_detector", "alarm_clock", "telephone_bell_ringing", "ringtone"].contains(identifier) ? 0.55 : 0.7
+    }
 
     private var engine: AVAudioEngine?
     private var analyzer: SNAudioStreamAnalyzer?
@@ -43,8 +51,11 @@ final class SoundAlerts {
         return device.transport == kAudioDeviceTransportTypeBuiltIn && device.name.lowercased().contains("headphone")
     }
 
+    /// For notchdebug: listen as if headphones were on (to test with the speakers).
+    var debugAnyOutput = false
+
     func reconcile() {
-        let wanted = AppSettings.shared.soundAlerts && wearingHeadphones
+        let wanted = AppSettings.shared.soundAlerts && (wearingHeadphones || debugAnyOutput)
             && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         if wanted, engine == nil { listen() } else if !wanted, engine != nil { stop() }
     }
@@ -63,13 +74,15 @@ final class SoundAlerts {
         input.installTap(onBus: 0, bufferSize: 8192, format: format) { buffer, time in
             queue.async { analyzer.analyze(buffer, atAudioFramePosition: time.sampleTime) }
         }
-        do { try engine.start() } catch { input.removeTap(onBus: 0); return }
+        do { try engine.start() } catch { input.removeTap(onBus: 0); DebugHooks.log("SoundAlerts: mic didn't start: \(error)"); return }
+        DebugHooks.log("SoundAlerts: listening (\(AudioOutputManager.shared.current?.name ?? "?"))")
         self.engine = engine
         self.analyzer = analyzer
         self.observer = observer
     }
 
     private func stop() {
+        DebugHooks.log("SoundAlerts: stopped listening")
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
@@ -88,10 +101,13 @@ final class SoundAlerts {
 
     private final class Observer: NSObject, SNResultsObserving {
         func request(_ request: SNRequest, didProduce result: SNResult) {
-            guard let result = result as? SNClassificationResult,
-                  let top = result.classifications.first(where: { SoundAlerts.watched[$0.identifier] != nil && $0.confidence > 0.75 })
+            guard let result = result as? SNClassificationResult else { return }
+            // Among the three likeliest: a doorbell often comes second to "music" or "tuning fork".
+            let likely = result.classifications.prefix(3)
+            guard let top = likely.first(where: { SoundAlerts.watched[$0.identifier] != nil && $0.confidence >= SoundAlerts.threshold($0.identifier) })
             else { return }
             let id = top.identifier
+            DebugHooks.log("SoundAlerts: heard \(likely.map { "\($0.identifier) \(String(format: "%.2f", $0.confidence))" })")
             DispatchQueue.main.async { MainActor.assumeIsolated { SoundAlerts.shared.heard(id) } }
         }
     }

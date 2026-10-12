@@ -314,7 +314,7 @@ extension SettingsPane {
         case .stats: ["cpu", "gpu", "memory", "ram", "temperature", "fahrenheit", "celsius", "fans", "power"]
         case .tools: ["network", "wifi", "speed test", "vpn", "proton", "pia", "mullvad", "ip", "ping", "cleaner", "disk", "uninstall", "bluetooth", "airpods", "battery", "microphone", "camera", "dev server", "ports", "alerts", "offline"]
         case .agents: ["claude", "claude code", "codex", "opencode", "zcode", "tokens", "usage", "keep awake", "ai agents"]
-        case .calendar: ["events", "meetings", "zoom", "meet", "teams", "join", "alerts"]
+        case .calendar: ["events", "meetings", "zoom", "meet", "teams", "join", "alerts", "transcribe", "transcripts", "captions", "notes", "action items", "birthdays", "leave"]
         case .controls: ["quick actions", "tiles", "wifi", "dark mode", "ports", "copy text", "ocr", "night shift", "hidden files", "flush dns", "keep awake", "camera", "mirror"]
         case .mouse: ["scroll", "reverse", "middle click", "trackpad", "three finger"]
         case .updates: ["homebrew", "brew", "sparkle", "upgrade"]

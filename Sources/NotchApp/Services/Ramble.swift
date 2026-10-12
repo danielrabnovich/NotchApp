@@ -1,10 +1,11 @@
+import AVFoundation
 import AppKit
 import SwiftUI
 
 /// Ramble: a big box in the notch to talk (or type, or paste) everything on your mind into, then
-/// turn into tasks, events and a note in one go. Dictation apps like FluidVoice type into it while
-/// you hold their key; the Dictate button presses that key for you. The draft is kept until it's
-/// turned into something.
+/// turn into tasks, events and a note in one go. Dictate turns speech into text on this Mac (the
+/// same transcriber as live captions, macOS 26+); any dictation app can type into the box too.
+/// The draft is kept until it's turned into something.
 @MainActor
 final class RambleStore: ObservableObject {
     static let shared = RambleStore()
@@ -17,6 +18,13 @@ final class RambleStore: ObservableObject {
         didSet { UserDefaults.standard.set(text, forKey: "rambleDraft") }
     }
     @Published private(set) var dictating = false
+    /// What's being said right now, before it firms up into the text.
+    @Published private(set) var hearing = ""
+    private var speech: AnyObject?
+    private var mic: MicSource?
+
+    /// Dictation built in: the on-device transcriber is there (macOS 26+).
+    static var canDictate: Bool { LiveCaptions.isSupported }
 
     private init() {
         text = UserDefaults.standard.string(forKey: "rambleDraft") ?? ""
@@ -31,7 +39,7 @@ final class RambleStore: ObservableObject {
         vm?.overlay = nil
         vm?.mirror = false
         vm?.open(tab: .ask, reason: .keyboard)
-        if AppSettings.shared.rambleAutoDictate, Dictation.app != nil {
+        if AppSettings.shared.rambleAutoDictate, Self.canDictate {
             // Once the box has the keyboard, so the words land in it.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { if self.active, !self.dictating { self.toggleDictation() } }
         }
@@ -43,8 +51,50 @@ final class RambleStore: ObservableObject {
     }
 
     func toggleDictation() {
-        guard Dictation.press() else { return }
-        dictating.toggle()
+        dictating ? stopDictation() : startDictation()
+    }
+
+    private func startDictation() {
+        guard #available(macOS 26, *) else { return }
+        dictating = true
+        Task {
+            guard await AVCaptureDevice.requestAccess(for: .audio) else {
+                dictating = false
+                ActivityCenter.shared.show(.notice(title: "Dictation needs the microphone", detail: "Allow it for NotchApp in Settings → Permissions",
+                                                   icon: "mic.slash.fill", tone: .warning), for: 3)
+                return
+            }
+            do {
+                let stream = try await SpeechStream.make { text, final in
+                    Task { @MainActor in RambleStore.shared.heard(text, final: final) }
+                }
+                guard dictating else { await stream.finish(); return }
+                speech = stream
+                mic = MicSource { stream.append($0) }
+            } catch {
+                dictating = false
+                ActivityCenter.shared.show(.notice(title: "Couldn't start dictation", detail: error.localizedDescription,
+                                                   icon: "mic.slash.fill", tone: .warning), for: 3)
+            }
+        }
+    }
+
+    private func stopDictation() {
+        dictating = false
+        mic?.invalidate()
+        mic = nil
+        if #available(macOS 26, *), let stream = speech as? SpeechStream { Task { await stream.finish() } }
+        speech = nil
+        // Whatever was still being said goes in as it stands.
+        if !hearing.isEmpty { heard(hearing, final: true) }
+    }
+
+    private func heard(_ said: String, final: Bool) {
+        guard final else { hearing = said; return }
+        hearing = ""
+        guard !said.isEmpty else { return }
+        let joiner = text.isEmpty || text.hasSuffix("\n") || text.hasSuffix(" ") ? "" : " "
+        text += joiner + said
     }
 
     /// Everything said, as tasks (with due dates), events and a note, shown for review first.
@@ -77,51 +127,4 @@ final class RambleStore: ObservableObject {
 
     /// The plan from a ramble was added: the draft has done its job.
     func planApplied() { text = "" }
-}
-
-/// The dictation app the user has (FluidVoice), and pressing its start/stop key for them.
-@MainActor
-enum Dictation {
-    struct App {
-        let name: String
-        let keyCode: CGKeyCode
-        let modifiers: CGEventFlags
-        /// The key, as the user knows it ("fn").
-        let keyLabel: String
-    }
-
-    /// FluidVoice, with the shortcut set in it (read from its settings each time, so changes there count).
-    static var app: App? {
-        guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.FluidApp.app") != nil,
-              let defaults = UserDefaults(suiteName: "com.FluidApp.app"),
-              let raw = defaults.data(forKey: "HotkeyShortcutKey") ?? (defaults.string(forKey: "HotkeyShortcutKey")?.data(using: .utf8)),
-              let obj = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
-              let code = obj["keyCode"] as? Int else { return nil }
-        let flags = CGEventFlags(rawValue: UInt64(obj["modifierFlagsRawValue"] as? Int ?? 0))
-        let label = code == 63 ? "fn" : code == 61 ? "right ⌥" : code == 54 ? "right ⌘" : "its shortcut"
-        return App(name: "FluidVoice", keyCode: CGKeyCode(code), modifiers: flags, keyLabel: label)
-    }
-
-    /// Presses and releases the dictation key (a modifier key alone, like fn, as the modifier it is).
-    @discardableResult
-    static func press() -> Bool {
-        guard let app else { return false }
-        let modifierKeys: [CGKeyCode: CGEventFlags] = [63: .maskSecondaryFn, 61: .maskAlternate, 58: .maskAlternate,
-                                                        54: .maskCommand, 55: .maskCommand, 62: .maskControl, 59: .maskControl]
-        if let flag = modifierKeys[app.keyCode] {
-            for down in [true, false] {
-                let e = CGEvent(keyboardEventSource: nil, virtualKey: app.keyCode, keyDown: down)
-                e?.type = .flagsChanged
-                e?.flags = down ? flag : []
-                e?.post(tap: .cghidEventTap)
-            }
-        } else {
-            for down in [true, false] {
-                let e = CGEvent(keyboardEventSource: nil, virtualKey: app.keyCode, keyDown: down)
-                e?.flags = app.modifiers
-                e?.post(tap: .cghidEventTap)
-            }
-        }
-        return true
-    }
 }

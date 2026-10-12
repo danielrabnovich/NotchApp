@@ -56,6 +56,10 @@ enum DebugHooks {
         case "clear": AssistantStore.shared.clear()
         case "ask": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "))
         case "fakecall": MeetingAssistant.shared.debugMeeting()
+        case "dictate": RambleStore.shared.toggleDictation()
+        case "ramblelog": log("RAMBLE dictating=\(RambleStore.shared.dictating) hearing=\(RambleStore.shared.hearing) text=\(RambleStore.shared.text.suffix(200))")
+        case "soundtest": SoundAlerts.shared.debugAnyOutput = parts[safe: 1] != "0"; SoundAlerts.shared.reconcile()
+        case "soundlog": SoundAlerts.shared.reconcile(); log("SOUNDS on=\(AppSettings.shared.soundAlerts) output=\(AudioOutputManager.shared.current?.name ?? "-") transport=\(AudioOutputManager.shared.current?.transport ?? 0)")
         case "planlog": // the proposed commands under review
             log("PLAN " + (AssistantStore.shared.current?.plan?.commands.map { "[\($0.title) | \($0.subtitle ?? "")]" }.joined(separator: " ") ?? "none"))
         case "meetingsclear": // removes kept calls with this exact title

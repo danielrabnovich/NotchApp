@@ -2170,27 +2170,26 @@ private struct ContextChip: View {
     }
 }
 
-/// Ramble: a big box to talk (through a dictation app) or type everything into, then turn it into
+/// Ramble: a big box to talk (Dictate, on this Mac) or type everything into, then turn it into
 /// tasks, events and a note, or keep it as a note as it is.
 private struct RambleView: View {
     @ObservedObject var ramble: RambleStore
     @FocusState private var focused: Bool
-    private let dictation = Dictation.app
 
     var body: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "waveform").font(.system(size: 13, weight: .semibold)).foregroundStyle(.orange)
                 Text("Ramble").font(.system(size: 14, weight: .semibold))
-                Text(dictation.map { "Hold \($0.keyLabel) to talk with \($0.name), or just type" } ?? "Type or paste it all out")
+                Text(RambleStore.canDictate ? "Dictate and talk, or just type" : "Type or paste it all out, or use any dictation app")
                     .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.4))
                 Spacer()
-                if let dictation {
+                if RambleStore.canDictate {
                     Button { ramble.toggleDictation(); focused = true } label: {
                         Label(ramble.dictating ? "Stop" : "Dictate", systemImage: ramble.dictating ? "stop.fill" : "mic.fill")
                     }
                     .buttonStyle(NotchPillButtonStyle(height: 24))
-                    .help("Presses \(dictation.keyLabel) for \(dictation.name)")
+                    .help("Turned into text on this Mac as you talk")
                 }
                 Button { ramble.close() } label: {
                     Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
@@ -2219,8 +2218,17 @@ private struct RambleView: View {
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(ramble.dictating ? Color.orange.opacity(0.6) : .white.opacity(0.08), lineWidth: 1))
             HStack(spacing: 8) {
-                Text(ramble.wordCount == 0 ? "" : "\(ramble.wordCount) words")
-                    .font(.system(size: 11).monospacedDigit()).foregroundStyle(.white.opacity(0.35))
+                if ramble.dictating {
+                    // What's being heard, before it lands in the box.
+                    HStack(spacing: 5) {
+                        Image(systemName: "waveform").symbolEffect(.variableColor.iterative, options: .repeating)
+                        Text(ramble.hearing.isEmpty ? "Listening…" : ramble.hearing).lineLimit(1).truncationMode(.head)
+                    }
+                    .font(.system(size: 11)).foregroundStyle(.orange.opacity(0.8))
+                } else {
+                    Text(ramble.wordCount == 0 ? "" : "\(ramble.wordCount) words")
+                        .font(.system(size: 11).monospacedDigit()).foregroundStyle(.white.opacity(0.35))
+                }
                 Spacer()
                 Button("Save as Note") { ramble.saveAsNote() }
                     .buttonStyle(NotchPillButtonStyle(height: 26))
