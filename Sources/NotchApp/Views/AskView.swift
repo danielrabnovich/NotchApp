@@ -911,6 +911,12 @@ private struct RouteFooter: View {
             }
             // What an action wrote (a summary, a drafted reply) is for copying; searching the web for
             // its hidden instruction instead wouldn't mean anything.
+            if let next = job.followUpTitle, job.state == .done {
+                Text("·")
+                Button(next) { assistant.runFollowUp() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.85))
+            }
             if job.route == .write || job.actionTitle != nil, let answer = job.answer, job.state == .done {
                 Text("·")
                 Button("Copy") {
@@ -1437,6 +1443,9 @@ private struct AnswerText: View {
             guard !trimmed.isEmpty else { continue }
             if let prefix = ["• ", "- ", "* "].first(where: trimmed.hasPrefix) {
                 out.append((String(trimmed.dropFirst(prefix.count)), true, false, nil))
+            } else if trimmed.hasPrefix("#") {
+                // A heading reads as a bold line.
+                out.append(("**" + trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces) + "**", false, false, nil))
             } else {
                 out.append((trimmed, false, false, nil))
             }
@@ -1445,14 +1454,16 @@ private struct AnswerText: View {
         return out
     }
 
-    /// Citations ([1]) as small superscripts, and `inline code` in monospace.
+    /// Citations ([1]) as small superscripts, `inline code` in monospace, and **bold** as bold.
     private func styled(_ s: String) -> Text {
         var result = Text("")
         for (i, part) in s.components(separatedBy: "`").enumerated() {
             if i % 2 == 1, !part.isEmpty {
                 result = result + Text(part).font(.system(size: 12, design: .monospaced)).foregroundColor(.white.opacity(0.92))
             } else {
-                result = result + cited(part)
+                for (j, run) in part.components(separatedBy: "**").enumerated() {
+                    result = result + (j % 2 == 1 ? cited(run).bold().foregroundColor(.white.opacity(0.95)) : cited(run))
+                }
             }
         }
         return result

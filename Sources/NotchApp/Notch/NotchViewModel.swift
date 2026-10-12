@@ -309,6 +309,10 @@ final class NotchViewModel: ObservableObject {
         } else if showsGlancePeek {
             w = max(w, ActivityCenter.bannerWidth(notchWidth: notchSize.width))
             h += GlancePeekCard.height
+        } else if CaptionStrip.shared.showing {
+            // Wide enough for a sentence to read at a glance.
+            w = max(w, notchSize.width + 360)
+            h += CaptionStrip.height
         } else if alerts.reminder != nil {
             w = max(w, notchSize.width + 60)
             h += ActivityCenter.reminderHeight

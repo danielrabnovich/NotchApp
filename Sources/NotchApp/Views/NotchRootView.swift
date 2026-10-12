@@ -10,6 +10,7 @@ struct NotchRootView: View {
     @EnvironmentObject private var timer: TimerStore // and on whether a timer is running
     @EnvironmentObject private var assistant: AssistantStore // …and on running searches
     @ObservedObject private var live = LiveActivities.shared // …and on the pinned live activities
+    @ObservedObject private var captions = CaptionStrip.shared // …and on live captions hanging below
     @ObservedObject private var speed = SpeedTest.shared // …and on a running speed test
     @ObservedObject private var videos = VideoDownloader.shared // …and on a video download
     @EnvironmentObject private var shelf: ShelfStore // collapsed height grows for the stack of quick drops

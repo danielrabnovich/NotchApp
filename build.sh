@@ -52,7 +52,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>NSCameraUsageDescription</key><string>NotchApp's camera mirror shows a preview of yourself before a call.</string>
   <key>NSAppleEventsUsageDescription</key><string>NotchApp's Controls switch Dark Mode and empty the Trash, its app actions read the files selected in Finder and copy the song playing in Spotify, and replies to a coding agent are typed into its own Terminal or iTerm2 tab.</string>
-  <key>NSAudioCaptureUsageDescription</key><string>NotchApp's sound mixer adjusts each app's volume by routing its audio through NotchApp.</string>
+  <key>NSAudioCaptureUsageDescription</key><string>NotchApp's sound mixer adjusts each app's volume by routing its audio through NotchApp, and live captions turn what's playing into text on this Mac.</string>
+  <key>NSMicrophoneUsageDescription</key><string>NotchApp turns your side of a call into text on this Mac when you've asked it to transcribe calls, and listens for sounds like a doorbell while you wear headphones if you've turned sound alerts on.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>Live captions and call transcripts are turned into text on this Mac.</string>
+  <key>NSLocationWhenInUseUsageDescription</key><string>NotchApp works out when to leave for events with a place, and shows the Wi-Fi network's name.</string>
+  <key>NSContactsUsageDescription</key><string>NotchApp shows today's birthdays from your contacts.</string>
   <key>NSCalendarsFullAccessUsageDescription</key><string>NotchApp shows today's events and alerts you before meetings.</string>
   <key>NSCalendarsUsageDescription</key><string>NotchApp shows today's events and alerts you before meetings.</string>
   <key>NSDesktopFolderUsageDescription</key><string>NotchApp shows previews of screenshots and files on your shelf.</string>

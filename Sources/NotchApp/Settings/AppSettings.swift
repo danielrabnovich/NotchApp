@@ -208,6 +208,10 @@ final class AppSettings: ObservableObject {
     @Published var rambleAutoDictate: Bool { didSet { defaults.set(rambleAutoDictate, forKey: "rambleAutoDictate") } }
     /// A call timer and mute button beside the notch during calls, and notes or a follow-up after.
     @Published var meetingMode: Bool { didSet { defaults.set(meetingMode, forKey: "meetingMode") } }
+    /// During a call, both sides are turned into text on this Mac, for notes afterwards.
+    @Published var transcribeCalls: Bool { didSet { defaults.set(transcribeCalls, forKey: "transcribeCalls") } }
+    /// Sounds around you (a doorbell, a knock) while headphones are on.
+    @Published var soundAlerts: Bool { didSet { defaults.set(soundAlerts, forKey: "soundAlerts") } }
     /// A progress ring beside the notch while anything downloads, copies, converts or exports.
     @Published var progressGlance: Bool { didSet { defaults.set(progressGlance, forKey: "progressGlance") } }
     @Published var nudgeLeadMinutes: Int { didSet { defaults.set(nudgeLeadMinutes, forKey: "nudgeLeadMinutes") } }
@@ -309,6 +313,8 @@ final class AppSettings: ObservableObject {
             "dueNudges": true,
             "rambleAutoDictate": false,
             "meetingMode": true,
+            "transcribeCalls": false,
+            "soundAlerts": false,
             "progressGlance": true,
             "nudgeLeadMinutes": 120,
             "calendarEnabled": false,
@@ -415,6 +421,8 @@ final class AppSettings: ObservableObject {
         dueNudges = defaults.bool(forKey: "dueNudges")
         rambleAutoDictate = defaults.bool(forKey: "rambleAutoDictate")
         meetingMode = defaults.bool(forKey: "meetingMode")
+        transcribeCalls = defaults.bool(forKey: "transcribeCalls")
+        soundAlerts = defaults.bool(forKey: "soundAlerts")
         progressGlance = defaults.bool(forKey: "progressGlance")
         nudgeLeadMinutes = defaults.integer(forKey: "nudgeLeadMinutes")
         calendarEnabled = defaults.bool(forKey: "calendarEnabled")

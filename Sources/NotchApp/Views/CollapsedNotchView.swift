@@ -66,6 +66,12 @@ struct CollapsedNotchView: View {
                     .frame(height: GlancePeekCard.height)
                     .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.18).delay(0.08)),
                                             removal: .opacity.animation(.easeOut(duration: 0.1))))
+            } else if CaptionStrip.shared.showing {
+                CaptionStripView()
+                    .frame(maxWidth: max(viewModel.notchSize.width + 360, viewModel.notchSize.width + 2 * viewModel.sideWidth - 40))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: CaptionStrip.height)
+                    .transition(.opacity)
             } else if let reminder = activity.reminder {
                 reminderTab(reminder)
                     .frame(height: ActivityCenter.reminderHeight)

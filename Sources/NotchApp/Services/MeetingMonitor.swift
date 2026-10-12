@@ -60,6 +60,7 @@ final class MeetingMonitor: ObservableObject {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                 call = Call(app: caller.name, bundleID: caller.bundleID, started: candidateSince!, event: Self.currentEvent()?.title)
             }
+            if let call { MeetingAssistant.shared.callStarted(call) }
         } else {
             candidateSince = nil
             guard call != nil else { return }
@@ -72,9 +73,12 @@ final class MeetingMonitor: ObservableObject {
     private func end(prompt: Bool) {
         guard let call else { return }
         let minutes = Int((quietSince ?? Date()).timeIntervalSince(call.started) / 60)
+        let endedAt = quietSince ?? Date()
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { self.call = nil }
         quietSince = nil
         candidateSince = nil
+        // Transcribed: its notes take the place of the usual prompt.
+        if MeetingAssistant.shared.callEnded(call, at: endedAt) { return }
         guard prompt, minutes >= 2 else { return }
         NotchPresenter.shared.offer(Prompt(icon: "phone.down.fill", tint: .systemGreen,
                                            title: "\(call.title) ended",

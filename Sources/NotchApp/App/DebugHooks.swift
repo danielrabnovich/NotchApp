@@ -55,6 +55,13 @@ enum DebugHooks {
             }
         case "clear": AssistantStore.shared.clear()
         case "ask": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "))
+        case "fakecall": MeetingAssistant.shared.debugMeeting()
+        case "planlog": // the proposed commands under review
+            log("PLAN " + (AssistantStore.shared.current?.plan?.commands.map { "[\($0.title) | \($0.subtitle ?? "")]" }.joined(separator: " ") ?? "none"))
+        case "meetingsclear": // removes kept calls with this exact title
+            let title = parts.dropFirst().joined(separator: " ")
+            MeetingAssistant.shared.meetings.filter { $0.title == title }.forEach { MeetingAssistant.shared.delete($0.id) }
+        case "followup": AssistantStore.shared.runFollowUp()
         case "askstate": // where the last question is up to, and its answer
             let job = AssistantStore.shared.current
             log("ASKSTATE status=\(AssistantStore.shared.status) route=\(String(describing: job?.route)) state=\(String(describing: job?.state)) answer=\((job?.answer ?? "").prefix(300))")

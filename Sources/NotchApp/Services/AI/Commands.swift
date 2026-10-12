@@ -61,6 +61,12 @@ struct Command: Identifiable, Equatable {
         case ramble
         /// An AI Command with the user's own instructions added ("in Spanish", "keep it under 50 words").
         case aiCommandWith(UUID, extra: String)
+        /// Live captions of what the Mac is playing, on or off.
+        case toggleCaptions
+        /// A question about the call going on, answered from its transcript.
+        case askCall(String)
+        /// A kept call's notes (written now if they haven't been).
+        case meetingNotes(UUID)
     }
 
     /// Code to run for an action, compared by its id.
@@ -145,6 +151,8 @@ enum CommandParser {
         if let c = PaletteCommands.translate(q, lower) ?? PaletteCommands.define(lower) ?? PaletteCommands.web(q, lower)
             ?? PaletteCommands.power(lower) ?? PaletteCommands.window(lower) { return [c] }
         if let c = utility(lower) ?? transform(lower) { return [c] }
+        if let c = captions(lower) ?? callQuestion(q, lower) { return [c] }
+        if let c = meetings(q, lower) { return c }
         if ["ramble", "brain dump", "braindump", "brain-dump", "dump"].contains(lower) {
             return [Command(action: .ramble, title: "Ramble", subtitle: "Talk or type it all out, get tasks back", icon: "waveform", verb: "Open")]
         }
@@ -351,6 +359,46 @@ enum CommandParser {
         }
             ?? "Clipboard isn't valid for that"
         return Command(action: .transformClipboard(t), title: "\(t.title) on clipboard", subtitle: preview, icon: "wand.and.rays", verb: "Apply")
+    }
+
+    // MARK: - Captions and calls
+
+    private static func captions(_ lower: String) -> Command? {
+        guard LiveCaptions.isSupported,
+              ["captions", "live captions", "caption", "subtitles", "closed captions", "cc", "transcribe", "stop captions",
+               "captions off", "captions on", "turn on captions", "turn off captions"].contains(lower) else { return nil }
+        let on = LiveCaptions.shared.showing
+        return Command(action: .toggleCaptions, title: on ? "Stop live captions" : "Live captions",
+                       subtitle: on ? "Turn off the captions under the notch" : "What's playing, as text under the notch · on this Mac",
+                       icon: "captions.bubble.fill", verb: on ? "Stop" : "Start")
+    }
+
+    /// During a transcribed call: "catch me up", "what did they say about pricing", "what did sam say".
+    private static func callQuestion(_ q: String, _ lower: String) -> Command? {
+        guard MeetingAssistant.shared.inCall else { return nil }
+        let asks = ["catch me up", "catch up", "what did i miss", "what did they say", "what did he say", "what did she say",
+                    "what was said", "what are they talking about", "what's being discussed", "did they mention", "did anyone mention",
+                    "what was the question", "what did they ask", "summarize the call", "summary so far"]
+        guard asks.contains(where: lower.hasPrefix) || (lower.hasPrefix("what did ") && lower.contains(" say")) else { return nil }
+        return Command(action: .askCall(q), title: lower.hasPrefix("catch") ? "Catch me up on the call" : q,
+                       subtitle: "From the call's transcript so far · on this Mac", icon: "waveform", verb: "Ask")
+    }
+
+    /// "meetings", "meeting pricing": kept calls, newest first, to read their notes.
+    private static func meetings(_ q: String, _ lower: String) -> [Command]? {
+        guard let prefix = ["meetings", "meeting", "calls", "call notes", "transcripts", "transcript"]
+            .first(where: { lower == $0 || lower.hasPrefix($0 + " ") }) else { return nil }
+        let found = MeetingAssistant.shared.search(String(q.dropFirst(prefix.count)), limit: 6)
+        guard !found.isEmpty else {
+            return MeetingAssistant.shared.meetings.isEmpty
+                ? [Command(action: .settingsPane(.calendar), title: "No transcribed calls yet",
+                           subtitle: "Turn on Transcribe calls in Settings → Calendar", icon: "waveform", verb: "Open")]
+                : [Command(action: .template(prefix + " "), title: "No call matches", icon: "waveform", verb: "Edit")]
+        }
+        return found.map { m in
+            Command(action: .meetingNotes(m.id), title: m.title, subtitle: "\(m.when) · \(m.minutes) min\(m.notes == nil ? "" : " · notes")",
+                    icon: "waveform.and.magnifyingglass", verb: "Notes")
+        }
     }
 
     private static func utility(_ lower: String) -> Command? {
@@ -847,6 +895,16 @@ final class CommandCenter: ObservableObject {
             return nil
         case .ramble:
             RambleStore.shared.open()
+            return nil
+        case .toggleCaptions:
+            LiveCaptions.shared.toggleCaptions()
+            NotchPresenter.shared.primary?.close()
+            return nil
+        case .askCall(let question):
+            MeetingAssistant.shared.catchUp(question)
+            return nil
+        case .meetingNotes(let id):
+            MeetingAssistant.shared.showNotes(id)
             return nil
         case .aiCommandWith(let id, let extra):
             if var command = AICommandStore.shared.command(id) {

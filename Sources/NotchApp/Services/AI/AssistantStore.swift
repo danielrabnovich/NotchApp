@@ -97,6 +97,53 @@ final class AssistantStore: ObservableObject {
         }
     }
 
+    /// What the follow-up button under the current answer does.
+    private var followUp: (() -> Void)?
+
+    /// Writing done by the model on material it's given (a meeting's notes, catching up on a call),
+    /// shown like any answer. `followUp`, once it's done, puts a button under it.
+    func runCustom(query: String, title: String, icon: String, stage: String = "Writing",
+                   work: @escaping @Sendable (@escaping @Sendable (String) async -> Void) async throws -> String,
+                   followUp: (@MainActor (String) -> (title: String, run: () -> Void)?)? = nil) {
+        task?.cancel()
+        var job = Job(query: query, route: .write)
+        job.actionTitle = title
+        job.actionIcon = icon
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
+        self.followUp = nil
+        let id = job.id
+        task = Task {
+            guard aiAvailable else {
+                update(id) { $0.state = .failed("This needs an AI model: Apple Intelligence, Ollama, or a cloud model's key, in Settings → Search.") }
+                return
+            }
+            update(id) { $0.state = .running(stage: stage) }
+            do {
+                let result = try await work { soFar in
+                    await MainActor.run { AssistantStore.shared.update(id, animated: false) { $0.answer = soFar } }
+                }
+                try Task.checkCancellation()
+                let next = followUp?(result)
+                self.followUp = next?.run
+                update(id) { $0.answer = result; $0.followUpTitle = next?.title; $0.state = .done }
+            } catch is CancellationError {
+            } catch {
+                update(id) { $0.state = .failed(error.localizedDescription) }
+            }
+        }
+    }
+
+    func runFollowUp() { followUp?() }
+
+    /// Proposed commands to review, as the actions route shows them (meeting action items).
+    func present(plan: CommandPlanner.Plan, query: String) {
+        task?.cancel()
+        var job = Job(query: query, route: .actions)
+        job.plan = plan
+        job.state = .done
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
+    }
+
     enum State: Equatable {
         case running(stage: String)
         case done
@@ -128,6 +175,8 @@ final class AssistantStore: ObservableObject {
         /// "Do it in this app": what could do it, best first, for a click (the app's name with them).
         var appPicks: [Command] = []
         var appName: String?
+        /// A next step offered under the answer ("Add 3 action items…"), run by `runFollowUp()`.
+        var followUpTitle: String?
         let startedAt = Date()
 
         var isRunning: Bool { if case .running = state { true } else { false } }

@@ -894,13 +894,21 @@ private struct MeetingReading: View {
     var compact = false
     @ObservedObject private var meetings = MeetingMonitor.shared
     @ObservedObject private var controls = ControlsService.shared
+    @ObservedObject private var captions = LiveCaptions.shared
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             HStack(spacing: compact ? 4 : 5) {
-                Circle().fill(.red).frame(width: 6, height: 6)
-                    .opacity(Int(context.date.timeIntervalSinceReferenceDate) % 2 == 0 ? 1 : 0.45)
-                    .animation(.easeInOut(duration: 0.6), value: Int(context.date.timeIntervalSinceReferenceDate))
+                // Being transcribed: a waveform instead of the dot, so it's plain the call is listened to.
+                Group {
+                    if captions.recording {
+                        Image(systemName: "waveform").font(.system(size: 9.5, weight: .bold)).foregroundStyle(.red)
+                    } else {
+                        Circle().fill(.red).frame(width: 6, height: 6)
+                    }
+                }
+                .opacity(Int(context.date.timeIntervalSinceReferenceDate) % 2 == 0 ? 1 : 0.45)
+                .animation(.easeInOut(duration: 0.6), value: Int(context.date.timeIntervalSinceReferenceDate))
                 Text(elapsed(at: context.date))
                     .font(LiveItemView.valueFont)
                     .foregroundStyle(.white.opacity(0.92))

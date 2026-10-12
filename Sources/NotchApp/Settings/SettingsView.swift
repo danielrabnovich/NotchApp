@@ -1491,6 +1491,11 @@ private struct CalendarPane: View {
                     ToggleRow("Meeting alerts", subtitle: "A heads-up from the notch before each meeting.", isOn: $s.meetingAlerts)
                     ToggleRow("Meeting mode", subtitle: "During a call (Zoom, Teams, FaceTime, Meet in a browser…), its time and a mute button beside the notch; after it, jot notes or a follow-up.",
                               isOn: $s.meetingMode)
+                    if s.meetingMode, LiveCaptions.isSupported {
+                        ToggleRow("Transcribe calls",
+                                  subtitle: "Both sides of a call turned into text on this Mac, never sent anywhere (the mic's orange dot shows while it listens). Ask “catch me up” during it, hear when someone says your name, and get notes and action items after. Tell the people on the call.",
+                                  isOn: $s.transcribeCalls)
+                    }
                     if s.meetingAlerts {
                         Stepper(value: $s.meetingAlertMinutes, in: 1...30) {
                             LabeledContent("Alert before") {

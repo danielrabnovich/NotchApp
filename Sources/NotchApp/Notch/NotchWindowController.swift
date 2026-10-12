@@ -160,7 +160,8 @@ final class NotchWindowController {
 
     /// On the card a resting pointer dropped under the notch: it's for reading, not opening.
     private func onGlancePeek(_ p: NSPoint) -> Bool {
-        viewModel.showsGlancePeek && p.y < screen.frame.maxY - viewModel.notchSize.height
+        (viewModel.showsGlancePeek || CaptionStrip.shared.showing) && !viewModel.isOpen
+            && p.y < screen.frame.maxY - viewModel.notchSize.height
     }
 
     private var dragHotRect: NSRect {
