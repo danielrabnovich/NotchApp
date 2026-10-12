@@ -105,10 +105,62 @@ final class ScreenshotWatcher {
         catchScreenshots(urls.filter { !seen.contains($0.path) })
     }
 
+    // MARK: - One shelf item per screenshot
+
+    /// Screenshots that just arrived, held a moment for their twins.
+    private var pending: [URL] = []
+    private var flushWork: DispatchWorkItem?
+    /// Name and size of each screenshot just caught, so a twin arriving later is let go.
+    private var recent: [String: Date] = [:]
+
+    /// Some screenshot apps write each capture twice: CleanShot keeps one in its own library
+    /// (~/Library/Application Support/CleanShot/media) besides the one in the folder you chose.
+    /// Both are marked as screen captures, so new ones wait a moment and twins (same name and
+    /// size) make one shelf item.
     private func catchScreenshots(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         seen.formUnion(urls.map(\.path))
-        ShelfStore.shared.add(urls)
-        ActivityCenter.shared.show(.screenshot(count: urls.count), for: 3)
+        pending += urls
+        flushWork?.cancel()
+        let work = DispatchWorkItem { MainActor.assumeIsolated { ScreenshotWatcher.shared.flush() } }
+        flushWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+    }
+
+    /// For notchdebug: screenshots arriving, as if just caught.
+    func debugCatch(_ urls: [URL]) { catchScreenshots(urls) }
+
+    private func flush() {
+        let now = Date()
+        recent = recent.filter { now.timeIntervalSince($0.value) < 60 }
+        var groups: [String: [URL]] = [:]
+        var order: [String] = []
+        for url in pending {
+            let key = Self.key(url)
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(url)
+        }
+        pending = []
+        let picked: [URL] = order.compactMap { key in
+            guard recent[key] == nil, let twins = groups[key] else { return nil }
+            recent[key] = now
+            return twins.min { Self.rank($0) < Self.rank($1) }
+        }
+        guard !picked.isEmpty else { return }
+        ShelfStore.shared.add(picked)
+        ActivityCenter.shared.show(.screenshot(count: picked.count), for: 3)
+    }
+
+    private static func key(_ url: URL) -> String {
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return "\(url.lastPathComponent)|\(size)"
+    }
+
+    /// The copy to keep: one you'd look for (the Desktop, a folder you chose) over an app's own
+    /// library or cache.
+    private static func rank(_ url: URL) -> Int {
+        let path = url.path
+        if path.contains("/Library/Application Support/") || path.contains("/Library/Caches/") || path.contains("/Library/Containers/") { return 1 }
+        return 0
     }
 }

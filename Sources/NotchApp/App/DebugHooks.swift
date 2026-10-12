@@ -273,6 +273,15 @@ enum DebugHooks {
                 let f = FocusMonitor.shared
                 DebugHooks.log("FOCUS readable=\(f.readable) current=\(f.current.map { "\($0.name) \($0.symbol) since=\(String(describing: $0.since)) until=\(String(describing: $0.until))" } ?? "none") shortcut=\(f.shortcut?.name ?? "-")")
             }
+        case "shelfdrop": // shelfdrop <path>: takes that file's item off the Shelf (the file stays)
+            let path = parts.dropFirst().joined(separator: " ")
+            ShelfStore.shared.remove(ShelfStore.shared.items.filter { $0.url.path == path })
+            log("SHELF " + ShelfStore.shared.items.suffix(3).map { $0.url.path }.joined(separator: " ; "))
+        case "shotcatch": // shotcatch <path>|<path>…: screenshots arriving at once (twins make one)
+            ScreenshotWatcher.shared.debugCatch(parts.dropFirst().joined(separator: " ").split(separator: "|").map { URL(fileURLWithPath: String($0)) })
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                DebugHooks.log("SHELF " + ShelfStore.shared.items.suffix(3).map { $0.url.path }.joined(separator: " ; "))
+            }
         case "suggest": SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
         case "suggestlog": // suggestlog <query…>: what the list offers for it
             SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
