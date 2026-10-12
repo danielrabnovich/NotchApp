@@ -356,13 +356,20 @@ final class LiveActivities: ObservableObject {
         AgentMonitor.shared.$sessions.sink { _ in refresh() }.store(in: &cancellables)
         VPNMonitor.shared.$connections.sink { _ in refresh() }.store(in: &cancellables)
         KeepAwake.shared.$isActive.sink { _ in refresh() }.store(in: &cancellables)
-        AppActions.shared.$glanceActions.sink { _ in refresh() }.store(in: &cancellables)
+        // These two change width with how many glyphs they hold: the row is laid out again.
+        let relayout: () -> Void = { [weak self] in
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.8)) { self?.objectWillChange.send() }
+                self?.recompute()
+            }
+        }
+        AppActions.shared.$glanceActions.sink { _ in relayout() }.store(in: &cancellables)
         MeetingMonitor.shared.$call.sink { _ in refresh() }.store(in: &cancellables)
         ProgressCenter.shared.$items.sink { _ in refresh() }.store(in: &cancellables)
         UnreadBadges.shared.$badges.sink { _ in refresh() }.store(in: &cancellables)
         TodayWeather.shared.$report.sink { _ in refresh() }.store(in: &cancellables)
         Cleaner.shared.$disk.sink { _ in refresh() }.store(in: &cancellables)
-        ShortcutsApp.shared.objectWillChange.sink { _ in refresh() }.store(in: &cancellables)
+        ShortcutsApp.shared.objectWillChange.sink { _ in relayout() }.store(in: &cancellables)
         // Network "only while busy" follows the rate, which changes every second.
         NetworkMonitor.shared.$downRate.sink { _ in
             if LiveActivities.shared.slot(for: .network)?.whileActive == true { refresh() }

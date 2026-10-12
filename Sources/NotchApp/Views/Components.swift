@@ -467,3 +467,25 @@ struct NotchPillButtonStyle: ButtonStyle {
         }
     }
 }
+
+/// Nudges a view onto whole pixels. Glances can land on quarter points (a centred 13.5 pt item),
+/// which leaves fine detail (a 2 pt dot, a 1 pt rule) shaded unevenly; this moves it by less
+/// than a pixel so it's drawn crisp. Measured outside the nudge, so it doesn't chase itself.
+struct PixelSnap: ViewModifier {
+    @Environment(\.displayScale) private var scale
+    @State private var nudge: CGSize = .zero
+
+    func body(content: Content) -> some View {
+        content
+            .offset(nudge)
+            .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { origin in
+                let snap = { (v: CGFloat) in (v * scale).rounded() / scale - v }
+                let next = CGSize(width: snap(origin.x), height: snap(origin.y))
+                if next != nudge { nudge = next }
+            }
+    }
+}
+
+extension View {
+    func pixelSnapped() -> some View { modifier(PixelSnap()) }
+}

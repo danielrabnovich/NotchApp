@@ -13,8 +13,51 @@ final class ShortcutsApp: ObservableObject {
         /// The Shortcuts folder it's in, if any.
         var folder: String?
 
-        /// The Shortcuts app hides its icons from other apps, so a glyph is the initial on one of its colors.
+        /// The Shortcuts app hides its icons from other apps, so a glyph is guessed from the name
+        /// ("Airplane Mode" → an airplane), or else the initial, on one of its colors.
         var initial: String { name.first.map { String($0).uppercased() } ?? "?" }
+
+        var symbol: String? {
+            let words = Set(name.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+            let n = name.lowercased()
+            for (keys, symbol) in Self.symbols where keys.contains(where: { $0.contains(" ") ? n.contains($0) : words.contains($0) }) {
+                return symbol
+            }
+            return nil
+        }
+
+        /// First match wins, so the more particular come first.
+        private static let symbols: [([String], String)] = [
+            (["airplane", "flight"], "airplane"),
+            (["exit node", "vpn", "tailscale"], "lock.shield.fill"),
+            (["night shift"], "moon.circle.fill"),
+            (["tesla", "car", "trunk", "frunk", "vehicle", "precondition", "drive"], "car.fill"),
+            (["sleep", "bedtime", "shuteye", "bed"], "moon.zzz.fill"),
+            (["focus", "dnd", "disturb"], "moon.fill"),
+            (["dictation", "dictate", "voice", "transcribe"], "mic.fill"),
+            (["display", "displays", "screen", "monitor", "resolution"], "display"),
+            (["screenshot"], "camera.viewfinder"),
+            (["music", "spotify", "song", "playlist", "podcast"], "music.note"),
+            (["volume", "sound", "audio"], "speaker.wave.2.fill"),
+            (["timer", "pomodoro", "countdown"], "timer"),
+            (["light", "lights", "lamp", "scene", "home"], "lightbulb.fill"),
+            (["wifi", "wi-fi", "network"], "wifi"),
+            (["bluetooth", "airpods", "headphones"], "headphones"),
+            (["email", "mail", "inbox"], "envelope.fill"),
+            (["message", "messages", "text", "sms", "imessage"], "message.fill"),
+            (["calendar", "event", "meeting", "schedule"], "calendar"),
+            (["reminder", "reminders", "task", "tasks", "todo"], "checklist"),
+            (["note", "notes", "journal", "log"], "note.text"),
+            (["photo", "photos", "image", "images", "picture", "resize", "convert"], "photo"),
+            (["clipboard", "copy", "paste"], "doc.on.clipboard"),
+            (["translate", "translation"], "character.bubble"),
+            (["weather", "forecast"], "cloud.sun.fill"),
+            (["battery", "charge", "charging"], "battery.75percent"),
+            (["download", "save"], "arrow.down.circle.fill"),
+            (["url", "web", "website", "safari", "browser", "link"], "safari.fill"),
+            (["alarm", "wake"], "alarm.fill"),
+            (["app", "apps", "launch", "open"], "square.grid.2x2.fill"),
+        ]
         var color: Color {
             let palette: [Color] = [
                 Color(red: 0.98, green: 0.36, blue: 0.4), Color(red: 1, green: 0.58, blue: 0.2), Color(red: 0.98, green: 0.78, blue: 0.2),
@@ -35,6 +78,8 @@ final class ShortcutsApp: ObservableObject {
     }
     /// Running now, by ID: their glyphs pulse.
     @Published private(set) var running: Set<String> = []
+    /// Just finished, by ID (true: it worked): the glyph shows ✓ or ! for a moment.
+    @Published private(set) var finished: [String: Bool] = [:]
 
     static let glanceLimit = 3
     /// How many glyphs the Shortcuts Glance draws, for its width.
@@ -209,13 +254,19 @@ final class ShortcutsApp: ObservableObject {
     }
 
     private func finish(_ s: Shortcut, _ outcome: Outcome) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { finished[s.id] = outcome.ok }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { _ = self?.finished.removeValue(forKey: s.id) }
+        }
+        // Its tile beside the notch says it's done; a Banner is for what it handed back.
+        let tileSays = glance.contains(s.id) && LiveActivities.shared.isShowingNow(.shortcuts)
         guard outcome.ok else {
             ActivityCenter.shared.show(.notice(title: "“\(s.name)” didn't finish", detail: outcome.error ?? "The Shortcut stopped with an error",
                                                icon: "exclamationmark.triangle.fill", tone: .warning), for: 4)
             return
         }
         guard let file = outcome.output, let data = try? Data(contentsOf: file) else {
-            ActivityCenter.shared.show(.notice(title: s.name, detail: "Done", icon: "square.2.layers.3d.fill"), for: 2)
+            if !tileSays { ActivityCenter.shared.show(.notice(title: s.name, detail: "Done", icon: "square.2.layers.3d.fill"), for: 2) }
             return
         }
         if NSImage(data: data) != nil {
@@ -231,7 +282,7 @@ final class ShortcutsApp: ObservableObject {
         if let text = String(data: data, encoding: .utf8), !text.contains("\0") {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
-                ActivityCenter.shared.show(.notice(title: s.name, detail: "Done", icon: "square.2.layers.3d.fill"), for: 2)
+                if !tileSays { ActivityCenter.shared.show(.notice(title: s.name, detail: "Done", icon: "square.2.layers.3d.fill"), for: 2) }
                 return
             }
             NSPasteboard.general.clearContents()

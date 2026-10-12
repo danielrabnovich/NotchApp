@@ -24,6 +24,7 @@ struct DuoGlyph: View {
     @State private var arrived: String?
     /// Plugging in: the ring sweeps up from empty to the charge, once.
     @State private var sweep: Double?
+    @Environment(\.displayScale) private var scale
     @State private var arrivedTask: Task<Void, Never>?
 
     private static let gap = 120.0
@@ -52,6 +53,7 @@ struct DuoGlyph: View {
             dots(d)
         }
         .frame(width: d, height: d)
+        .pixelSnapped()
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: onPower)
         .overlay { if scrollable { ScrollCatcher(onScroll: Self.scrollVolume) } }
         .onChange(of: onPower) { _, plugged in
@@ -169,18 +171,24 @@ struct DuoGlyph: View {
     }
 
     /// Four dots on a shallow curve under the middle, as on DuoBar (its offsets, per 230 of ring).
+    /// Each is a whole number of pixels across (an even number, so it's shaded the same on every
+    /// side) with its corner on a pixel: dots this small look lopsided anywhere in between.
     private func dots(_ d: CGFloat) -> some View {
         let xs: [CGFloat] = [-55.25, -19.5, 19.5, 55.25]
         let ys: [CGFloat] = [-6.5, 6.5, 6.5, -6.5]
         let lit = litDots
-        return ZStack {
+        let px = 1 / scale
+        let size = max(2, (d * 0.1 * scale / 2).rounded() * 2) * px
+        func snap(_ v: CGFloat) -> CGFloat { (v * scale).rounded() * px }
+        return ZStack(alignment: .topLeading) {
             ForEach(0..<4, id: \.self) { i in
                 Circle()
                     .fill(.white.opacity(i < lit ? 0.92 : 0.28))
-                    .frame(width: max(2, d * 0.1), height: max(2, d * 0.1))
-                    .offset(x: d * xs[i] / 230, y: d * 0.3 + d * ys[i] / 230)
+                    .frame(width: size, height: size)
+                    .offset(x: snap(d / 2 + d * xs[i] / 230 - size / 2), y: snap(d / 2 + d * 0.3 + d * ys[i] / 230 - size / 2))
             }
         }
+        .frame(width: d, height: d, alignment: .topLeading)
         .animation(.easeOut(duration: 0.15), value: lit)
     }
 

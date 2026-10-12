@@ -588,7 +588,7 @@ private struct ShortcutGlyphs: View {
                     .frame(width: 24)
             }
             ForEach(picked) { s in
-                let tile = ShortcutTile(shortcut: s, running: shortcuts.running.contains(s.id))
+                let tile = ShortcutTile(shortcut: s, running: shortcuts.running.contains(s.id), finished: shortcuts.finished[s.id])
                     .frame(width: 24, height: 22)
                 if picked.count > 1 {
                     tile.contentShape(Rectangle())
@@ -607,16 +607,32 @@ private struct ShortcutGlyphs: View {
 struct ShortcutTile: View {
     let shortcut: ShortcutsApp.Shortcut
     var running = false
+    /// Just finished: true worked (✓), false failed (!).
+    var finished: Bool? = nil
     var size: CGFloat = 15
 
     var body: some View {
-        Text(shortcut.initial)
-            .font(.system(size: size * 0.62, weight: .bold, design: .rounded))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(shortcut.color.gradient))
-            .opacity(running ? 0.55 : 1)
-            .animation(running ? .easeInOut(duration: 0.6).repeatForever() : .default, value: running)
+        ZStack {
+            if let finished {
+                Image(systemName: finished ? "checkmark" : "exclamationmark")
+                    .font(.system(size: size * 0.6, weight: .heavy))
+                    .transition(.scale(scale: 0.3).combined(with: .opacity))
+            } else if let symbol = shortcut.symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: size * 0.52, weight: .semibold))
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+            } else {
+                Text(shortcut.initial)
+                    .font(.system(size: size * 0.62, weight: .bold, design: .rounded))
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+            }
+        }
+        .foregroundStyle(.white)
+        .frame(width: size, height: size)
+        .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+            .fill(finished == false ? Color(red: 1, green: 0.27, blue: 0.23).gradient : shortcut.color.gradient))
+        .opacity(running ? 0.55 : 1)
+        .animation(running ? .easeInOut(duration: 0.6).repeatForever() : .default, value: running)
     }
 }
 
