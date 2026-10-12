@@ -5,6 +5,7 @@ import SwiftUI
 enum ControlAction: String, CaseIterable, Codable, Identifiable {
     case wifi, keepAwake, darkMode, mic, screenshot, colorPicker, lockScreen, emptyTrash
     case copyText, ports, speedTest, cleaner, clipboard, hiddenFiles, desktopIcons, nightShift, flushDNS, saveVideo
+    case scanQR, captions
 
     var id: String { rawValue }
 
@@ -28,6 +29,8 @@ enum ControlAction: String, CaseIterable, Codable, Identifiable {
         case .nightShift: "Night Shift"
         case .flushDNS: "Flush DNS"
         case .saveVideo: "Save Video"
+        case .scanQR: "Scan QR Code"
+        case .captions: "Live Captions"
         }
     }
 
@@ -51,6 +54,8 @@ enum ControlAction: String, CaseIterable, Codable, Identifiable {
         case .nightShift: "Warmer colors."
         case .flushDNS: "Clear the DNS cache (asks for your password)."
         case .saveVideo: "Download the video link you copied, with yt-dlp."
+        case .scanQR: "Read a QR code anywhere on screen, then open or copy it."
+        case .captions: "What's playing, as text under the notch."
         }
     }
 
@@ -74,6 +79,8 @@ enum ControlAction: String, CaseIterable, Codable, Identifiable {
         case .nightShift: "moon.circle.fill"
         case .flushDNS: "arrow.clockwise.circle"
         case .saveVideo: "arrow.down.circle.fill"
+        case .scanQR: "qrcode.viewfinder"
+        case .captions: "captions.bubble.fill"
         }
     }
 
@@ -95,6 +102,8 @@ enum ControlAction: String, CaseIterable, Codable, Identifiable {
         case .nightShift: Color(red: 1, green: 0.6, blue: 0.2)
         case .flushDNS: .cyan
         case .saveVideo: .red
+        case .scanQR: .blue
+        case .captions: .indigo
         }
     }
 

@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         FrontmostTracker.shared.start()
         AppActions.shared.start()
         ShortcutsApp.shared.refreshIfStale()
+        HeatWatcher.shared.start()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Onboarding.showIfNeeded() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { CrashReports.checkAtLaunch() }
         AppUpdater.shared.start()

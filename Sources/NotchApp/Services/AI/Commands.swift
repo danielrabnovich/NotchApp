@@ -410,6 +410,12 @@ enum CommandParser {
         case "ocr", "copy text", "grab text", "text from screen", "copy text from screen", "scan text":
             return Command(action: .copyText, title: "Copy text from the screen", subtitle: "Drag over the text you want",
                            icon: "text.viewfinder", verb: "Start")
+        case "qr", "qr code", "scan qr", "scan qr code", "read qr", "qrcode", "scan code", "barcode":
+            return Command(action: .perform(.init(id: "scanQR") {
+                // The notch closes first, so it isn't in the way of the code.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { MainActor.assumeIsolated { QRScanner.scan() } }
+                return nil
+            }), title: "Scan QR code on screen", subtitle: "Every display, then open or copy what it says", icon: "qrcode.viewfinder", verb: "Scan")
         case "flush dns", "flushdns", "clear dns", "dns flush", "reset dns":
             return Command(action: .flushDNS, title: "Flush the DNS cache", subtitle: "Asks for your password", icon: "arrow.clockwise.circle", verb: "Flush")
         case "hidden files", "show hidden files", "hide hidden files", "dotfiles":

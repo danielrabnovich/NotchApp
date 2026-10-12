@@ -96,6 +96,8 @@ extension ControlAction {
         case .flushDNS: tweaks.flushDNS()
         case .emptyTrash: controls.emptyTrash()
         case .speedTest: SpeedTest.shared.phase.isRunning ? SpeedTest.shared.cancel() : SpeedTest.shared.start()
+        case .scanQR: later { QRScanner.scan() }
+        case .captions: LiveCaptions.shared.toggleCaptions()
         case .keepAwake, .ports, .cleaner, .clipboard, .saveVideo: break // these open their own UI in the notch
         }
     }
@@ -107,8 +109,21 @@ extension ControlAction {
         case .clipboard: AppSettings.shared.clipboardHistory && AppSettings.shared.shelfEnabled
         case .nightShift: NightShift.isAvailable
         case .saveVideo: VideoDownloader.isAvailable
+        case .captions: LiveCaptions.isSupported
         default: true
         }
+    }
+}
+
+/// Live captions on and off, lit while they're on.
+private struct CaptionsTile: View {
+    @ObservedObject private var captions = LiveCaptions.shared
+
+    var body: some View {
+        ControlTile(icon: "captions.bubble.fill", title: "Captions", on: captions.showing, onTint: .indigo) {
+            captions.toggleCaptions()
+        }
+        .help("What's playing, as text under the notch")
     }
 }
 
@@ -147,6 +162,11 @@ private struct ActionTile: View {
                 closeThen { tweaks.copyTextFromScreen() }
             }
             .help("Drag over any part of the screen to copy the text in it")
+        case .scanQR:
+            ControlTile(icon: "qrcode.viewfinder", title: "Scan QR", on: false) { closeThen { QRScanner.scan() } }
+                .help("Read a QR code anywhere on screen")
+        case .captions:
+            CaptionsTile()
         case .ports:
             ControlTile(icon: action.icon, title: "Ports", on: false) {
                 ports.refresh()
