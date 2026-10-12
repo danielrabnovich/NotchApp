@@ -143,7 +143,9 @@ struct GlancePeekCard: View {
             HStack(spacing: 11) {
                 Group {
                     if item == .duo {
-                        DuoGlyph(diameter: 20)
+                        DuoGlyph(diameter: 20, scrollable: false)
+                    } else if item == .rings {
+                        StatRings(diameter: 20)
                     } else {
                         Image(systemName: c.icon)
                             .font(.system(size: 13, weight: .semibold))
@@ -151,7 +153,7 @@ struct GlancePeekCard: View {
                     }
                 }
                 .frame(width: 30, height: 30)
-                .background(Circle().fill(item == .duo ? .white.opacity(0.08) : c.tint.opacity(0.16)))
+                .background(Circle().fill(item == .duo || item == .rings ? .white.opacity(0.08) : c.tint.opacity(0.16)))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(c.title)
                         .font(.system(size: 12.5, weight: .semibold))

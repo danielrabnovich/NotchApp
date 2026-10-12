@@ -9,7 +9,8 @@ struct StatRings: View {
     var body: some View {
         let s = stats.snapshot
         let memory = s.memory.total > 0 ? Double(s.memory.used) / Double(s.memory.total) : 0
-        let line = (diameter * 0.12).rounded(.toNearestOrAwayFromZero) // whole points keep the rings crisp
+        // Whole points keep the rings crisp; at 2 pt the inner ring still has a hole at this size.
+        let line: CGFloat = diameter >= 26 ? 3 : 2
         let gap: CGFloat = 1
         ZStack {
             ring(s.cpuTotal, color: LiveItem.cpu.tint, warm: 0.6, hot: 0.85, inset: 0, line: line)
