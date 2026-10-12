@@ -308,7 +308,7 @@ final class NotchViewModel: ObservableObject {
             h += ActivityCenter.bannerHeight
         } else if showsGlancePeek {
             w = max(w, ActivityCenter.bannerWidth(notchWidth: notchSize.width))
-            h += ActivityCenter.bannerHeight
+            h += GlancePeekCard.height
         } else if alerts.reminder != nil {
             w = max(w, notchSize.width + 60)
             h += ActivityCenter.reminderHeight

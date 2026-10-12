@@ -48,18 +48,28 @@ func formatBytes(_ bytes: Int64) -> String {
     ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
 }
 
+/// A reading with one decimal below 10 and none from 10 up: "9.9", then "10". Rounded first, so
+/// 9.96 reads "10", never "10.0".
+func formatSmall(_ v: Double) -> String {
+    let tenth = (v * 10).rounded() / 10
+    return tenth < 10 ? String(format: "%.1f", tenth) : "\(Int(v.rounded()))"
+}
+
 /// A transfer rate in bytes per second as a short value and unit: ("12.4", "MB/s").
 func formatRate(_ bytesPerSecond: Double) -> (value: String, unit: String) {
     let units = ["B/s", "KB/s", "MB/s", "GB/s"]
     var v = max(0, bytesPerSecond)
     var i = 0
     while v >= 1000 && i < units.count - 1 { v /= 1000; i += 1 }
-    let value = i == 0 ? "\(Int(v))" : v < 10 ? String(format: "%.1f", v) : String(format: "%.0f", v)
+    let value = i == 0 ? "\(Int(v))" : formatSmall(v)
     return (value, units[i])
 }
 
 /// Megabits per second, the way speed tests report them: "842", "48.2", "6.10".
 func formatMbps(_ bitsPerSecond: Double) -> String {
     let m = bitsPerSecond / 1_000_000
-    return m >= 100 ? String(format: "%.0f", m) : m >= 10 ? String(format: "%.1f", m) : String(format: "%.2f", m)
+    // Decided on the rounded value, so 9.997 reads "10.0" and 99.97 reads "100", never "10.00" or "100.0".
+    if (m * 10).rounded() / 10 >= 100 { return String(format: "%.0f", m) }
+    if (m * 100).rounded() / 100 >= 10 { return String(format: "%.1f", m) }
+    return String(format: "%.2f", m)
 }

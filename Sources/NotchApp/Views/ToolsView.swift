@@ -403,7 +403,7 @@ private struct PingRow: View {
 
     private func ms(_ v: Double?) -> String {
         guard let v else { return pinging ? "…" : "–" }
-        return v < 10 ? String(format: "%.1f ms", v) : "\(Int(v.rounded())) ms"
+        return "\(formatSmall(v)) ms"
     }
 
     private func color(_ v: Double?, ok: Double, slow: Double) -> Color {

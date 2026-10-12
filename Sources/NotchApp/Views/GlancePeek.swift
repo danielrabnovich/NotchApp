@@ -146,7 +146,7 @@ enum GlancePeek {
         case .temperature:
             guard let t = s.cpuTemp else { return "–" }
             return AppSettings.shared.useFahrenheit ? "\(Int((t * 9 / 5 + 32).rounded()))°F" : "\(Int(t.rounded()))°"
-        case .power: return s.systemPower.map { $0 < 10 ? String(format: "%.1f W", $0) : "\(Int($0.rounded())) W" } ?? "–"
+        case .power: return s.systemPower.map { "\(formatSmall($0)) W" } ?? "–"
         default: return ""
         }
     }
@@ -178,6 +178,8 @@ enum GlancePeek {
 /// top with a caret pointing up at the Glance it's about, so it reads as that Glance's (and the
 /// Glance as the thing to click).
 struct GlancePeekCard: View {
+    /// A Banner's height and a little more: room between the hairline and the text.
+    static let height: CGFloat = 62
     let item: LiveItem
     /// The hovered Glance's middle, in the collapsed notch's coordinates.
     var anchorX: CGFloat?
@@ -222,7 +224,7 @@ struct GlancePeekCard: View {
             .animation(.snappy(duration: 0.25), value: c)
         }
         .padding(.horizontal, 14)
-        .padding(.top, 4)
+        .padding(.top, 12)
         .padding(.bottom, 6)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(CollapsedNotchView.space)) } action: { frame = $0 }
         .overlay(alignment: .top) {

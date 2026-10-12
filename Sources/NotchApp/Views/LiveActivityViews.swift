@@ -363,7 +363,7 @@ struct LiveItemView: View {
     /// "14W", or "6.5W" under ten.
     private func watts(_ value: Double?) -> String {
         guard let value else { return "–" }
-        return value < 10 ? String(format: "%.1fW", value) : "\(Int(value.rounded()))W"
+        return "\(formatSmall(value))W"
     }
 
     @ViewBuilder private var regularBody: some View {
@@ -643,7 +643,7 @@ private struct RingsReading: View {
     var body: some View {
         let s = stats.snapshot
         let temp = s.cpuTemp.map { settings.useFahrenheit ? "\(Int(($0 * 9 / 5 + 32).rounded()))°" : "\(Int($0.rounded()))°" }
-        let power = s.systemPower.map { $0 < 10 ? String(format: "%.1fW", $0) : "\(Int($0.rounded()))W" }
+        let power = s.systemPower.map { "\(formatSmall($0))W" }
         VStack(alignment: alignment, spacing: -1) {
             ForEach([temp, power].compactMap { $0 }, id: \.self) { line in
                 Text(line)

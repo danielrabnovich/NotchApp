@@ -429,7 +429,7 @@ private struct ToolUsageRow: View {
         }
         guard months > 0 else { return nil }
         let ratio = summary.cost / (monthly * months)
-        return ratio >= 0.1 ? String(format: ratio >= 10 ? "%.0f× plan" : "%.1f× plan", ratio) : nil
+        return ratio >= 0.1 ? "\(formatSmall(ratio))× plan" : nil
     }
 }
 

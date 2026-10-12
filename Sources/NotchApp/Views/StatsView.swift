@@ -247,7 +247,7 @@ private struct PowerCard: View {
         let s = monitor.snapshot
         let peak = max(20, (monitor.powerHistory.max() ?? 0) * 1.2)
         StatCard(title: "Power", icon: "bolt.fill", tint: StatsPalette.power,
-                 value: s.systemPower.map { String(format: $0 < 10 ? "%.1f" : "%.0f", $0) } ?? "–", unit: "W",
+                 value: s.systemPower.map(formatSmall) ?? "–", unit: "W",
                  mode: mode, onTap: onTap) {
             Sparkline(values: monitor.powerHistory.map { $0 / peak }, color: StatsPalette.power)
         } footer: {
@@ -769,7 +769,7 @@ private struct AppList: View {
 // MARK: - Formatting
 
 private func percent(_ v: Double) -> String { "\(Int((min(1, max(0, v)) * 100).rounded()))" }
-private func watts(_ v: Double) -> String { String(format: v < 10 ? "%.1f W" : "%.0f W", v) }
+private func watts(_ v: Double) -> String { "\(formatSmall(v)) W" }
 private func rpm(_ v: Double) -> String { v >= 1000 ? String(format: "%.1fk rpm", v / 1000) : "\(Int(v)) rpm" }
 private func gigabytes(_ bytes: UInt64) -> String { gigabytes(bytes, digits: 1) + " GB" }
 private func gigabytes(_ bytes: UInt64, digits: Int) -> String {

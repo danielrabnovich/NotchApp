@@ -63,8 +63,7 @@ struct CollapsedNotchView: View {
                 GlancePeekCard(item: item, anchorX: viewModel.peekAnchorX)
                     .frame(maxWidth: cardWidth)
                     .frame(maxWidth: .infinity)
-                    .frame(height: ActivityCenter.bannerHeight)
-
+                    .frame(height: GlancePeekCard.height)
                     .transition(.asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.18).delay(0.08)),
                                             removal: .opacity.animation(.easeOut(duration: 0.1))))
             } else if let reminder = activity.reminder {
