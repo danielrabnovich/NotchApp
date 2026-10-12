@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Contacts
 import EventKit
 import UserNotifications
 
@@ -10,7 +11,7 @@ final class Permissions: ObservableObject {
     static let shared = Permissions()
 
     enum Kind: String, CaseIterable, Identifiable {
-        case accessibility, screenRecording, files, calendar, finder, notifications, systemAudio, camera, fullDisk
+        case accessibility, screenRecording, files, calendar, finder, notifications, systemAudio, camera, fullDisk, contacts, microphone, location
         var id: String { rawValue }
     }
 
@@ -65,6 +66,18 @@ final class Permissions: ObservableObject {
             Info(title: "Full Disk Access", icon: "internaldrive.fill", tint: .systemGray,
                  unlocks: "The Focus Glance (which Focus is on), and the Trash's size in the Cleaner.",
                  level: .optional)
+        case .contacts:
+            Info(title: "Contacts", icon: "person.crop.circle.fill", tint: .systemBrown,
+                 unlocks: "Today's birthdays on Home and in the morning brief.",
+                 level: .optional)
+        case .microphone:
+            Info(title: "Microphone", icon: "mic.fill", tint: .systemOrange,
+                 unlocks: "Your side of a transcribed call, and sound alerts while you wear headphones.",
+                 level: .optional)
+        case .location:
+            Info(title: "Location", icon: "location.fill", tint: .systemBlue,
+                 unlocks: "When to leave for events with a place, and the Wi-Fi network's name in Duo.",
+                 level: .optional)
         }
     }
 
@@ -103,6 +116,21 @@ final class Permissions: ObservableObject {
         }
         // macOS never asks for this one, so it's on or not yet turned on.
         s[.fullDisk] = FocusMonitor.canRead ? .granted : .notAsked
+        switch CNContactStore.authorizationStatus(for: .contacts) {
+        case .authorized: s[.contacts] = .granted
+        case .denied, .restricted: s[.contacts] = .denied
+        default: s[.contacts] = .notAsked
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: s[.microphone] = .granted
+        case .denied, .restricted: s[.microphone] = .denied
+        default: s[.microphone] = .notAsked
+        }
+        switch LeaveBy.shared.authorization {
+        case .authorizedAlways: s[.location] = .granted
+        case .denied, .restricted: s[.location] = .denied
+        default: s[.location] = .notAsked
+        }
         s[.notifications] = status[.notifications] ?? .notAsked
         if s != status { status = s }
         UNUserNotificationCenter.current().getNotificationSettings { settings in
@@ -163,6 +191,12 @@ final class Permissions: ObservableObject {
             AVCaptureDevice.requestAccess(for: .video) { _ in Task { @MainActor in Permissions.shared.refresh() } }
         case .fullDisk:
             openSettings(kind)
+        case .contacts:
+            Birthdays.shared.requestAccess { _ in Permissions.shared.refresh() }
+        case .microphone:
+            AVCaptureDevice.requestAccess(for: .audio) { _ in Task { @MainActor in Permissions.shared.refresh() } }
+        case .location:
+            LeaveBy.shared.requestAccess()
         }
     }
 
@@ -177,6 +211,9 @@ final class Permissions: ObservableObject {
         case .systemAudio: anchor = "Privacy_AudioCapture"
         case .camera: anchor = "Privacy_Camera"
         case .fullDisk: anchor = "Privacy_AllFiles"
+        case .contacts: anchor = "Privacy_Contacts"
+        case .microphone: anchor = "Privacy_Microphone"
+        case .location: anchor = "Privacy_LocationServices"
         case .notifications:
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!)
             return

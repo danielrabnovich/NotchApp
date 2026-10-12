@@ -1,3 +1,4 @@
+import AVFoundation
 import AppKit
 import Carbon.HIToolbox
 import EventKit
@@ -1556,6 +1557,14 @@ private struct ToolsSettingsPane: View {
                 ToggleRow("Low battery alerts", subtitle: "When AirPods, a mouse or a keyboard drops to 20%.", isOn: $s.deviceBatteryAlerts)
                 ToggleRow("Microphone and camera alerts", subtitle: "A heads-up when an app starts using them, and which app has the microphone.",
                           isOn: $s.privacyAlerts)
+                ToggleRow("Sound alerts", subtitle: "While you've got headphones on: a doorbell, a knock, a smoke alarm, a baby, a dog, a siren or a phone. Heard on this Mac, nothing kept; the mic's orange dot shows while it listens.",
+                          isOn: $s.soundAlerts)
+                    .onChange(of: s.soundAlerts) { _, on in
+                        guard on else { return }
+                        AVCaptureDevice.requestAccess(for: .audio) { _ in
+                            DispatchQueue.main.async { SoundAlerts.shared.reconcile(); Permissions.shared.refresh() }
+                        }
+                    }
             }
         }
     }

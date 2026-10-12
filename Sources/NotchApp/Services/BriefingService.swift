@@ -163,6 +163,7 @@ final class BriefingService {
     // MARK: - Morning brief
 
     func maybeShowBrief(force: Bool = false) {
+        Birthdays.shared.refreshIfStale()
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
         if !force {
@@ -207,6 +208,10 @@ final class BriefingService {
         let meetings = CalendarManager.shared.events.filter { !$0.isAllDay && $0.endDate > now }
 
         var items: [Brief.Item] = []
+        for p in Birthdays.shared.today {
+            items.append(.init(icon: "birthday.cake.fill", title: "\(p.name)'s birthday",
+                               detail: p.turning.map { "Turning \($0)" } ?? "Today", color: .systemPink))
+        }
         for t in overdue { items.append(.init(icon: "exclamationmark.circle.fill", title: t.title, detail: "Overdue", color: .systemRed)) }
         for t in dueToday { items.append(.init(icon: "clock.fill", title: t.title, detail: "Due \(t.due!.formatted(time))", color: .systemOrange)) }
         for e in meetings.prefix(4) {

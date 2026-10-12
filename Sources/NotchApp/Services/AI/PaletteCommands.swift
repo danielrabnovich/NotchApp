@@ -51,6 +51,8 @@ enum PaletteCommands {
         .init(title: "Agent alerts", pane: .agents, words: ["agent notifications"], key: \.agentAlerts),
         .init(title: "Keep awake while agents work", pane: .agents, words: ["agents keep awake"], key: \.agentsKeepAwake),
         .init(title: "Calendar", pane: .calendar, words: ["events"], key: \.calendarEnabled),
+        .init(title: "Transcribe calls", pane: .calendar, words: ["transcripts", "meeting notes", "call notes", "record calls"], key: \.transcribeCalls),
+        .init(title: "Sound alerts", pane: .tools, words: ["doorbell", "sound recognition", "headphone alerts"], key: \.soundAlerts),
         .init(title: "Meeting alerts", pane: .calendar, words: ["meeting reminders"], key: \.meetingAlerts),
         .init(title: "Morning brief", pane: .assistant, words: ["brief", "daily summary"], key: \.morningBrief),
         .init(title: "Due-soon nudges", pane: .assistant, words: ["nudges", "reminders"], key: \.dueNudges),

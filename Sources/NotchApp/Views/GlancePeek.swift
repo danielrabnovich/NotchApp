@@ -87,7 +87,9 @@ enum GlancePeek {
                 c.title = event.title ?? "Event"
                 let time = event.startDate.formatted(date: .omitted, time: .shortened)
                 let link = MeetingLinks.find(in: event) != nil ? "has a call link" : nil
-                c.detail = [time, event.location?.nilIfEmpty, link].compactMap { $0 }.joined(separator: " · ")
+                let trip = LeaveBy.shared.trip.flatMap { $0.eventID == event.eventIdentifier ? $0 : nil }
+                let drive = trip.map { "leave by \($0.leaveAt.formatted(date: .omitted, time: .shortened)), \(Int(($0.travel / 60).rounded())) min drive" }
+                c.detail = [time, drive, event.location?.nilIfEmpty, link].compactMap { $0 }.joined(separator: " · ")
             } else {
                 c.title = "Nothing else today"
             }

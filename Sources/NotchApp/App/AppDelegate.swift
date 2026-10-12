@@ -40,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppActions.shared.start()
         ShortcutsApp.shared.refreshIfStale()
         HeatWatcher.shared.start()
+        LeaveBy.shared.start()
+        SoundAlerts.shared.start()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { Onboarding.showIfNeeded() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { CrashReports.checkAtLaunch() }
         AppUpdater.shared.start()

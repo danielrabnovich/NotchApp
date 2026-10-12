@@ -10,6 +10,7 @@ struct TodayPanel: View {
     @EnvironmentObject private var tasks: TaskStore
     @EnvironmentObject private var settings: AppSettings
     @ObservedObject private var weather = TodayWeather.shared
+    @ObservedObject private var birthdays = Birthdays.shared
 
     var body: some View {
         // A minute is fine enough for "in 25 min" and for when the next event moves up.
@@ -17,6 +18,16 @@ struct TodayPanel: View {
             let now = context.date
             VStack(alignment: .leading, spacing: 8) {
                 header
+                // Someone's birthday: a line of its own, first thing.
+                if !birthdays.today.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "birthday.cake.fill").foregroundStyle(.pink)
+                        Text(birthdays.today.map { p in p.turning.map { "\(p.name) turns \($0)" } ?? "\(p.name)'s birthday" }.joined(separator: " · "))
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.85))
+                }
                 if settings.calendarEnabled, !calendar.hasAccess {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("See today's events here.")
@@ -32,7 +43,10 @@ struct TodayPanel: View {
                 }
             }
         }
-        .onAppear { weather.refreshIfStale() }
+        .onAppear {
+            weather.refreshIfStale()
+            birthdays.refreshIfStale()
+        }
     }
 
     private var header: some View {

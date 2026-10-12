@@ -1098,17 +1098,27 @@ private struct PrivacyReading: View {
 private struct NextEventReading: View {
     var compact = false
     @EnvironmentObject private var calendar: CalendarManager
+    @ObservedObject private var leaveBy = LeaveBy.shared
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 20)) { context in
             if let event = LiveActivities.nextEvent(now: context.date) {
-                let minutes = Int(event.startDate.timeIntervalSince(context.date) / 60)
+                // With a place to drive to, the count is to leaving, not to the start.
+                let leave = leaveBy.minutesToLeave(for: event, now: context.date)
+                let minutes = leave ?? Int(event.startDate.timeIntervalSince(context.date) / 60)
                 HStack(spacing: 5) {
-                    Circle()
-                        .fill(Color(cgColor: event.calendar.cgColor))
-                        .frame(width: 7, height: 7)
-                    Text(minutes < 60 ? (compact ? "\(max(minutes, 1))m" : "in \(max(minutes, 1))m")
-                         : compact ? "\(minutes / 60)h" : event.startDate.formatted(date: .omitted, time: .shortened))
+                    if leave != nil {
+                        Image(systemName: "car.fill")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(Color(cgColor: event.calendar.cgColor))
+                    } else {
+                        Circle()
+                            .fill(Color(cgColor: event.calendar.cgColor))
+                            .frame(width: 7, height: 7)
+                    }
+                    Text(leave.map { $0 <= 0 ? "Leave now" : compact ? "\($0)m" : "leave \($0)m" }
+                         ?? (minutes < 60 ? (compact ? "\(max(minutes, 1))m" : "in \(max(minutes, 1))m")
+                             : compact ? "\(minutes / 60)h" : event.startDate.formatted(date: .omitted, time: .shortened)))
                         .font(LiveItemView.valueFont)
                         .rollingDigits(minutes)
                         .foregroundStyle(minutes < 10 ? Color(cgColor: event.calendar.cgColor) : .white.opacity(0.92))
