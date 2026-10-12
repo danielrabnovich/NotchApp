@@ -8,7 +8,12 @@ let package = Package(
         .executableTarget(
             name: "NotchApp",
             path: "Sources/NotchApp",
-            swiftSettings: [.unsafeFlags(["-Onone"], .when(configuration: .debug))],
+            swiftSettings: [
+                .unsafeFlags(["-Onone"], .when(configuration: .debug)),
+                // Constant values the App Intents metadata is read from (build.sh), as Xcode asks for them.
+                .unsafeFlags(["-emit-const-values", "-Xfrontend", "-const-gather-protocols-file",
+                              "-Xfrontend", "\(Context.packageDirectory)/Resources/appintents-protocols.json"]),
+            ],
             linkerSettings: [.linkedLibrary("IOReport")]
         )
     ]

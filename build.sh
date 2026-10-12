@@ -34,6 +34,25 @@ cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 cp build/MediaAdapter.dylib MediaAdapter/adapter.pl "$APP/Contents/Resources/"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
+# The App Intents (Shortcuts, Siri) metadata, as Xcode would extract it: needs Xcode's toolchain.
+if TOOL=$(xcrun --find appintentsmetadataprocessor 2>/dev/null); then
+  echo "▸ Extracting App Intents…"
+  META=build/appintents
+  rm -rf "$META" && mkdir -p "$META/out"
+  find "$PWD/.build" -path "*/Release/*" -name "*.swiftconstvalues" > "$META/constvals.list"
+  find "$PWD/Sources/NotchApp" -name "*.swift" > "$META/sources.list"
+  if xcrun appintentsmetadataprocessor --output "$META/out" \
+       --toolchain-dir "$(dirname "$(dirname "$(dirname "$TOOL")")")" --module-name "$APP_NAME" \
+       --sdk-root "$(xcrun --show-sdk-path)" --xcode-version "$(xcodebuild -version | awk '/Build version/{print $3}')" \
+       --platform-family macOS --deployment-target 14.2 --target-triple "$(uname -m)-apple-macos14.2" \
+       --source-file-list "$META/sources.list" --swift-const-vals-list "$META/constvals.list" \
+       --binary-file "$BIN" > "$META/log.txt" 2>&1 && [ -d "$META/out/Metadata.appintents" ]; then
+    cp -R "$META/out/Metadata.appintents" "$APP/Contents/Resources/"
+  else
+    echo "  (skipped: see $META/log.txt)"
+  fi
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
