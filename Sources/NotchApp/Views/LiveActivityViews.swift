@@ -15,7 +15,9 @@ struct LiveSide: View {
             if side == .left, row.overflow > 0 { overflow }
             ForEach(row.items, id: \.item) { entry in
                 GlanceButton(item: entry.item, viewModel: viewModel) {
+                    // On whole pixels: a side's Glances can land on quarter points.
                     LiveItemView(item: entry.item, notchHeight: h, compact: entry.compact)
+                        .pixelSnapped()
                 }
                 .frame(width: entry.item.width(notchHeight: h, compact: entry.compact), height: h)
                 .transition(.scale(scale: 0.5).combined(with: .opacity))

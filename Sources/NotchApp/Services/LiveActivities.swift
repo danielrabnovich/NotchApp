@@ -255,7 +255,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .meeting: 46
         case .progress: 22
         case .worldClock: 40
-        case .weather: 32
+        case .weather: 42 // the sky and the temperature both stay: either alone says too little
         case .goldenHour: 40
         case .unread: 26
         case .countdown: 30
