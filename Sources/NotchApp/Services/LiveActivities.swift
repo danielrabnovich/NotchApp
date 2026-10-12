@@ -12,6 +12,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
     case worldClock, weather, goldenHour, unread, countdown
     /// Battery, network and volume in one ring (after DuoBar).
     case duo
+    /// CPU, GPU and memory as three nested rings.
+    case rings
     /// Actions: a button beside the notch rather than a reading.
     case askScreen, quickScreenshot, quickCopyText, quickColorPicker, quickLock, quickDarkMode, quickMic, quickWiFi, quickNightShift
     /// The actions starred for the app in front (right-click one under the search bar).
@@ -68,6 +70,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .unread: "Unread"
         case .countdown: "Countdown"
         case .duo: "Duo"
+        case .rings: "Rings"
         case .shortcuts: "Shortcuts"
         case .askScreen: "Ask About This"
         case .appAction: "App Actions"
@@ -102,6 +105,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .unread: "Unread counts from Slack, Discord, Mail and the rest of your Dock, in one place."
         case .countdown: "Days until a date you set: a launch, a trip, a deadline."
         case .duo: "Battery, network and volume in one small ring, after DuoBar."
+        case .rings: "CPU, GPU and memory as three rings in one glyph."
         case .shortcuts: "Up to three of your Shortcuts, one click each (pick them under Glance options)."
         case .askScreen: "Ask the AI about the window in front."
         case .appAction: "Actions you star for an app (right-click one under the search bar), while that app is in front."
@@ -136,6 +140,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .unread: "bubble.left.and.bubble.right.fill"
         case .countdown: "flag.checkered"
         case .duo: "circle.circle"
+        case .rings: "target"
         case .shortcuts: "square.2.layers.3d.fill"
         case .askScreen: "sparkle.magnifyingglass"
         case .appAction: "star.square.on.square"
@@ -170,6 +175,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .unread: .red
         case .countdown: .purple
         case .duo: .mint
+        case .rings: .cyan
         case .shortcuts: .pink
         case .askScreen: .indigo
         case .appAction: .orange
@@ -225,6 +231,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .unread: 52
         case .countdown: 56
         case .duo: 30
+        case .rings: 28
         case .shortcuts: CGFloat(max(1, ShortcutsApp.glanceCount)) * 24
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
@@ -253,13 +260,14 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .unread: 26
         case .countdown: 30
         case .duo: 30
+        case .rings: 28
         case .shortcuts: CGFloat(max(1, ShortcutsApp.glanceCount)) * 24
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
         }
     }
 
-    var usesStats: Bool { [.cpu, .temperature, .memory, .gpu, .power].contains(self) }
+    var usesStats: Bool { [.cpu, .temperature, .memory, .gpu, .power, .rings].contains(self) }
 }
 
 struct LiveSlot: Codable, Identifiable, Equatable {
@@ -575,7 +583,7 @@ final class LiveActivities: ObservableObject {
             return BatteryMonitor.shared.hasBattery
         case .tasks:
             return TaskStore.shared.openCount > 0
-        case .cpu, .memory, .gpu:
+        case .cpu, .memory, .gpu, .rings:
             return true
         case .power:
             // Not every Mac reports it either.

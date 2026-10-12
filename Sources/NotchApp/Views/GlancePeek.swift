@@ -28,6 +28,10 @@ enum GlancePeek {
             let b = BatteryMonitor.shared
             c.title = "Battery \(b.level)%" + (b.isCharging ? ", charging" : b.isPluggedIn ? ", on power" : "")
             c.detail = [timeLeft(), b.lowPowerMode ? "Low Power Mode" : nil].compactMap { $0 }.joined(separator: " · ").nilIfEmpty ?? "Estimating…"
+        case .rings:
+            c.title = [LiveItem.cpu, .gpu, .memory].map { "\($0.title) \(reading($0))" }.filter { !$0.hasSuffix("–") }.joined(separator: " · ")
+            c.detail = [LiveItem.temperature, .power].map { "\($0 == .temperature ? "Temp" : $0.title) \(reading($0))" }
+                .filter { !$0.hasSuffix("–") }.joined(separator: " · ")
         case .cpu, .gpu, .memory, .temperature, .power:
             c.title = "\(item.title) · \(reading(item))"
             c.detail = [LiveItem.cpu, .memory, .gpu, .temperature, .power].filter { $0 != item }
@@ -86,7 +90,7 @@ enum GlancePeek {
         case .duo: "Open Controls"
         case .shortcuts: ShortcutsApp.shared.glanceShortcuts.count == 1 ? "Run" : nil
         case .appAction: AppActions.shared.glanceActions.count == 1 ? "Run" : nil
-        case .cpu, .gpu, .memory, .temperature, .power, .battery: "Open Stats"
+        case .cpu, .gpu, .memory, .temperature, .power, .battery, .rings: "Open Stats"
         default: GlanceActions.hint(for: item)
         }
     }

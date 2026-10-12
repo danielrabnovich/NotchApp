@@ -127,7 +127,7 @@ enum GlanceActions {
         case .nextEvent: LiveActivities.nextEvent().flatMap(MeetingLinks.find) != nil ? "Join Meeting" : "Show Calendar"
         case .agents:
             AgentMonitor.shared.waiting.first != nil ? "Go to the Agent Waiting for You" : "Show Agents"
-        case .cpu, .gpu, .memory, .temperature, .power, .battery: "Show in Stats"
+        case .cpu, .gpu, .memory, .temperature, .power, .battery, .rings: "Show in Stats"
         case .tasks: "Show Tasks"
         case .network: "Show Network"
         case .vpn: "Show VPN"
@@ -235,7 +235,7 @@ enum GlanceActions {
         case .tasks: defaults.set(TasksPane.tasks.rawValue, forKey: "tasks.pane"); tab = .tasks
         case .agents: tab = .agents
         case .keepAwake: tab = .controls
-        case .cpu, .temperature: SystemMonitor.shared.requestCard(.cpu); tab = .stats
+        case .cpu, .temperature, .rings: SystemMonitor.shared.requestCard(.cpu); tab = .stats
         case .gpu: SystemMonitor.shared.requestCard(.gpu); tab = .stats
         case .memory: SystemMonitor.shared.requestCard(.memory); tab = .stats
         case .power, .battery: SystemMonitor.shared.requestCard(.power); tab = .stats
@@ -326,7 +326,7 @@ struct LiveItemView: View {
         case .worldClock, .weather, .goldenHour, .unread, .countdown:
             ExtraReading(item: item, compact: true)
         case .tasks, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
-             .quickWiFi, .quickNightShift, .appAction, .shortcuts, .duo:
+             .quickWiFi, .quickNightShift, .appAction, .shortcuts, .duo, .rings:
             regularBody
         }
     }
@@ -415,6 +415,8 @@ struct LiveItemView: View {
             ShortcutGlyphs()
         case .duo:
             DuoGlyph(diameter: min(22, notchHeight - 10))
+        case .rings:
+            StatRings(diameter: min(22, notchHeight - 10))
         case .tasks:
             Text("\(tasks.openCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())
@@ -612,14 +614,21 @@ struct ShortcutTile: View {
     var size: CGFloat = 15
 
     var body: some View {
+        // Symbols sized as images, not set as text: text sits on its baseline, below the tile's middle.
         ZStack {
             if let finished {
                 Image(systemName: finished ? "checkmark" : "exclamationmark")
-                    .font(.system(size: size * 0.6, weight: .heavy))
+                    .resizable()
+                    .fontWeight(.heavy)
+                    .scaledToFit()
+                    .frame(width: size * 0.5, height: size * 0.5)
                     .transition(.scale(scale: 0.3).combined(with: .opacity))
             } else if let symbol = shortcut.symbol {
                 Image(systemName: symbol)
-                    .font(.system(size: size * 0.52, weight: .semibold))
+                    .resizable()
+                    .fontWeight(.semibold)
+                    .scaledToFit()
+                    .frame(width: size * 0.6, height: size * 0.6)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             } else {
                 Text(shortcut.initial)
@@ -631,6 +640,7 @@ struct ShortcutTile: View {
         .frame(width: size, height: size)
         .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
             .fill(finished == false ? Color(red: 1, green: 0.27, blue: 0.23).gradient : shortcut.color.gradient))
+        .pixelSnapped()
         .opacity(running ? 0.55 : 1)
         .animation(running ? .easeInOut(duration: 0.6).repeatForever() : .default, value: running)
     }
