@@ -251,25 +251,45 @@ enum AppPack {
                 Cutout.run(files); return nil
             })
         }
-        let order: [MediaConverter.Operation] = [.toGIF, .compressVideo, .audioM4A, .toMP3, .toPNG, .toJPEG, .halfSize]
-        let titles: [MediaConverter.Operation: String] = [.toGIF: "Make GIF", .compressVideo: "Compress video", .audioM4A: "Extract audio",
-                                                          .toMP3: "Convert to MP3", .toPNG: "Convert to PNG", .toJPEG: "Convert to JPEG",
-                                                          .halfSize: "Resize to half"]
-        for op in order where ops.contains(op) {
-            out.append(kit.perform("files." + op.rawValue, titles[op] ?? op.title, names(files), icon(op)) {
+        // The two most wanted for the kind of file (the list puts them first), then every other
+        // conversion behind "Convert…" (the row has room for five).
+        for op in ops.prefix(images ? 1 : 2) {
+            out.append(kit.perform("files." + op.rawValue, chipTitle(op), names(files), icon(op)) {
                 MediaConverter.shared.convert(files, op)
                 return "\(op.title)…"
             })
         }
+        if ops.count > (images ? 1 : 2) {
+            out.append(kit.perform("files.convert", "Convert…", names(files), "wand.and.stars") {
+                MediaConverter.shared.offer(files)
+                return nil
+            })
+        }
         return out
+    }
+
+    /// Short names for the row ("Make GIF" rather than "Make a GIF").
+    private static func chipTitle(_ op: MediaConverter.Operation) -> String {
+        switch op {
+        case .toGIF: "Make GIF"
+        case .compressVideo: "Compress video"
+        case .makeVertical: "Make vertical"
+        case .normalizeLoudness: "Normalize loudness"
+        case .youtubeThumbnail: "YouTube thumbnail"
+        default: op.title.replacingOccurrences(of: "Convert to", with: "To")
+        }
     }
 
     private static func icon(_ op: MediaConverter.Operation) -> String {
         switch op {
         case .toGIF: "photo.stack"
         case .compressVideo: "arrow.down.right.and.arrow.up.left"
-        case .audioM4A, .audioMP3, .toMP3, .toM4A: "waveform"
+        case .makeVertical: "rectangle.portrait"
+        case .normalizeLoudness: "speaker.wave.2"
+        case .audioM4A, .audioMP3, .audioWAV, .toMP3, .toM4A, .toWAV, .toFLAC, .toAIFF: "waveform"
         case .halfSize: "arrow.down.left.and.arrow.up.right"
+        case .youtubeThumbnail: "play.rectangle"
+        case .toMP4, .toWebM: "film"
         default: "photo"
         }
     }

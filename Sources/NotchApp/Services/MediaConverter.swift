@@ -10,7 +10,9 @@ final class MediaConverter: ObservableObject {
     static let shared = MediaConverter()
 
     enum Operation: String, CaseIterable, Identifiable {
-        case compressVideo, toMP4, toGIF, audioM4A, audioMP3, toMP3, toM4A, toJPEG, toPNG, halfSize
+        case compressVideo, toMP4, toWebM, toGIF, makeVertical, audioM4A, audioMP3, audioWAV
+        case toMP3, toM4A, toWAV, toFLAC, toAIFF, normalizeLoudness
+        case toJPEG, toPNG, toHEIC, toWebP, toTIFF, halfSize, youtubeThumbnail
 
         var id: String { rawValue }
 
@@ -18,14 +20,25 @@ final class MediaConverter: ObservableObject {
             switch self {
             case .compressVideo: "Compress Video"
             case .toMP4: "Convert to MP4"
+            case .toWebM: "Convert to WebM"
             case .toGIF: "Make a GIF"
+            case .makeVertical: "Make Vertical (9:16)"
             case .audioM4A: "Extract Audio (M4A)"
             case .audioMP3: "Extract Audio (MP3)"
+            case .audioWAV: "Extract Audio (WAV)"
             case .toMP3: "Convert to MP3"
             case .toM4A: "Convert to M4A"
+            case .toWAV: "Convert to WAV"
+            case .toFLAC: "Convert to FLAC"
+            case .toAIFF: "Convert to AIFF"
+            case .normalizeLoudness: "Normalize Loudness"
             case .toJPEG: "Convert to JPEG"
             case .toPNG: "Convert to PNG"
+            case .toHEIC: "Convert to HEIC"
+            case .toWebP: "Convert to WebP"
+            case .toTIFF: "Convert to TIFF"
             case .halfSize: "Resize to Half"
+            case .youtubeThumbnail: "YouTube Thumbnail (1280×720)"
             }
         }
 
@@ -33,23 +46,36 @@ final class MediaConverter: ObservableObject {
             switch self {
             case .compressVideo: " (compressed)"
             case .halfSize: " (half size)"
+            case .makeVertical: " (vertical)"
+            case .normalizeLoudness: " (normalized)"
+            case .youtubeThumbnail: " (thumbnail)"
             default: ""
             }
         }
 
         var outputExtension: String? {
             switch self {
-            case .compressVideo, .toMP4: "mp4"
+            case .compressVideo, .toMP4, .makeVertical: "mp4"
+            case .toWebM: "webm"
             case .toGIF: "gif"
             case .audioM4A, .toM4A: "m4a"
             case .audioMP3, .toMP3: "mp3"
-            case .toJPEG: "jpg"
+            case .audioWAV, .toWAV: "wav"
+            case .toFLAC: "flac"
+            case .toAIFF: "aiff"
+            case .toJPEG, .youtubeThumbnail: "jpg"
             case .toPNG: "png"
-            case .halfSize: nil // keeps its type
+            case .toHEIC: "heic"
+            case .toWebP: "webp"
+            case .toTIFF: "tiff"
+            case .halfSize, .normalizeLoudness: nil // keeps its type
             }
         }
 
-        var usesFFmpeg: Bool { ![.toJPEG, .toPNG, .halfSize].contains(self) }
+        /// A change of format, pointless on a file already in it.
+        var isFormatChange: Bool { ![.compressVideo, .halfSize, .normalizeLoudness, .makeVertical, .youtubeThumbnail, .toGIF].contains(self) }
+
+        var usesFFmpeg: Bool { ![.toJPEG, .toPNG, .toHEIC, .toTIFF, .halfSize, .toWebP].contains(self) }
     }
 
     enum Kind { case video, audio, image }
@@ -77,19 +103,27 @@ final class MediaConverter: ObservableObject {
         return nil
     }
 
-    /// What can be done with a set of files (they must all be the same kind).
+    /// What can be done with a set of files (they must all be the same kind), most useful first;
+    /// never a format they're all already in.
     static func operations(for urls: [URL]) -> [Operation] {
         let kinds = Set(urls.compactMap(kind(of:)))
         guard kinds.count == 1, let kind = kinds.first, urls.allSatisfy({ Self.kind(of: $0) != nil }) else { return [] }
         let ffmpeg = VideoDownloader.ffmpeg != nil
+        let exts = Set(urls.map { $0.pathExtension.lowercased() }.map { $0 == "jpeg" ? "jpg" : $0 == "aif" ? "aiff" : $0 == "tif" ? "tiff" : $0 })
+        let all: [Operation]
         switch kind {
-        case .video: return ffmpeg ? [.compressVideo, .toMP4, .toGIF, .audioM4A, .audioMP3] : []
-        case .audio: return ffmpeg ? [.toMP3, .toM4A] : []
-        case .image:
-            let ext = Set(urls.map { $0.pathExtension.lowercased() })
-            return [ext == ["jpg"] || ext == ["jpeg"] ? nil : .toJPEG, ext == ["png"] ? nil : .toPNG, .halfSize].compactMap { $0 }
+        case .video: all = [.compressVideo, .toGIF, .makeVertical, .toMP4, .toWebM, .audioM4A, .audioMP3, .audioWAV]
+        case .audio: all = [.toMP3, .toM4A, .normalizeLoudness, .toWAV, .toFLAC, .toAIFF]
+        case .image: all = [.toJPEG, .toPNG, .toHEIC, .toWebP, .toTIFF, .halfSize, .youtubeThumbnail]
+        }
+        return all.filter { op in
+            // WebP comes from Homebrew's cwebp (macOS can't write it), which reads PNG, JPEG and TIFF.
+            if op == .toWebP { return cwebp != nil && exts.isSubset(of: ["png", "jpg", "tiff"]) }
+            return (ffmpeg || !op.usesFFmpeg) && !(op.isFormatChange && exts == [op.outputExtension ?? ""])
         }
     }
+
+    nonisolated static let cwebp: String? = ["/opt/homebrew/bin/cwebp", "/usr/local/bin/cwebp"].first { FileManager.default.isExecutableFile(atPath: $0) }
 
     /// A menu at the pointer with what these files can become.
     func offer(_ urls: [URL]) {
@@ -127,7 +161,10 @@ final class MediaConverter: ObservableObject {
         if op.usesFFmpeg {
             guard let ffmpeg = VideoDownloader.ffmpeg else { return }
             p.executableURL = ffmpeg
-            p.arguments = ["-hide_banner", "-nostdin", "-y", "-i", source.path] + Self.ffmpegArgs(op) + ["-progress", "pipe:1", "-nostats", output.path]
+            p.arguments = ["-hide_banner", "-nostdin", "-y", "-i", source.path] + Self.ffmpegArgs(op, source: source) + ["-progress", "pipe:1", "-nostats", output.path]
+        } else if op == .toWebP, let cwebp = Self.cwebp {
+            p.executableURL = URL(fileURLWithPath: cwebp)
+            p.arguments = ["-quiet", "-q", "85", source.path, "-o", output.path]
         } else {
             p.executableURL = URL(fileURLWithPath: "/usr/bin/sips")
             p.arguments = Self.sipsArgs(op, source: source) + [source.path, "--out", output.path]
@@ -210,20 +247,43 @@ final class MediaConverter: ObservableObject {
 
     // MARK: - Commands
 
-    nonisolated private static func ffmpegArgs(_ op: Operation) -> [String] {
+    nonisolated private static func ffmpegArgs(_ op: Operation, source: URL) -> [String] {
+        let h264 = ["-c:v", "libx264", "-crf", "20", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
         switch op {
         case .compressVideo:
             // About a third of the size of a phone or screen recording, still sharp.
-            ["-c:v", "libx264", "-crf", "26", "-preset", "medium", "-pix_fmt", "yuv420p",
-             "-vf", "scale='min(1920,iw)':-2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"]
+            return ["-c:v", "libx264", "-crf", "26", "-preset", "medium", "-pix_fmt", "yuv420p",
+                    "-vf", "scale='min(1920,iw)':-2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"]
         case .toMP4:
-            ["-c:v", "libx264", "-crf", "20", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
+            return h264
+        case .makeVertical:
+            // The middle of the frame at 9:16, 1080×1920, for Reels, TikTok and Shorts.
+            return ["-vf", "crop='min(iw,ih*9/16)':ih,scale=1080:1920:flags=lanczos,setsar=1"] + h264
+        case .toWebM:
+            return ["-c:v", "libvpx-vp9", "-crf", "32", "-b:v", "0", "-row-mt", "1", "-c:a", "libopus", "-b:a", "128k"]
         case .toGIF:
-            ["-vf", "fps=12,scale='min(640,iw)':-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4",
-             "-loop", "0"]
-        case .audioM4A, .toM4A: ["-vn", "-c:a", "aac", "-b:a", "192k"]
-        case .audioMP3, .toMP3: ["-vn", "-c:a", "libmp3lame", "-q:a", "2"]
-        case .toJPEG, .toPNG, .halfSize: []
+            return ["-vf", "fps=12,scale='min(640,iw)':-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4",
+                    "-loop", "0"]
+        case .audioM4A, .toM4A: return ["-vn", "-c:a", "aac", "-b:a", "256k"]
+        case .audioMP3, .toMP3: return ["-vn", "-c:a", "libmp3lame", "-q:a", "2"]
+        case .audioWAV, .toWAV: return ["-vn", "-c:a", "pcm_s16le"]
+        case .toFLAC: return ["-vn", "-c:a", "flac"]
+        case .toAIFF: return ["-vn", "-c:a", "pcm_s16be"]
+        case .normalizeLoudness:
+            // −14 LUFS, what YouTube, Spotify and most podcast apps play at; kept in its own format.
+            let codec: [String] = switch source.pathExtension.lowercased() {
+            case "mp3": ["-c:a", "libmp3lame", "-q:a", "2"]
+            case "m4a", "aac": ["-c:a", "aac", "-b:a", "256k"]
+            case "flac": ["-c:a", "flac"]
+            case "aif", "aiff": ["-c:a", "pcm_s16be"]
+            default: ["-c:a", "pcm_s16le"]
+            }
+            return ["-vn", "-af", "loudnorm=I=-14:TP=-1:LRA=11"] + codec
+        case .toWebP: return ["-c:v", "libwebp", "-quality", "85", "-frames:v", "1"]
+        case .youtubeThumbnail:
+            // Filled to 16:9 and cropped, well under YouTube's 2 MB.
+            return ["-vf", "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720", "-q:v", "3", "-frames:v", "1"]
+        case .toJPEG, .toPNG, .toHEIC, .toTIFF, .halfSize: return []
         }
     }
 
@@ -231,6 +291,8 @@ final class MediaConverter: ObservableObject {
         switch op {
         case .toJPEG: return ["-s", "format", "jpeg", "-s", "formatOptions", "85"]
         case .toPNG: return ["-s", "format", "png"]
+        case .toHEIC: return ["-s", "format", "heic", "-s", "formatOptions", "80"]
+        case .toTIFF: return ["-s", "format", "tiff"]
         case .halfSize:
             let width = NSImageRep(contentsOf: source)?.pixelsWide ?? 0
             return width > 1 ? ["--resampleWidth", String(width / 2)] : ["-Z", "1024"]
