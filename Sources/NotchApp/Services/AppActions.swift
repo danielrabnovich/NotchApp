@@ -171,7 +171,7 @@ final class AppActions: ObservableObject {
     /// Most fitting first; the row shows as many as fit.
     @Published private(set) var items: [Command] = []
     /// Runs the nth action (⌘1…⌘5) when the search tab can; set while it's showing.
-    var shortcut: ((Int) -> Bool)?
+    var shortcut: ((Int, _ withInstructions: Bool) -> Bool)?
     private var generation = 0
     private var lastRead: (pid: pid_t, at: Date)?
 

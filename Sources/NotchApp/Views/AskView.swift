@@ -26,6 +26,8 @@ struct AskView: View {
     @ObservedObject private var ramble = RambleStore.shared
     /// Proposed actions the user unticked before running the plan.
     @State private var excluded: Set<UUID> = []
+    /// An AI action waiting for the user's instructions: the bar holds it, and ↩ runs it with them.
+    @State private var pendingAction: Command?
     /// The result the arrow keys are on: previewed, and what ↩ / ⌘↩ / ⌘Y act on.
     @State private var resultIndex = 0
 
@@ -69,7 +71,7 @@ struct AskView: View {
                         ConfirmationLine(confirmation: done)
                     } else if let app = appActions.context, !appActions.items.isEmpty {
                         VStack(spacing: 10) {
-                            AppActionsRow(context: app, items: appActions.items, perform: runAppAction)
+                            AppActionsRow(context: app, items: appActions.items, perform: runAppAction, instruct: askInstructions)
                             // The hint gives way to the actions; a status that needs doing something stays.
                             if assistant.pullingModel != nil || ![.ready, .unknown].contains(assistant.status) { AIStatusLine() }
                         }
@@ -93,10 +95,11 @@ struct AskView: View {
             assistant.refreshStatusIfStale()
             if viewModel.isOpen { AppActions.shared.prepare() }
             // ⌘1…⌘5 run the actions under the empty bar (the panel sees ⌘ keys before this view does).
-            AppActions.shared.shortcut = { n in
-                guard query.isEmpty, assistant.current == nil, assistant.context == nil,
+            AppActions.shared.shortcut = { n, instructions in
+                guard query.isEmpty, assistant.current == nil, assistant.context == nil, pendingAction == nil,
                       appActions.items.indices.contains(n - 1) else { return false }
-                runAppAction(appActions.items[n - 1])
+                let command = appActions.items[n - 1]
+                if instructions, command.takesInstructions { askInstructions(command) } else { runAppAction(command) }
                 return true
             }
             // If Quick Look keeps the keyboard, its arrow keys still move the selection here.
@@ -147,7 +150,8 @@ struct AskView: View {
             // (An action's result sits under an empty bar: only typing something replaces it.)
             if let job = assistant.current, q != job.query, !(job.actionTitle != nil && q.isEmpty) { assistant.clear() }
             if assistant.current == nil {
-                if assistant.context == nil { suggestions.update(q) } else { suggestions.clear() }
+                // Typing instructions for an action, or about a captured window: no suggestions.
+                if assistant.context == nil, pendingAction == nil { suggestions.update(q) } else { suggestions.clear() }
             }
         }
     }
@@ -187,6 +191,25 @@ struct AskView: View {
             suggestions.clear()
             assistant.run(q, route: .app)
         }
+    }
+
+    /// Holds an AI action in the bar for the user's instructions (right-click "Add Instructions…",
+    /// ⌥-click or ⌥⌘1…5).
+    private func askInstructions(_ command: Command) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pendingAction = command }
+        query = ""
+        suggestions.clear()
+        viewModel.wantsKeyboard = true
+        focused = true
+    }
+
+    /// ↩ with an action waiting: run it with what was typed (as it is, when nothing was).
+    private func runPending() {
+        guard let command = pendingAction else { return }
+        let extra = query
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pendingAction = nil }
+        query = ""
+        runAppAction(command.withInstructions(extra))
     }
 
     /// A chip under the empty bar (or ⌘1…⌘5).
@@ -351,6 +374,11 @@ struct AskView: View {
             if let context = assistant.context {
                 ContextChip(state: context) { assistant.clearContext() }
                     .transition(.scale(scale: 0.8).combined(with: .opacity))
+            } else if let pending = pendingAction {
+                ActionChip(title: pending.title, icon: pending.icon) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pendingAction = nil }
+                }
+                .transition(.scale(scale: 0.8).combined(with: .opacity))
             } else if let job = assistant.current, let title = job.actionTitle, query.isEmpty {
                 ActionChip(title: title, icon: job.actionIcon ?? "sparkles") { assistant.clear() }
                     .transition(.scale(scale: 0.8).combined(with: .opacity))
@@ -371,7 +399,9 @@ struct AskView: View {
                     }
                 }
                 .onSubmit {
-                    if assistant.context != nil, assistant.current == nil || assistant.current?.query != query {
+                    if pendingAction != nil {
+                        runPending()
+                    } else if assistant.context != nil, assistant.current == nil || assistant.current?.query != query {
                         assistant.run(query) // about the captured window
                     } else if assistant.current == nil, let pick = suggestions.current {
                         perform(pick)
@@ -393,7 +423,10 @@ struct AskView: View {
                     press.modifiers.contains(.command) ? quickLookSelected() : .ignored
                 }
                 .onExitCommand {
-                    if QuickLook.shared.isVisible {
+                    if pendingAction != nil {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pendingAction = nil }
+                        query = ""
+                    } else if QuickLook.shared.isVisible {
                         QuickLook.shared.close()
                     } else if assistant.current != nil || !query.isEmpty {
                         assistant.clear(); query = ""; suggestions.clear()
@@ -458,7 +491,8 @@ struct AskView: View {
         switch assistant.context {
         case .ready(let c, _)?: c.hasSelection ? "Ask about the selection" : "Ask about \(c.appName ?? "this window")"
         case .capturing?: "Ask about what's on screen"
-        default: assistant.current?.actionTitle != nil ? "Search something else" : "Search, or type a command"
+        default: pendingAction != nil ? "Add instructions, then ↩ (“focus on deadlines”, “in Spanish”…)"
+            : assistant.current?.actionTitle != nil ? "Search something else" : "Search, or type a command"
         }
     }
 
@@ -2306,6 +2340,8 @@ private struct AppActionsRow: View {
     let context: AppContext
     let items: [Command]
     let perform: (Command) -> Void
+    /// An AI action held for the user's own instructions first.
+    let instruct: (Command) -> Void
     @ObservedObject private var actions = AppActions.shared
 
     var body: some View {
@@ -2326,7 +2362,10 @@ private struct AppActionsRow: View {
                 .help(context.selection == nil ? "For \(context.appName)" : "For the selection in \(context.appName)")
             ForEach(Array(commands.enumerated()), id: \.element.id) { i, command in
                 let starred = actions.isStarred(command)
-                Button { perform(command) } label: {
+                Button {
+                    // ⌥-click: add instructions first.
+                    if NSEvent.modifierFlags.contains(.option), command.takesInstructions { instruct(command) } else { perform(command) }
+                } label: {
                     HStack(spacing: 5) {
                         Label(command.title, systemImage: command.icon)
                         if starred {
@@ -2335,8 +2374,13 @@ private struct AppActionsRow: View {
                     }
                 }
                 .buttonStyle(NotchPillButtonStyle())
-                .help([command.subtitle, "⌘\(i + 1) · right-click to keep it as a Glance"].compactMap { $0 }.joined(separator: "\n"))
+                .help([command.subtitle, command.takesInstructions ? "⌘\(i + 1) · ⌥-click (⌥⌘\(i + 1)) to add instructions · right-click for more"
+                                                                : "⌘\(i + 1) · right-click to keep it as a Glance"].compactMap { $0 }.joined(separator: "\n"))
                 .contextMenu {
+                    if command.takesInstructions {
+                        Button("Add Instructions…") { instruct(command) }
+                        Divider()
+                    }
                     if starred {
                         Button("Remove from Glance") { actions.toggleStar(command) }
                     } else if actions.canStar(command) {

@@ -61,9 +61,11 @@ final class NotchPanel: NSPanel {
             return true
         }
         // Only the modifiers people hold (digits can arrive marked as from the keypad).
-        if flags.intersection([.command, .option, .control, .shift]) == .command,
+        // ⌘1…⌘5 run the actions under the empty bar; with ⌥, first add instructions to it.
+        let held = flags.intersection([.command, .option, .control, .shift])
+        if held == .command || held == [.command, .option],
            let n = Int(event.charactersIgnoringModifiers ?? ""), (1...5).contains(n),
-           MainActor.assumeIsolated({ AppActions.shared.shortcut?(n) }) == true {
+           MainActor.assumeIsolated({ AppActions.shared.shortcut?(n, held.contains(.option)) }) == true {
             return true
         }
         return super.performKeyEquivalent(with: event)

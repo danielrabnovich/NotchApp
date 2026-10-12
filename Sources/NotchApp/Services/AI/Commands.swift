@@ -59,6 +59,8 @@ struct Command: Identifiable, Equatable {
         case planFromScreen(String)
         /// Open Ramble, the box to talk everything out into.
         case ramble
+        /// An AI Command with the user's own instructions added ("in Spanish", "keep it under 50 words").
+        case aiCommandWith(UUID, extra: String)
     }
 
     /// Code to run for an action, compared by its id.
@@ -92,6 +94,31 @@ struct Command: Identifiable, Equatable {
     /// as a Glance); the title when nil.
     var key: String? = nil
     var stableKey: String { key ?? title.lowercased() }
+
+    /// The AI does the work, so the user can add their own instructions to it.
+    var takesInstructions: Bool {
+        switch action {
+        case .askScreen, .planFromScreen, .aiCommand, .aiCommandWith: true
+        default: false
+        }
+    }
+
+    /// The same action with the user's instructions added ("focus on deadlines").
+    func withInstructions(_ extra: String) -> Command {
+        let extra = extra.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !extra.isEmpty else { return self }
+        var new: Action = action
+        switch action {
+        // The user's words lead: where they differ from the action's own, theirs win.
+        case .askScreen(let q): new = .askScreen("\(extra)\n(The task: \(q) Follow the instruction above wherever it differs.)")
+        case .planFromScreen(let q): new = .planFromScreen("\(q) The user adds, and this comes first: \(extra)")
+        case .aiCommand(let id): new = .aiCommandWith(id, extra: extra)
+        default: break
+        }
+        var command = Command(action: new, title: title, subtitle: "\(title) · “\(extra)”", icon: icon, verb: verb)
+        command.key = key
+        return command
+    }
 
     static func == (a: Command, b: Command) -> Bool { a.action == b.action && a.title == b.title && a.subtitle == b.subtitle }
 }
@@ -820,6 +847,12 @@ final class CommandCenter: ObservableObject {
             return nil
         case .ramble:
             RambleStore.shared.open()
+            return nil
+        case .aiCommandWith(let id, let extra):
+            if var command = AICommandStore.shared.command(id) {
+                command.prompt += "\nThe user adds, and this comes first where it differs: \(extra)"
+                AICommandRunner.run(command)
+            }
             return nil
         case .planFromScreen(let request):
             // Through a captured window: the plan is made from what's in it, and shown for review.
