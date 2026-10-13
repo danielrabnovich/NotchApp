@@ -35,35 +35,57 @@ struct TimerView: View {
                 TimerButton(title: "Start", icon: "play.fill", prominent: true) { store.start() }
             }
             .notchHeaderRow()
-            switch store.mode {
-            case .timer:
-                HStack(alignment: .center, spacing: 14) {
+            // One frame for every mode, so switching between them changes what's around the time
+            // and nothing moves: the time keeps its place and size, and both rows keep their height.
+            HStack(alignment: .center, spacing: 14) {
+                switch store.mode {
+                case .timer:
                     MinuteRuler(value: $store.timerMinutes, range: 1...180, viewModel: viewModel)
-                    BigTime(text: TimerStore.format(TimeInterval(store.timerMinutes * 60)))
-                }
-                Presets(value: $store.timerMinutes, options: [1, 3, 5, 10, 15, 30, 45, 60, 90])
-            case .pomodoro:
-                HStack(alignment: .center, spacing: 14) {
+                case .pomodoro:
                     MinuteRuler(value: $store.focusMinutes, range: 5...90, viewModel: viewModel)
-                    BigTime(text: TimerStore.format(TimeInterval(store.focusMinutes * 60)))
+                case .stopwatch:
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Counts up from zero")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.75))
+                        Text("Lap while it runs; laps are kept until you reset")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                HStack(spacing: 0) {
-                    SettingStepper(label: "Short break", value: $store.shortBreakMinutes, range: 1...30, unit: "m")
-                    SettingStepper(label: "Long break", value: $store.longBreakMinutes, range: 5...60, step: 5, unit: "m")
-                    SettingStepper(label: "Long break every", value: $store.sessionsBeforeLongBreak, range: 2...8, unit: "")
-                    SettingStepper(label: "Total sessions", value: $store.totalSessions, range: 1...12, unit: "")
+                // As wide as the longest time it shows, so the ruler doesn't stretch as it changes.
+                ZStack(alignment: .trailing) {
+                    BigTime(text: "0:00:00").hidden()
+                    BigTime(text: setupTime)
                 }
-            case .stopwatch:
-                VStack(spacing: 6) {
-                    Spacer(minLength: 0)
-                    BigTime(text: "00:00", size: 46)
-                    Text("Laps are kept until you reset")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.35))
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity)
             }
+            .frame(height: 62)
+            Group {
+                switch store.mode {
+                case .timer:
+                    Presets(value: $store.timerMinutes, options: [1, 3, 5, 10, 15, 30, 45, 60, 90])
+                case .pomodoro:
+                    HStack(spacing: 0) {
+                        SettingStepper(label: "Short break", value: $store.shortBreakMinutes, range: 1...30, unit: "m")
+                        SettingStepper(label: "Long break", value: $store.longBreakMinutes, range: 5...60, step: 5, unit: "m")
+                        SettingStepper(label: "Long break every", value: $store.sessionsBeforeLongBreak, range: 2...8, unit: "")
+                        SettingStepper(label: "Total sessions", value: $store.totalSessions, range: 1...12, unit: "")
+                    }
+                case .stopwatch:
+                    Color.clear
+                }
+            }
+            .frame(height: 40, alignment: .topLeading)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var setupTime: String {
+        switch store.mode {
+        case .timer: TimerStore.format(TimeInterval(store.timerMinutes * 60))
+        case .pomodoro: TimerStore.format(TimeInterval(store.focusMinutes * 60))
+        case .stopwatch: "00:00"
         }
     }
 }

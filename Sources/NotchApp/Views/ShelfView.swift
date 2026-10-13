@@ -54,8 +54,8 @@ struct ShelfView: View {
                                 HStack(spacing: 6) {
                                     ForEach(videos.jobs.prefix(3)) { VideoJobTile(job: $0) }
                                     if !downloads.items.isEmpty {
-                                        TileStrip(items: downloads.items, regionID: "downloads", viewModel: viewModel) {
-                                            ShelfTile(item: $0, kind: .download)
+                                        TileStrip(items: downloads.items, regionID: "downloads", kind: .download, viewModel: viewModel) {
+                                            ShelfTile(item: $0, kind: .download, marks: $1)
                                         }
                                     } else {
                                         Spacer(minLength: 0)
@@ -64,8 +64,8 @@ struct ShelfView: View {
                             } else if downloads.items.isEmpty {
                                 placeholder(icon: "arrow.down.circle", text: "No downloads yet")
                             } else {
-                                TileStrip(items: downloads.items, regionID: "downloads", viewModel: viewModel) {
-                                    ShelfTile(item: $0, kind: .download)
+                                TileStrip(items: downloads.items, regionID: "downloads", kind: .download, viewModel: viewModel) {
+                                    ShelfTile(item: $0, kind: .download, marks: $1)
                                 }
                             }
                         } else if shelf.items.isEmpty && converter.jobs.isEmpty {
@@ -74,8 +74,8 @@ struct ShelfView: View {
                             HStack(spacing: 6) {
                                 ForEach(converter.activeBatches.prefix(2)) { ConvertJobTile(batch: $0) }
                                 // Quick drops first (newest first), then what's pinned to stay.
-                                TileStrip(items: shelf.shown, regionID: "shelf", viewModel: viewModel) {
-                                    ShelfTile(item: $0, kind: .shelf)
+                                TileStrip(items: shelf.shown, regionID: "shelf", kind: .shelf, viewModel: viewModel) {
+                                    ShelfTile(item: $0, kind: .shelf, marks: $1)
                                 }
                                 // A click between the files lets go of the picked ones.
                                 .background(Color.clear.contentShape(Rectangle()).onTapGesture {
@@ -268,30 +268,212 @@ struct ShelfView: View {
 private struct TileStrip<Tile: View>: View {
     let items: [ShelfItem]
     let regionID: String
+    let kind: ShelfTile.Kind
     @ObservedObject var viewModel: NotchViewModel
-    @ViewBuilder let tile: (ShelfItem) -> Tile
+    @ViewBuilder let tile: (ShelfItem, TileMarks) -> Tile
+    @EnvironmentObject private var shelf: ShelfStore
     @State private var overflows = false
+    /// Where the keys act. On the shelf, the end of the picked files that the arrows move (the
+    /// picked files are the highlight there, as in Finder); in Downloads, a ring.
+    @State private var highlight: UUID?
+    @State private var held: UInt32 = 0
+
+    /// The files as they are now (`items` is as it was when the keys were set up).
+    private var live: [ShelfItem] { kind == .shelf ? shelf.shown : DownloadsStore.shared.items }
 
     var body: some View {
+        let numbered = ShelfKey.quickPaste.combo.map { $0.modifiers == held } ?? false
         GeometryReader { outer in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(items) { item in
-                        tile(item)
-                            .scrollEdgeFade()
-                            .transition(.scale(scale: 0.6).combined(with: .opacity))
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            tile(item, TileMarks(highlighted: kind == .download && highlight == item.id,
+                                                 number: numbered && index < 9 ? index + 1 : nil))
+                                .id(item.id)
+                                .scrollEdgeFade()
+                                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        }
                     }
+                    .animation(.spring(response: 0.35, dampingFraction: 0.75), value: items.map(\.id))
+                    .background(GeometryReader { inner in
+                        Color.clear
+                            .onAppear { overflows = inner.size.width > outer.size.width + 1 }
+                            .onChange(of: inner.size.width > outer.size.width + 1) { _, o in overflows = o }
+                    })
                 }
-                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: items.map(\.id))
-                .background(GeometryReader { inner in
-                    Color.clear
-                        .onAppear { overflows = inner.size.width > outer.size.width + 1 }
-                        .onChange(of: inner.size.width > outer.size.width + 1) { _, o in overflows = o }
-                })
+                .onChange(of: highlight) { _, id in
+                    guard let id else { return }
+                    withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(id) }
+                }
             }
-
         }
         .horizontalScrollRegion(regionID, in: viewModel, active: overflows)
+        .onAppear {
+            // Opened with a shortcut: the first file is where the keys start.
+            guard viewModel.openReason == .keyboard, let first = live.first else { return }
+            if kind == .shelf {
+                if shelf.selection.isEmpty { shelf.pick(first, extending: false) }
+                highlight = shelf.selectedItems.first?.id
+            } else {
+                highlight = first.id
+            }
+        }
+        .modifier(TileKeyboard(viewModel: viewModel, held: $held, handle: handle))
+    }
+
+    private func handle(_ event: NSEvent) -> Bool {
+        if let (key, digit) = ShelfKey.match(event) {
+            run(key, digit: digit)
+            return true
+        }
+        if let (step, extend) = ShelfKey.arrow(event) {
+            move(step, extend: extend)
+            return true
+        }
+        if ShelfKey.isSpace(event) {
+            run(.quickLook, digit: nil)
+            return true
+        }
+        return false
+    }
+
+    private func move(_ step: Int, extend: Bool) {
+        let live = live
+        // On the shelf, from the moving end of what's picked (or the first picked file).
+        let from = kind == .shelf && !shelf.selection.contains(highlight ?? UUID()) ? shelf.selectedItems.first?.id : highlight
+        guard let next = ShelfKey.step(live.map(\.id), from: from, by: step),
+              let to = live.first(where: { $0.id == next }) else { return }
+        withAnimation(.easeOut(duration: 0.12)) {
+            if kind == .shelf {
+                if extend, shelf.selection.isEmpty, let start = live.first(where: { $0.id == from }) ?? Optional(to) {
+                    shelf.pick(start, extending: false)
+                }
+                shelf.pick(to, extending: extend)
+            }
+            highlight = next
+        }
+    }
+
+    /// What a key acts on: on the shelf, the picked files; in Downloads, the highlighted one.
+    private var targets: [ShelfItem] {
+        kind == .shelf ? shelf.selectedItems : live.filter { $0.id == highlight }
+    }
+
+    private func run(_ key: ShelfKey, digit: Int?) {
+        let live = live
+        if key == .quickPaste {
+            guard let digit, digit <= live.count else { NSSound.beep(); return }
+            NSWorkspace.shared.open(live[digit - 1].url)
+            viewModel.close()
+            return
+        }
+        let group = targets
+        guard !group.isEmpty else {
+            // Nothing picked yet: the first press shows where the keys will act.
+            move(1, extend: false)
+            return
+        }
+        switch key {
+        case .paste:
+            group.forEach { NSWorkspace.shared.open($0.url) }
+            viewModel.close()
+        case .quickLook:
+            // One file: all of them, starting there, so the arrows in Quick Look keep going.
+            if group.count == 1, let i = live.firstIndex(where: { $0.id == group[0].id }) {
+                QuickLookPreview.shared.show(live.map(\.url), at: i)
+            } else {
+                QuickLookPreview.shared.show(group.map(\.url))
+            }
+        case .copy:
+            ShelfStore.copy(group.map(\.url))
+            ActivityCenter.shared.show(.notice(title: group.count > 1 ? "Copied \(group.count) files" : "Copied",
+                                               detail: group.count > 1 ? "Ready to paste" : group[0].name, icon: "doc.on.doc"), for: 2)
+            viewModel.close()
+        case .delete:
+            // Off the shelf (the files stay where they are); Downloads' files aren't the notch's to remove.
+            guard kind == .shelf else { NSSound.beep(); return }
+            let ids = Set(group.map(\.id))
+            let last = live.lastIndex { ids.contains($0.id) } ?? 0
+            let after = live[(last + 1)...].first { !ids.contains($0.id) } ?? live[..<last].last { !ids.contains($0.id) }
+            withAnimation(.spring(response: 0.3)) { shelf.remove(group) }
+            if let after { shelf.pick(after, extending: false) }
+            highlight = after?.id
+        case .pin:
+            guard kind == .shelf else { NSSound.beep(); return }
+            let pin = !group.allSatisfy(\.pinned)
+            withAnimation(.spring(response: 0.3)) { group.forEach { shelf.setPinned($0, pin) } }
+        case .quickPaste:
+            break
+        }
+    }
+}
+
+/// What a tile shows of the keyboard: whether the keys act on it, and its quick paste number
+/// while that key's modifiers are held.
+struct TileMarks {
+    var highlighted = false
+    var number: Int?
+}
+
+private extension View {
+    /// The keyboard's marks on a tile: a ring where the keys act, and its quick paste number.
+    func tileMarks(_ marks: TileMarks, cornerRadius: CGFloat = 12) -> some View {
+        overlay {
+            if marks.highlighted {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(.white.opacity(0.75), lineWidth: 1.5)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if let number = marks.number, let combo = ShelfKey.quickPaste.combo {
+                Text(combo.modifierSymbols + "\(number)")
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5).frame(height: 16)
+                    .background(Capsule().fill(.black.opacity(0.75)))
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
+                    .padding(5)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+/// Keys for a row of tiles in the Shelf tab (see `ShelfKey`): only while this notch's window has
+/// the keyboard and the Shelf tab is showing, and only while the row is on screen.
+private struct TileKeyboard: ViewModifier {
+    @ObservedObject var viewModel: NotchViewModel
+    /// Modifiers held right now: holding quick paste's shows the numbers.
+    @Binding var held: UInt32
+    /// Returns whether it took the key.
+    let handle: (NSEvent) -> Bool
+    @State private var monitor: Any?
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                guard monitor == nil else { return }
+                monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+                    MainActor.assumeIsolated { route(event) ? nil : event }
+                }
+            }
+            .onDisappear {
+                if let monitor { NSEvent.removeMonitor(monitor) }
+                monitor = nil
+                held = 0
+            }
+    }
+
+    private func route(_ event: NSEvent) -> Bool {
+        guard event.window is NotchPanel, viewModel.isOpen, viewModel.tab == .shelf, viewModel.overlay == nil else { return false }
+        if event.type == .flagsChanged {
+            held = ShelfKey.carbon(event.modifierFlags)
+            return false
+        }
+        return handle(event)
     }
 }
 
@@ -300,6 +482,7 @@ private struct ShelfTile: View {
 
     @ObservedObject var item: ShelfItem
     let kind: Kind
+    var marks = TileMarks()
     @EnvironmentObject private var shelf: ShelfStore
     @State private var hovering = false
 
@@ -329,9 +512,10 @@ private struct ShelfTile: View {
                 shape.fill(Color.accentColor.opacity(0.3))
                     .overlay(shape.strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1))
             } else {
-                shape.fill(.white.opacity(hovering ? 0.1 : 0))
+                shape.fill(.white.opacity(hovering || marks.highlighted ? 0.1 : 0))
             }
         }
+        .tileMarks(marks)
         .overlay(alignment: .topLeading) {
             if kind == .shelf && item.pinned {
                 Image(systemName: "pin.fill")
@@ -470,44 +654,16 @@ private struct ShelfFileMenu: View {
 private struct AirDropZone: View {
     var compact = false
     @EnvironmentObject private var shelf: ShelfStore
-    @State private var targeted = false
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(targeted ? Color.blue.opacity(0.35) : .clear)
-            .notchSurface(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(targeted ? Color.blue : .clear, lineWidth: 1)
-            )
-            .overlay {
-                VStack(spacing: compact ? 3 : 6) {
-                    Image(nsImage: SystemIcons.airDrop)
-                        .resizable()
-                        .frame(width: compact ? 26 : 34, height: compact ? 26 : 34)
-                        .scaleEffect(targeted ? 1.1 : 1)
-                    Text("AirDrop")
-                        .font(.system(size: compact ? 11 : 12, weight: .medium))
-                    if !compact {
-                        Text(shelf.items.isEmpty ? "Drop to send" : "Drop, or click\nto send shelf")
-                            .font(.system(size: 9))
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.white.opacity(0.45))
-                    }
-                }
-                .foregroundStyle(.white.opacity(0.85))
-            }
-            .scaleEffect(targeted ? 1.04 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: targeted)
-            .contentShape(RoundedRectangle(cornerRadius: 16))
-            .onTapGesture { ShelfStore.airDrop(shelf.items.map(\.url)) }
-            .onChange(of: targeted) { _, over in if over { Haptics.level() } } // felt while the finger's still down
-            .onDrop(of: [UTType.fileURL], isTargeted: $targeted) { providers in
-                ShelfStore.urls(from: providers) { ShelfStore.airDrop($0) }
-                return true
-            }
+        SendZone(title: "AirDrop", accent: Color(red: 0.22, green: 0.56, blue: 1), compact: compact,
+                 hint: shelf.items.isEmpty ? "Drop to send" : "Drop, or click\nto send the shelf",
+                 icon: { Image(nsImage: SystemIcons.airDrop).resizable().frame(width: $0, height: $0) },
+                 send: ShelfStore.airDrop,
+                 sendShelf: { ShelfStore.airDrop(shelf.items.map(\.url)) })
     }
 }
+
 
 enum TaildropPalette {
     static let accent = Color(red: 0.45, green: 0.58, blue: 1.0)
@@ -518,65 +674,100 @@ private struct TaildropZone: View {
     var compact = false
     @EnvironmentObject private var shelf: ShelfStore
     @EnvironmentObject private var taildrop: TaildropService
-    @State private var targeted = false
 
     var body: some View {
-        let accent = TaildropPalette.accent
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(targeted ? accent.opacity(0.35) : .clear)
-            .notchSurface(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(targeted ? accent : .clear, lineWidth: 1)
-            )
-            .overlay {
-                if let job = taildrop.sending {
-                    VStack(spacing: compact ? 3 : 6) {
-                        ZStack {
-                            Circle().stroke(.white.opacity(0.15), lineWidth: 2.5)
-                            Circle()
-                                .trim(from: 0, to: job.progress ?? 0.08)
-                                .stroke(accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                                .rotationEffect(.degrees(-90))
-                        }
-                        .frame(width: compact ? 18 : 24, height: compact ? 18 : 24)
-                        Text(job.device.name)
-                            .font(.system(size: 10, weight: .medium))
-                            .lineLimit(1)
-                            .padding(.horizontal, 6)
-                        Text(job.progress.map { "\(Int($0 * 100))%" } ?? "Sending…")
-                            .font(.system(size: 9).monospacedDigit())
-                            .foregroundStyle(.white.opacity(0.5))
+        SendZone(title: "Taildrop", accent: TaildropPalette.accent, compact: compact,
+                 hint: shelf.items.isEmpty ? "Drop to send" : "Drop, or click\nto send the shelf",
+                 sending: taildrop.sending.map { ($0.device.name, $0.progress) },
+                 icon: { TaildropIcon(size: $0) },
+                 send: { TaildropService.shared.offer($0) },
+                 sendShelf: {
+                     guard taildrop.sending == nil, !shelf.items.isEmpty else { return }
+                     taildrop.offer(shelf.items.map(\.url))
+                 })
+            .help(shelf.items.isEmpty ? "Drop files to send them to your Tailscale devices" : "Send the shelf with Taildrop")
+    }
+}
+
+/// Somewhere to drop files to send them on (AirDrop, Taildrop). It carries a wash of its own
+/// colour so it reads as a place rather than a button, outlines itself while anything is being
+/// dragged, and fills and glows when something's over it; a click sends the shelf.
+private struct SendZone<Icon: View>: View {
+    let title: String
+    let accent: Color
+    var compact = false
+    let hint: String
+    /// Sending now: to which device, and how far along (nil while it starts).
+    var sending: (device: String, progress: Double?)?
+    @ViewBuilder let icon: (CGFloat) -> Icon
+    let send: ([URL]) -> Void
+    let sendShelf: () -> Void
+    @ObservedObject private var drag = DragActivity.shared
+    @State private var targeted = false
+    @State private var hovering = false
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        let size: CGFloat = compact ? 26 : 34
+        ZStack {
+            RadialGradient(colors: [accent.opacity(targeted ? 0.5 : hovering || drag.active ? 0.22 : 0.12), .clear],
+                           center: .center, startRadius: 0, endRadius: compact ? 44 : 64)
+            if let sending {
+                VStack(spacing: compact ? 3 : 6) {
+                    ZStack {
+                        Circle().stroke(.white.opacity(0.15), lineWidth: 2.5)
+                        Circle()
+                            .trim(from: 0, to: sending.progress ?? 0.08)
+                            .stroke(accent, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
                     }
-                } else {
-                    VStack(spacing: compact ? 3 : 6) {
-                        TaildropIcon(size: compact ? 26 : 34)
-                            .scaleEffect(targeted ? 1.1 : 1)
-                        Text("Taildrop")
-                            .font(.system(size: compact ? 11 : 12, weight: .medium))
-                        if !compact {
-                            Text(shelf.items.isEmpty ? "Drop to send" : "Drop, or click\nto send shelf")
-                                .font(.system(size: 9))
-                                .multilineTextAlignment(.center)
-                                .foregroundStyle(.white.opacity(0.45))
-                        }
+                    .frame(width: compact ? 18 : 24, height: compact ? 18 : 24)
+                    Text(sending.device)
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                        .padding(.horizontal, 6)
+                    Text(sending.progress.map { "\(Int($0 * 100))%" } ?? "Sending…")
+                        .font(.system(size: 9).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+            } else {
+                VStack(spacing: compact ? 3 : 6) {
+                    icon(size)
+                        .shadow(color: accent.opacity(targeted ? 0.7 : 0.3), radius: targeted ? 8 : 4)
+                        .scaleEffect(targeted ? 1.12 : hovering ? 1.04 : 1)
+                    Text(title)
+                        .font(.system(size: compact ? 11 : 12, weight: .semibold))
+                    if !compact {
+                        Text(targeted ? "Release to send" : hint)
+                            .font(.system(size: 9, weight: targeted ? .semibold : .regular))
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(targeted ? accent : .white.opacity(0.45))
+                            .contentTransition(.opacity)
                     }
                 }
             }
-            .foregroundStyle(.white.opacity(0.85))
-            .scaleEffect(targeted ? 1.04 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: targeted)
-            .contentShape(RoundedRectangle(cornerRadius: 16))
-            .onTapGesture {
-                guard taildrop.sending == nil, !shelf.items.isEmpty else { return }
-                taildrop.offer(shelf.items.map(\.url))
-            }
-            .onChange(of: targeted) { _, over in if over { Haptics.level() } } // felt while the finger's still down
-            .onDrop(of: [UTType.fileURL], isTargeted: $targeted) { providers in
-                ShelfStore.urls(from: providers) { TaildropService.shared.offer($0) }
-                return true
-            }
-            .help(shelf.items.isEmpty ? "Drop files to send them to your Tailscale devices" : "Send the shelf with Taildrop")
+        }
+        .foregroundStyle(.white.opacity(0.9))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(shape.fill(accent.opacity(targeted ? 0.2 : 0)))
+        .clipShape(shape)
+        .notchSurface(shape, active: hovering || targeted)
+        // While anything is dragged, a dashed outline in its colour says "drop here".
+        .overlay(shape.strokeBorder(accent.opacity(targeted ? 0.95 : drag.active ? 0.55 : 0),
+                                    style: StrokeStyle(lineWidth: targeted ? 1.5 : 1, dash: targeted ? [] : [4, 3])))
+        .shadow(color: accent.opacity(targeted ? 0.4 : 0), radius: 12)
+        .scaleEffect(targeted ? 1.04 : 1)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: targeted)
+        .animation(.easeOut(duration: 0.15), value: hovering)
+        .animation(.easeOut(duration: 0.2), value: drag.active)
+        .contentShape(shape)
+        .onHover { hovering = $0 }
+        .onTapGesture { if sending == nil { sendShelf() } }
+        .onChange(of: targeted) { _, over in if over { Haptics.level() } } // felt while the finger's still down
+        .onDrop(of: [UTType.fileURL], isTargeted: $targeted) { providers in
+            ShelfStore.urls(from: providers) { send($0) }
+            return true
+        }
     }
 }
 
@@ -696,7 +887,7 @@ struct TaildropIcon: View {
 
 /// Recent copies as cards: click one to put it back on the clipboard (the notch closes so you can paste).
 /// With the keyboard: ← → move a highlight, typing searches, and the Clipboard keys (↩ paste,
-/// ⌘C copy, ⌃X remove, ⇧⌘P pin, ⌘1–⌘9 paste by position; see `ClipboardKey`) act on it.
+/// ⌘C copy, ⌃X remove, ⇧⌘P pin, ⌘1–⌘9 paste by position; see `ShelfKey`) act on it.
 private struct ClipboardStrip: View {
     @ObservedObject var viewModel: NotchViewModel
     @Binding var query: String
@@ -709,13 +900,12 @@ private struct ClipboardStrip: View {
     @State private var highlight: UUID?
     /// Modifiers held right now: holding quick paste's shows the numbers on the cards.
     @State private var held: UInt32 = 0
-    @State private var monitor: Any?
 
     private var shown: [ClipboardHistory.Clip] { clipboard.shown(matching: query, kind: kind) }
 
     var body: some View {
         let shown = shown
-        let numbered = ClipboardKey.quickPaste.combo.map { $0.modifiers == held } ?? false
+        let numbered = ShelfKey.quickPaste.combo.map { $0.modifiers == held } ?? false
         Group {
             if !clipboard.clips.isEmpty, shown.isEmpty {
                 VStack(spacing: 6) {
@@ -738,8 +928,8 @@ private struct ClipboardStrip: View {
                             HStack(spacing: 6) {
                                 // Pinned first, then newest.
                                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, clip in
-                                    ClipCard(clip: clip, highlighted: highlight == clip.id,
-                                             number: numbered && index < 9 ? index + 1 : nil) {
+                                    ClipCard(clip: clip, marks: TileMarks(highlighted: highlight == clip.id,
+                                                                         number: numbered && index < 9 ? index + 1 : nil)) {
                                         // ⌘ or ⇧: pick it (to act on several); a plain click puts it back to paste.
                                         let mods = NSEvent.modifierFlags
                                         if mods.contains(.command) || mods.contains(.shift) {
@@ -772,11 +962,8 @@ private struct ClipboardStrip: View {
                 .horizontalScrollRegion("clipboard", in: viewModel, active: overflows)
             }
         }
-        .onAppear {
-            if viewModel.openReason == .keyboard { highlight = shown.first?.id }
-            startKeys()
-        }
-        .onDisappear(perform: stopKeys)
+        .onAppear { if viewModel.openReason == .keyboard { highlight = shown.first?.id } }
+        .modifier(TileKeyboard(viewModel: viewModel, held: $held, handle: handle))
         // A new search highlights its first match, so ↩ pastes it.
         .onChange(of: query) { _, _ in highlight = self.shown.first?.id }
         .onChange(of: kind) { _, _ in if highlight != nil { highlight = self.shown.first?.id } }
@@ -784,44 +971,24 @@ private struct ClipboardStrip: View {
 
     // MARK: Keys
 
-    private func startKeys() {
-        guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
-            MainActor.assumeIsolated { handle(event) ? nil : event }
-        }
-    }
-
-    private func stopKeys() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
-        held = 0
-    }
-
-    /// Only keys meant for this notch's Clipboard pane, while it's the one showing.
     private func handle(_ event: NSEvent) -> Bool {
-        guard event.window is NotchPanel, viewModel.isOpen, viewModel.tab == .shelf, viewModel.overlay == nil,
-              settings.clipboardHistory else { return false }
-        let mods = ClipboardKey.carbon(event.modifierFlags)
-        if event.type == .flagsChanged {
-            held = mods
-            return false
-        }
+        guard settings.clipboardHistory else { return false }
+        let mods = ShelfKey.carbon(event.modifierFlags)
         let editor = event.window?.firstResponder as? NSTextView
         // ⌘C with words picked in the search field copies those words.
         if let editor, editor.selectedRange().length > 0, mods == UInt32(cmdKey), event.charactersIgnoringModifiers == "c" {
             return false
         }
-        if let (key, digit) = ClipboardKey.match(event) {
+        if let (key, digit) = ShelfKey.match(event) {
             run(key, digit: digit)
             return true
         }
-        let plain = mods & UInt32(controlKey | optionKey | cmdKey) == 0
-        let code = Int(event.keyCode)
-        if plain, [kVK_LeftArrow, kVK_UpArrow, kVK_RightArrow, kVK_DownArrow].contains(code) {
-            move([kVK_LeftArrow, kVK_UpArrow].contains(code) ? -1 : 1, extend: mods & UInt32(shiftKey) != 0)
+        if let (step, extend) = ShelfKey.arrow(event) {
+            move(step, extend: extend)
             return true
         }
-        if plain, code == kVK_Escape, !query.isEmpty {
+        let plain = mods & UInt32(controlKey | optionKey | cmdKey) == 0
+        if plain, event.keyCode == UInt16(kVK_Escape), !query.isEmpty {
             query = "" // the first Esc clears the search; the next one backs out as usual
             return true
         }
@@ -842,14 +1009,16 @@ private struct ClipboardStrip: View {
     private func move(_ step: Int, extend: Bool) {
         let shown = shown
         guard !shown.isEmpty else { return }
-        let current = highlight.flatMap { id in shown.firstIndex { $0.id == id } }
-        let next = current.map { max(0, min(shown.count - 1, $0 + step)) } ?? 0
+        guard let next = ShelfKey.step(shown.map(\.id), from: highlight, by: step),
+              let to = shown.first(where: { $0.id == next }) else { return }
         withAnimation(.easeOut(duration: 0.12)) {
             if extend {
-                if clipboard.selection.isEmpty { clipboard.pick(shown[current ?? next], modifiers: [], in: shown) }
-                clipboard.pick(shown[next], modifiers: .shift, in: shown)
+                if clipboard.selection.isEmpty, let from = shown.first(where: { $0.id == highlight }) ?? Optional(to) {
+                    clipboard.pick(from, modifiers: [], in: shown)
+                }
+                clipboard.pick(to, modifiers: .shift, in: shown)
             }
-            highlight = shown[next].id
+            highlight = next
         }
     }
 
@@ -860,7 +1029,7 @@ private struct ClipboardStrip: View {
         return shown.filter { $0.id == highlight }
     }
 
-    private func run(_ key: ClipboardKey, digit: Int?) {
+    private func run(_ key: ShelfKey, digit: Int?) {
         let shown = shown
         if key == .quickPaste {
             guard let digit, digit <= shown.count else { NSSound.beep(); return }
@@ -891,6 +1060,10 @@ private struct ClipboardStrip: View {
             highlight = after?.id
         case .pin:
             if group.count > 1 { clipboard.setPinned(group, !group.allSatisfy(\.pinned)) } else { clipboard.togglePin(first) }
+        case .quickLook:
+            // Pictures and files; text has nothing more to show than its card.
+            let urls = group.flatMap { clip in (clip.filePaths ?? []).map(URL.init(fileURLWithPath:)) + [clipboard.imageURL(for: clip)].compactMap { $0 } }
+            if urls.isEmpty { NSSound.beep() } else { QuickLookPreview.shared.show(urls) }
         case .quickPaste:
             break
         }
@@ -899,10 +1072,8 @@ private struct ClipboardStrip: View {
 
 private struct ClipCard: View {
     let clip: ClipboardHistory.Clip
-    /// Where the keyboard is.
-    var highlighted = false
-    /// Shown while quick paste's modifiers are held: the digit that pastes this clip.
-    var number: Int?
+    /// Where the keyboard is, and the number quick paste gives it.
+    var marks = TileMarks()
     let action: () -> Void
     @EnvironmentObject private var clipboard: ClipboardHistory
     @State private var hovering = false
@@ -940,27 +1111,8 @@ private struct ClipCard: View {
         .padding(8)
         .frame(width: 132)
         .frame(maxHeight: .infinity)
-        .notchSurface(RoundedRectangle(cornerRadius: 12, style: .continuous), active: hovering || highlighted)
-        .overlay {
-            if highlighted, !clipboard.selection.contains(clip.id) {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(.white.opacity(0.75), lineWidth: 1.5)
-                    .allowsHitTesting(false)
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            if let number, let combo = ClipboardKey.quickPaste.combo {
-                Text(combo.modifierSymbols + "\(number)")
-                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 5).frame(height: 16)
-                    .background(Capsule().fill(.black.opacity(0.75)))
-                    .overlay(Capsule().strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
-                    .padding(5)
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-            }
-        }
+        .notchSurface(RoundedRectangle(cornerRadius: 12, style: .continuous), active: hovering || marks.highlighted)
+        .tileMarks(TileMarks(highlighted: marks.highlighted && !clipboard.selection.contains(clip.id), number: marks.number))
         .overlay {
             if clipboard.selection.contains(clip.id) {
                 RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.accentColor.opacity(0.18))

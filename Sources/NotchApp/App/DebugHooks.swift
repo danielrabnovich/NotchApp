@@ -82,6 +82,8 @@ enum DebugHooks {
             case "start": TimerStore.shared.start()
             case "pause": TimerStore.shared.pause()
             case "skip": TimerStore.shared.skip()
+            case "mode": // timer mode timer|pomodoro|stopwatch
+                if let mode = TimerStore.Mode(rawValue: parts[safe: 2] ?? "") { TimerStore.shared.mode = mode }
             default: TimerStore.shared.reset()
             }
         case "pane": // pane notes|tasks|downloads|shelf
@@ -379,6 +381,26 @@ enum DebugHooks {
         case "charging": ActivityCenter.shared.show(.charging(level: BatteryMonitor.shared.level), for: 5)
         case "meeting": ActivityCenter.shared.show(.meeting(title: "Design review", minutes: 5, color: .systemOrange), for: 6)
         case "screenshot": ActivityCenter.shared.show(.screenshot(count: 1), for: 5)
+        case "key": // key <keyCode> [cmd|shift|ctrl|opt…] [chars]: a key press posted to this notch's own window only
+            guard let code = UInt16(parts[safe: 1] ?? ""), let window = c.panelContentView?.window else { break }
+            var flags: NSEvent.ModifierFlags = []
+            var chars = ""
+            for word in parts.dropFirst(2) {
+                switch word {
+                case "cmd": flags.insert(.command)
+                case "shift": flags.insert(.shift)
+                case "ctrl": flags.insert(.control)
+                case "opt": flags.insert(.option)
+                default: chars = word
+                }
+            }
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                if let e = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: window.windowNumber, context: nil, characters: chars,
+                                            charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code) {
+                    NSApp.postEvent(e, atStart: false)
+                }
+            }
         case "snapshot":
             let path = parts[safe: 1] ?? "/tmp/notch.png"
             c.snapshot(to: URL(fileURLWithPath: path))

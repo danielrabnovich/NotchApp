@@ -156,9 +156,9 @@ final class AppSettings: ObservableObject {
     @Published var hotKeyOverrides: [String: HotKeys.Combo] {
         didSet { defaults.set(try? JSONEncoder().encode(hotKeyOverrides), forKey: "hotKeyOverrides") }
     }
-    /// The Clipboard pane's keys (paste, copy, remove…) rebound one by one; the rest keep their defaults.
-    @Published var clipboardKeyOverrides: [String: HotKeys.Combo] {
-        didSet { defaults.set(try? JSONEncoder().encode(clipboardKeyOverrides), forKey: "clipboardKeyOverrides") }
+    /// The Shelf tab's keys (paste or open, copy, remove…) rebound one by one; the rest keep their defaults.
+    @Published var shelfKeyOverrides: [String: HotKeys.Combo] {
+        didSet { defaults.set(try? JSONEncoder().encode(shelfKeyOverrides), forKey: "shelfKeyOverrides") }
     }
 
     // Tools
@@ -411,7 +411,7 @@ final class AppSettings: ObservableObject {
         hotKeysEnabled = defaults.bool(forKey: "hotKeysEnabled")
         hotKeyModifiers = HotKeys.Modifiers(rawValue: defaults.string(forKey: "hotKeyModifiers") ?? "") ?? .controlOption
         hotKeyOverrides = defaults.data(forKey: "hotKeyOverrides").flatMap { try? JSONDecoder().decode([String: HotKeys.Combo].self, from: $0) } ?? [:]
-        clipboardKeyOverrides = defaults.data(forKey: "clipboardKeyOverrides").flatMap { try? JSONDecoder().decode([String: HotKeys.Combo].self, from: $0) } ?? [:]
+        shelfKeyOverrides = defaults.data(forKey: "shelfKeyOverrides").flatMap { try? JSONDecoder().decode([String: HotKeys.Combo].self, from: $0) } ?? [:]
         statsEnabled = defaults.bool(forKey: "statsEnabled")
         toolsEnabled = defaults.bool(forKey: "toolsEnabled")
         clipboardHistory = defaults.bool(forKey: "clipboardHistory")

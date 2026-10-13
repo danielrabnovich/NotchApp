@@ -1878,8 +1878,8 @@ private struct ShortcutsPane: View {
         group.actions.filter { matches($0.title, HotKeys.combo(for: $0)) }
     }
 
-    private var shownClipboardKeys: [ClipboardKey] {
-        s.clipboardHistory ? ClipboardKey.allCases.filter { matches($0.title, $0.combo) } : []
+    private var shownShelfKeys: [ShelfKey] {
+        s.shelfEnabled || s.clipboardHistory ? ShelfKey.allCases.filter { matches($0.title, $0.combo) } : []
     }
 
     var body: some View {
@@ -1906,7 +1906,7 @@ private struct ShortcutsPane: View {
                             .buttonStyle(.borderless)
                     }
                 }
-                if (s.hotKeysEnabled ? ShortcutGroup.allCases.allSatisfy({ shown($0).isEmpty }) : true) && shownClipboardKeys.isEmpty {
+                if (s.hotKeysEnabled ? ShortcutGroup.allCases.allSatisfy({ shown($0).isEmpty }) : true) && shownShelfKeys.isEmpty {
                     Text("No shortcuts match “\(filter)”")
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
@@ -1923,10 +1923,10 @@ private struct ShortcutsPane: View {
                         .buttonStyle(.borderless)
                         .font(.caption)
                     }
-                    if !s.hotKeyOverrides.isEmpty || !s.clipboardKeyOverrides.isEmpty {
+                    if !s.hotKeyOverrides.isEmpty || !s.shelfKeyOverrides.isEmpty {
                         Button("Restore Defaults") {
                             s.hotKeyOverrides = [:]
-                            s.clipboardKeyOverrides = [:]
+                            s.shelfKeyOverrides = [:]
                         }
                         .buttonStyle(.borderless)
                         .font(.caption)
@@ -1949,7 +1949,7 @@ private struct ShortcutsPane: View {
                     }
                 }
             }
-            if !shownClipboardKeys.isEmpty { clipboardKeys }
+            if !shownShelfKeys.isEmpty { clipboardKeys }
         }
         .onDisappear { recording = nil }
         .onChange(of: notice) { _, text in
@@ -1993,10 +1993,10 @@ private struct ShortcutsPane: View {
         }
     }
 
-    /// Keys inside the Clipboard pane, while the notch has the keyboard.
+    /// Keys inside the Shelf tab (Shelf, Downloads, Clipboard), while the notch has the keyboard.
     private var clipboardKeys: some View {
         Section {
-            ForEach(shownClipboardKeys) { key in
+            ForEach(shownShelfKeys) { key in
                 LabeledContent {
                     HStack(spacing: 6) {
                         if let combo = key.combo, let global = HotKeys.Action.allCases.first(where: { HotKeys.combo(for: $0) == combo }) {
@@ -2004,17 +2004,17 @@ private struct ShortcutsPane: View {
                                 .foregroundStyle(.yellow)
                                 .help("\(combo.display) is also the shortcut for “\(global.title)”, which takes it first.")
                         }
-                        ClipboardKeyRecorder(key: key, recording: $recording) { notice = $0 }
+                        ShelfKeyRecorder(key: key, recording: $recording) { notice = $0 }
                         Button {
-                            s.clipboardKeyOverrides[key.rawValue] = nil
+                            s.shelfKeyOverrides[key.rawValue] = nil
                         } label: {
                             Image(systemName: "arrow.uturn.backward.circle.fill")
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.borderless)
                         .help("Reset to \(key.defaultCombo.display)")
-                        .opacity(s.clipboardKeyOverrides[key.rawValue] == nil ? 0 : 1)
-                        .disabled(s.clipboardKeyOverrides[key.rawValue] == nil)
+                        .opacity(s.shelfKeyOverrides[key.rawValue] == nil ? 0 : 1)
+                        .disabled(s.shelfKeyOverrides[key.rawValue] == nil)
                     }
                 } label: {
                     Text(key.title)
@@ -2022,17 +2022,17 @@ private struct ShortcutsPane: View {
                 }
                 .contextMenu {
                     Button("Record New Shortcut") { recording = "clip." + key.rawValue }
-                    Button("Turn Off") { s.clipboardKeyOverrides[key.rawValue] = HotKeys.Combo.off }
+                    Button("Turn Off") { s.shelfKeyOverrides[key.rawValue] = HotKeys.Combo.off }
                         .disabled(key.combo == nil)
-                    Button("Restore Default (\(key.defaultCombo.display))") { s.clipboardKeyOverrides[key.rawValue] = nil }
-                        .disabled(s.clipboardKeyOverrides[key.rawValue] == nil)
+                    Button("Restore Default (\(key.defaultCombo.display))") { s.shelfKeyOverrides[key.rawValue] = nil }
+                        .disabled(s.shelfKeyOverrides[key.rawValue] == nil)
                 }
             }
         } header: {
-            Text("In Clipboard History")
+            Text("In the Shelf Tab")
         } footer: {
-            FooterText("While the Clipboard pane has the keyboard: ← → move between clips (⇧ picks several), and typing searches. "
-                       + "These act on the highlighted clip, or on all the picked ones. Hold quick paste's modifiers to see each clip's number.")
+            FooterText("For the Shelf, Downloads and Clipboard while the notch has the keyboard: ← → move (⇧ picks several), Space is Quick Look "
+                       + "for files, and typing searches the clipboard. These act on what's highlighted or picked; hold quick paste's modifiers to see the numbers.")
         }
     }
 
@@ -2124,8 +2124,8 @@ private struct ShortcutRecorder: View {
 }
 
 /// A Clipboard pane key's field, swapping with whichever other Clipboard key had them.
-private struct ClipboardKeyRecorder: View {
-    let key: ClipboardKey
+private struct ShelfKeyRecorder: View {
+    let key: ShelfKey
     @Binding var recording: String?
     var swapped: (String) -> Void = { _ in }
     @EnvironmentObject private var s: AppSettings
@@ -2139,14 +2139,14 @@ private struct ClipboardKeyRecorder: View {
 
     private func set(_ combo: HotKeys.Combo) {
         let old = key.combo
-        var overrides = s.clipboardKeyOverrides
-        if !combo.isNone, combo != old, let other = ClipboardKey.allCases.first(where: { $0 != key && $0.combo == combo }) {
+        var overrides = s.shelfKeyOverrides
+        if !combo.isNone, combo != old, let other = ShelfKey.allCases.first(where: { $0 != key && $0.combo == combo }) {
             let given = old ?? HotKeys.Combo.off
             overrides[other.rawValue] = given == other.defaultCombo ? nil : given
             swapped(old.map { "Swapped with “\(other.title)”, which is now \($0.display)." } ?? "“\(other.title)” had \(combo.display), so it's now off.")
         }
         overrides[key.rawValue] = combo == key.defaultCombo ? nil : combo
-        s.clipboardKeyOverrides = overrides
+        s.shelfKeyOverrides = overrides
     }
 }
 
@@ -2241,7 +2241,7 @@ private struct KeyRecorder: View {
                 DispatchQueue.main.async { if isRecording { isRecording = false } }
                 return event
             case .flagsChanged:
-                held = HotKeys.Combo(keyCode: 0, modifiers: ClipboardKey.carbon(event.modifierFlags), key: "x").modifierSymbols
+                held = HotKeys.Combo(keyCode: 0, modifiers: ShelfKey.carbon(event.modifierFlags), key: "x").modifierSymbols
                 return nil
             default:
                 let bare = event.modifierFlags.intersection([.control, .option, .command, .shift]).isEmpty

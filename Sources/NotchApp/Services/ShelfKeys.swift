@@ -1,21 +1,23 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// Keys for the Clipboard pane while the notch has the keyboard, like Raycast's clipboard history:
-/// ← → (or ↑ ↓) move a highlight through the clips, ⇧ with them picks several, typing searches,
-/// and these act on what's highlighted (or picked). Each can be rebound in Settings → Shortcuts.
-enum ClipboardKey: String, CaseIterable, Identifiable {
-    case paste, copy, delete, pin, quickPaste
+/// Keys for the Shelf tab's panes (Shelf, Downloads, Clipboard) while the notch has the keyboard,
+/// like Raycast's clipboard history and Finder: ← → (or ↑ ↓) move through the files or clips, ⇧
+/// with them picks several, typing searches the clipboard, and these act on what's highlighted
+/// (or picked). Each can be rebound in Settings → Keyboard Shortcuts.
+enum ShelfKey: String, CaseIterable, Identifiable {
+    case paste, quickLook, copy, delete, pin, quickPaste
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .paste: "Paste into the app you were in"
+        case .paste: "Paste a clip, or open a file"
+        case .quickLook: "Quick Look"
         case .copy: "Copy"
-        case .delete: "Remove from the history"
+        case .delete: "Remove from the list"
         case .pin: "Pin or unpin"
-        case .quickPaste: "Paste the 1st to 9th clip"
+        case .quickPaste: "Paste or open the 1st to 9th"
         }
     }
 
@@ -25,6 +27,7 @@ enum ClipboardKey: String, CaseIterable, Identifiable {
     var defaultCombo: HotKeys.Combo {
         switch self {
         case .paste: HotKeys.Combo(keyCode: UInt32(kVK_Return), modifiers: 0, key: "↩")
+        case .quickLook: HotKeys.Combo(keyCode: UInt32(kVK_ANSI_Y), modifiers: UInt32(cmdKey), key: "Y")
         case .copy: HotKeys.Combo(keyCode: UInt32(kVK_ANSI_C), modifiers: UInt32(cmdKey), key: "C")
         case .delete: HotKeys.Combo(keyCode: UInt32(kVK_ANSI_X), modifiers: UInt32(controlKey), key: "X")
         case .pin: HotKeys.Combo(keyCode: UInt32(kVK_ANSI_P), modifiers: UInt32(shiftKey | cmdKey), key: "P")
@@ -34,12 +37,12 @@ enum ClipboardKey: String, CaseIterable, Identifiable {
 
     /// The keys it uses now: its own if rebound, else its default. Nil when turned off.
     @MainActor var combo: HotKeys.Combo? {
-        guard let own = AppSettings.shared.clipboardKeyOverrides[rawValue] else { return defaultCombo }
+        guard let own = AppSettings.shared.shelfKeyOverrides[rawValue] else { return defaultCombo }
         return own.isNone ? nil : own
     }
 
     /// The action a key press is, if it's one of these, with the digit for quick paste.
-    @MainActor static func match(_ event: NSEvent) -> (key: ClipboardKey, digit: Int?)? {
+    @MainActor static func match(_ event: NSEvent) -> (key: ShelfKey, digit: Int?)? {
         let mods = carbon(event.modifierFlags)
         for key in allCases {
             guard let combo = key.combo, combo.modifiers == mods else { continue }
@@ -90,5 +93,31 @@ enum ClipboardKey: String, CaseIterable, Identifiable {
         let code = Int(event.keyCode)
         if let i = row.firstIndex(of: code) ?? pad.firstIndex(of: code) { return i + 1 }
         return nil
+    }
+}
+
+extension ShelfKey {
+    /// ← → ↑ ↓, alone or with ⇧: which way to move, and whether to pick along the way.
+    static func arrow(_ event: NSEvent) -> (step: Int, extend: Bool)? {
+        let mods = carbon(event.modifierFlags)
+        guard mods & UInt32(controlKey | optionKey | cmdKey) == 0 else { return nil }
+        let extend = mods & UInt32(shiftKey) != 0
+        switch Int(event.keyCode) {
+        case kVK_LeftArrow, kVK_UpArrow: return (-1, extend)
+        case kVK_RightArrow, kVK_DownArrow: return (1, extend)
+        default: return nil
+        }
+    }
+
+    /// The id `step` along from `current`, or the first one when nothing is highlighted yet.
+    static func step(_ ids: [UUID], from current: UUID?, by step: Int) -> UUID? {
+        guard !ids.isEmpty else { return nil }
+        guard let i = current.flatMap({ ids.firstIndex(of: $0) }) else { return ids[0] }
+        return ids[max(0, min(ids.count - 1, i + step))]
+    }
+
+    /// Space alone (Quick Look where there's no search field to type it into).
+    static func isSpace(_ event: NSEvent) -> Bool {
+        event.keyCode == UInt16(kVK_Space) && carbon(event.modifierFlags) == 0
     }
 }

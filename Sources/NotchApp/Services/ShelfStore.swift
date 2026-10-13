@@ -291,6 +291,16 @@ final class ShelfStore: ObservableObject {
     }
     private var anchor: UUID?
 
+    /// The keyboard's pick: just this file (an arrow), or from the last pick to it (⇧ and an arrow).
+    func pick(_ item: ShelfItem, extending: Bool) {
+        if extending, anchor != nil {
+            click(item, modifiers: .shift)
+        } else {
+            selection = [item.id]
+            anchor = item.id
+        }
+    }
+
     /// What an action on `item` applies to: everything picked when it's one of them, else just it.
     func targets(for item: ShelfItem) -> [ShelfItem] {
         selection.contains(item.id) ? shown.filter { selection.contains($0.id) } : [item]
