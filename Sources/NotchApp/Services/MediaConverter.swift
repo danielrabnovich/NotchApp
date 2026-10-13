@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -161,6 +162,8 @@ final class MediaConverter: ObservableObject {
 
     @Published private(set) var jobs: [Job] = []
     private var processes: [UUID: Process] = [:]
+    /// Outputs being written now: two at once (photo.heic and photo.tiff to WebP) mustn't pick the same free name.
+    private var reserved: Set<String> = []
 
     private init() {}
 
@@ -187,13 +190,47 @@ final class MediaConverter: ObservableObject {
         case .image: all = [.toJPEG, .toPNG, .toHEIC, .toWebP, .toTIFF, .halfSize, .forWeb, .quarterSize, .youtubeThumbnail]
         }
         return all.filter { op in
-            // WebP comes from Homebrew's cwebp (macOS can't write it), which reads PNG, JPEG and TIFF.
-            if op == .toWebP { return cwebp != nil && exts.isSubset(of: ["png", "jpg", "tiff"]) }
-            return (ffmpeg || !op.usesFFmpeg) && !(op.isFormatChange && exts == [op.outputExtension ?? ""])
+            guard (ffmpeg || !op.usesFFmpeg) && !(op.isFormatChange && exts == [op.outputExtension ?? ""]) else { return false }
+            switch op {
+            // WebP comes from Homebrew's cwebp (macOS can't write it), or gif2webp for a moving GIF.
+            case .toWebP: return cwebp != nil && urls.allSatisfy(canMakeWebP)
+            case .halfSize, .quarterSize: return urls.allSatisfy(canResize)
+            default: return true
+            }
         }
     }
 
     nonisolated static let cwebp: String? = ["/opt/homebrew/bin/cwebp", "/usr/local/bin/cwebp"].first { FileManager.default.isExecutableFile(atPath: $0) }
+    nonisolated static let gif2webp: String? = ["/opt/homebrew/bin/gif2webp", "/usr/local/bin/gif2webp"].first { FileManager.default.isExecutableFile(atPath: $0) }
+
+    /// The image types macOS can save (sips writes these; it reads more, WebP and SVG among them).
+    nonisolated private static let writableTypes = Set((CGImageDestinationCopyTypeIdentifiers() as? [String]) ?? [])
+
+    nonisolated private static func isWritable(_ url: URL) -> Bool {
+        UTType(filenameExtension: url.pathExtension.lowercased()).map { writableTypes.contains($0.identifier) } ?? false
+    }
+
+    /// More than one frame: a moving GIF, an animated WebP or PNG.
+    nonisolated static func isAnimated(_ url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
+        return CGImageSourceGetCount(source) > 1
+    }
+
+    nonisolated private static func ext(_ url: URL) -> String { url.pathExtension.lowercased() }
+
+    /// Half and quarter size keep the file's format, so it must be one that can be written back:
+    /// a moving GIF through ffmpeg (sips would keep only its first frame), WebP through cwebp, and
+    /// never SVG, which has no pixels to halve.
+    nonisolated private static func canResize(_ url: URL) -> Bool {
+        if ext(url) == "svg" { return false }
+        if isAnimated(url) { return ext(url) == "gif" && VideoDownloader.ffmpeg != nil }
+        return isWritable(url) || (ext(url) == "webp" && cwebp != nil)
+    }
+
+    /// Any still picture (through PNG when cwebp can't read it); a moving one only as a GIF, with gif2webp.
+    nonisolated private static func canMakeWebP(_ url: URL) -> Bool {
+        isAnimated(url) ? ext(url) == "gif" && gif2webp != nil : true
+    }
 
     /// The conversions these files can take that you reach for most, for one-drop targets: the
     /// ones you've used most for this kind of file, topped up from the usual order.
@@ -297,25 +334,43 @@ final class MediaConverter: ObservableObject {
 
     private func start(_ job: Job) {
         let source = job.source, op = job.operation, id = job.id
-        let output = Self.outputURL(for: source, op)
+        let output = Self.outputURL(for: source, op, avoiding: reserved)
+        reserved.insert(output.path)
         update(id) { $0.state = .running; $0.progress = op.usesFFmpeg ? 0 : nil }
 
         let p = Process()
-        if op.usesFFmpeg {
-            guard let ffmpeg = VideoDownloader.ffmpeg else { update(id) { $0.state = .failed("Needs ffmpeg") }; return }
-            p.executableURL = ffmpeg
-            p.arguments = ["-hide_banner", "-nostdin", "-y", "-i", source.path] + Self.ffmpegArgs(op, source: source) + ["-progress", "pipe:1", "-nostats", output.path]
-        } else if op == .toWebP, let cwebp = Self.cwebp {
-            p.executableURL = URL(fileURLWithPath: cwebp)
-            p.arguments = ["-quiet", "-q", "85", source.path, "-o", output.path]
+        let tracksProgress: Bool
+        if Self.kind(of: source) == .image {
+            guard let (tool, args) = Self.imageCommand(op, source: source, output: output) else {
+                update(id) { $0.state = .failed(op.usesFFmpeg ? "Needs ffmpeg" : "Can't do this one") }
+                reserved.remove(output.path)
+                return
+            }
+            p.executableURL = tool
+            p.arguments = args
+            tracksProgress = false
         } else {
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/sips")
-            p.arguments = Self.sipsArgs(op, source: source) + [source.path, "--out", output.path]
+            guard let ffmpeg = VideoDownloader.ffmpeg else {
+                update(id) { $0.state = .failed("Needs ffmpeg") }
+                reserved.remove(output.path)
+                return
+            }
+            p.executableURL = ffmpeg
+            p.arguments = ["-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-i", source.path] + Self.ffmpegArgs(op, source: source)
+                + ["-progress", "pipe:1", "-nostats", output.path]
+            tracksProgress = true
         }
         let out = Pipe()
         p.standardOutput = out
-        p.standardError = FileHandle.nullDevice
-        if op.usesFFmpeg {
+        // What went wrong, if it does (the last few lines are plenty).
+        let err = Pipe()
+        let errors = ErrorTail()
+        p.standardError = err
+        err.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty { errors.append(data) }
+        }
+        if tracksProgress {
             // Progress needs the length; ask ffprobe (next to ffmpeg) once.
             let probe = VideoDownloader.ffmpeg?.deletingLastPathComponent().appendingPathComponent("ffprobe").path
             Task.detached {
@@ -335,15 +390,18 @@ final class MediaConverter: ObservableObject {
         }
         p.terminationHandler = { proc in
             out.fileHandleForReading.readabilityHandler = nil
+            err.fileHandleForReading.readabilityHandler = nil
             let ok = proc.terminationStatus == 0
             let cancelled = proc.terminationReason == .uncaughtSignal
-            Task { @MainActor in MediaConverter.shared.finished(id, output: output, ok: ok, cancelled: cancelled) }
+            let reason = ok ? nil : Self.reason(errors.text, op: op)
+            Task { @MainActor in MediaConverter.shared.finished(id, output: output, ok: ok, cancelled: cancelled, reason: reason) }
         }
         do {
             try p.run()
             processes[id] = p
         } catch {
             update(id) { $0.state = .failed("Couldn't start") }
+            reserved.remove(output.path)
             pump()
         }
     }
@@ -355,8 +413,9 @@ final class MediaConverter: ObservableObject {
         update(id) { $0.progress = min(1, seconds / total) }
     }
 
-    private func finished(_ id: UUID, output: URL, ok: Bool, cancelled: Bool) {
+    private func finished(_ id: UUID, output: URL, ok: Bool, cancelled: Bool, reason: String? = nil) {
         processes[id] = nil
+        reserved.remove(output.path)
         durations[id] = nil
         defer { pump() }
         guard let job = jobs.first(where: { $0.id == id }) else { return }
@@ -367,9 +426,10 @@ final class MediaConverter: ObservableObject {
         }
         guard ok, FileManager.default.fileExists(atPath: output.path) else {
             try? FileManager.default.removeItem(at: output)
-            update(id) { $0.state = .failed("\(job.operation.title) failed") }
+            update(id) { $0.state = .failed(reason ?? "\(job.operation.title) failed") }
             if job.batch == nil {
-                ActivityCenter.shared.show(.notice(title: "Conversion failed", detail: job.source.lastPathComponent, icon: "wand.and.stars", tone: .warning), for: 4)
+                let detail = reason.map { "\($0) · \(job.source.lastPathComponent)" } ?? job.source.lastPathComponent
+                ActivityCenter.shared.show(.notice(title: "Conversion failed", detail: detail, icon: "wand.and.stars", tone: .warning), for: 4)
             } else {
                 batchFinished(job)
             }
@@ -467,8 +527,65 @@ final class MediaConverter: ObservableObject {
         case "m4a", "aac": ["-c:a", "aac", "-b:a", "256k"]
         case "flac": ["-c:a", "flac"]
         case "aif", "aiff": ["-c:a", "pcm_s16be"]
+        // Ogg can't hold plain PCM; Opus is what this ffmpeg can write into it (it has no Vorbis).
+        case "ogg", "oga", "opus": ["-c:a", "libopus", "-b:a", "160k"]
         default: ["-c:a", "pcm_s16le"]
         }
+    }
+
+    /// How an image becomes its result: one tool, or a two-step `sh` script when a format needs a
+    /// stop on the way (sips reads WebP and SVG but can't write them; cwebp reads only PNG and
+    /// JPEG; ffmpeg can't read SVG). The paths go in as the script's arguments, never into its text.
+    nonisolated private static func imageCommand(_ op: Operation, source: URL, output: URL) -> (URL, [String])? {
+        let sips = "/usr/bin/sips"
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("notch-convert-\(UUID().uuidString).png").path
+        /// A plain `sh` script given the source, the output, a PNG on the way and the second tool
+        /// as `$in`, `$out`, `$tmp` and `$tool` (and anything after as `"$@"`); the PNG is removed after.
+        func pipeline(_ script: String, tool: String, _ rest: [String] = []) -> (URL, [String]) {
+            let body = #"in="$1"; out="$2"; tmp="$3"; tool="$4"; shift 4"# + "\n" + script + "\n" + #"s=$?; rm -f "$tmp"; exit $s"#
+            return (URL(fileURLWithPath: "/bin/sh"), ["-c", body, "sh", source.path, output.path, tmp, tool] + rest)
+        }
+        let ext = ext(source)
+        switch op {
+        case .toWebP:
+            if isAnimated(source), let gif2webp { return (URL(fileURLWithPath: gif2webp), ["-quiet", "-q", "85", source.path, "-o", output.path]) }
+            guard let cwebp else { return nil }
+            if ["png", "jpg", "jpeg"].contains(ext) { return (URL(fileURLWithPath: cwebp), ["-quiet", "-q", "85", source.path, "-o", output.path]) }
+            return pipeline(#"\#(sips) -s format png "$in" --out "$tmp" >/dev/null && "$tool" -quiet -q 85 "$tmp" -o "$out""#, tool: cwebp)
+        case .halfSize, .quarterSize:
+            let divisor = op == .halfSize ? 2 : 4
+            if isAnimated(source) {
+                // Every frame, scaled, with a palette made for the smaller picture.
+                guard let ffmpeg = VideoDownloader.ffmpeg else { return nil }
+                return (ffmpeg, ["-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-i", source.path, "-vf",
+                                 "scale=iw/\(divisor):-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse", "-loop", "0", output.path])
+            }
+            if ext == "webp", let cwebp {
+                // sipsArgs here is only "--resampleWidth N" or "-Z N": numbers, safe in the script's text.
+                let resize = sipsArgs(op, source: source).joined(separator: " ")
+                return pipeline(#"\#(sips) \#(resize) -s format png "$in" --out "$tmp" >/dev/null && "$tool" -quiet -q 90 "$tmp" -o "$out""#, tool: cwebp)
+            }
+            return (URL(fileURLWithPath: sips), sipsArgs(op, source: source) + [source.path, "--out", output.path])
+        case .youtubeThumbnail:
+            guard let ffmpeg = VideoDownloader.ffmpeg else { return nil }
+            let args = ffmpegArgs(op, source: source)
+            if ext == "svg" {
+                return pipeline(#"\#(sips) -s format png "$in" --out "$tmp" >/dev/null && "$tool" -hide_banner -nostdin -y -loglevel error -i "$tmp" "$@" "$out""#,
+                                tool: ffmpeg.path, args)
+            }
+            return (ffmpeg, ["-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-i", source.path] + args + [output.path])
+        default:
+            return (URL(fileURLWithPath: sips), sipsArgs(op, source: source) + [source.path, "--out", output.path])
+        }
+    }
+
+    /// A failure in words, from what the tool said, when it's one people can do something about.
+    nonisolated private static func reason(_ errors: String, op: Operation) -> String? {
+        if errors.contains("does not contain any stream"), [.audioM4A, .audioMP3, .audioWAV].contains(op) { return "This video has no sound" }
+        if errors.contains("Can't write format") { return "macOS can't save this format" }
+        if errors.contains("no decoder found") || errors.contains("Invalid data found when processing input") { return "Couldn't read this file" }
+        if errors.contains("No space left") { return "The disk is full" }
+        return nil
     }
 
     nonisolated private static func sipsArgs(_ op: Operation, source: URL) -> [String] {
@@ -491,7 +608,7 @@ final class MediaConverter: ObservableObject {
     }
 
     /// "Clip.mov" → "Clip (compressed).mp4", numbered if that name is taken.
-    nonisolated private static func outputURL(for source: URL, _ op: Operation) -> URL {
+    nonisolated private static func outputURL(for source: URL, _ op: Operation, avoiding reserved: Set<String> = []) -> URL {
         let folder = source.deletingLastPathComponent()
         let writable = FileManager.default.isWritableFile(atPath: folder.path)
         let dir = writable ? folder : FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
@@ -499,10 +616,29 @@ final class MediaConverter: ObservableObject {
         let ext = op.outputExtension ?? source.pathExtension
         var url = dir.appendingPathComponent(base).appendingPathExtension(ext)
         var n = 2
-        while FileManager.default.fileExists(atPath: url.path) || url == source {
+        while FileManager.default.fileExists(atPath: url.path) || url == source || reserved.contains(url.path) {
             url = dir.appendingPathComponent("\(base) \(n)").appendingPathExtension(ext)
             n += 1
         }
         return url
+    }
+}
+
+/// The end of what a tool wrote to stderr, gathered as it comes (from a background thread).
+private final class ErrorTail: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        data.append(chunk)
+        if data.count > 8192 { data = data.suffix(4096) }
+        lock.unlock()
+    }
+
+    var text: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(decoding: data, as: UTF8.self)
     }
 }

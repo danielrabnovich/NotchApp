@@ -267,6 +267,11 @@ enum DebugHooks {
             LiveActivities.shared.slots.forEach { LiveActivities.shared.unpin($0.item) }
             items.forEach { LiveActivities.shared.pin($0) }
         case "speedtest": SpeedTest.shared.start()
+        case "convops": // convops <path>: logs the conversions offered for that file
+            let url = URL(fileURLWithPath: parts.dropFirst().joined(separator: " "))
+            log("CONVOPS \(url.lastPathComponent): " + MediaConverter.operations(for: [url]).map(\.rawValue).joined(separator: ","))
+        case "convjobs": // logs every conversion job's state
+            for job in MediaConverter.shared.jobs { log("CONVJOB \(job.source.lastPathComponent) \(job.operation.rawValue) \(job.state)") }
         case "convert": // convert <operation> <path>
             if let op = MediaConverter.Operation(rawValue: parts[safe: 1] ?? "") {
                 MediaConverter.shared.convert([URL(fileURLWithPath: parts.dropFirst(2).joined(separator: " "))], op)
