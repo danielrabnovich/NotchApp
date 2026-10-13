@@ -1,4 +1,5 @@
 import Carbon.HIToolbox
+import QuickLookThumbnailing
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -1165,11 +1166,22 @@ private struct ClipCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
         case .files:
-            HStack(spacing: 6) {
-                if let first = clip.filePaths?.first {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: first)).resizable().frame(width: 30, height: 30)
+            let paths = clip.filePaths ?? []
+            if paths.count == 1 {
+                // One file: its preview fills the card (a picture, a PDF's page, a document's icon).
+                VStack(alignment: .leading, spacing: 4) {
+                    FileThumbnail(path: paths[0], fill: clip.isPicture)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    Text(clip.title).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.75)).lineLimit(1).truncationMode(.middle)
                 }
-                Text(clip.title).font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.85)).lineLimit(3)
+            } else {
+                VStack(alignment: .leading, spacing: 4) {
+                    FileFan(paths: paths, spread: hovering || marks.highlighted)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Text(clip.isPicture ? "\(paths.count) pictures" : clip.title)
+                        .font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.75)).lineLimit(1)
+                }
             }
         }
     }
@@ -1493,5 +1505,74 @@ private struct ConvertJobTile: View {
         if batch.total > 1 { return "\(batch.finished + 1) of \(batch.total)" }
         if batch.jobs.first?.state == .queued { return "Waiting…" }
         return batch.progress.map { "\(Int(($0 * 100).rounded()))%" } ?? batch.jobs.first?.source.lastPathComponent ?? ""
+    }
+}
+
+/// A file's preview from Quick Look (a picture, a PDF's first page, a document's own icon), made
+/// once per file and kept; the file's icon stands in until it's ready.
+struct FileThumbnail: View {
+    let path: String
+    /// Fill the frame (a picture) rather than fit inside it (a page, an icon).
+    var fill = false
+    var size: CGFloat = 180
+    @State private var image: NSImage?
+
+    private static let cache = NSCache<NSString, NSImage>()
+
+    var body: some View {
+        Color.clear
+            .overlay {
+                if let image {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: fill ? .fill : .fit)
+                } else {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: path)).resizable().aspectRatio(contentMode: .fit).padding(6)
+                }
+            }
+            .clipped()
+            .task(id: path) {
+                let key = "\(path)#\(Int(size))" as NSString
+                if let hit = Self.cache.object(forKey: key) { image = hit; return }
+                let request = QLThumbnailGenerator.Request(fileAt: URL(fileURLWithPath: path), size: CGSize(width: size, height: size),
+                                                          scale: 2, representationTypes: .thumbnail)
+                guard let rep = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) else { return }
+                Self.cache.setObject(rep.nsImage, forKey: key)
+                image = rep.nsImage
+            }
+    }
+}
+
+/// Several files as a little fanned stack (the first three), with how many there are; it opens
+/// wider under the pointer so each one can be seen.
+private struct FileFan: View {
+    let paths: [String]
+    var spread = false
+
+    var body: some View {
+        let shown = Array(paths.prefix(3))
+        GeometryReader { geo in
+            let side = min(geo.size.height - 4, 52)
+            ZStack {
+                ForEach(Array(shown.enumerated().reversed()), id: \.offset) { i, path in
+                    // The first file on top, the others fanned out behind it to either side.
+                    let slot = CGFloat(i == 0 ? 0 : (i == 1 ? -1 : 1))
+                    FileThumbnail(path: path, fill: true, size: 120)
+                        .frame(width: side, height: side)
+                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(.white.opacity(0.25), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.45), radius: 3, y: 1)
+                        .rotationEffect(.degrees(Double(slot) * (spread ? 14 : 7)), anchor: .bottom)
+                        .offset(x: slot * (spread ? side * 0.62 : side * 0.28))
+                }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .overlay(alignment: .topTrailing) {
+                Text("\(paths.count)")
+                    .font(.system(size: 9.5, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16)
+                    .background(Capsule().fill(.white.opacity(0.9)))
+            }
+            .animation(.spring(response: 0.32, dampingFraction: 0.72), value: spread)
+        }
     }
 }

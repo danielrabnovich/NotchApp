@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Everything you copy, kept for later: text, links, images and files. Copies marked as
 /// concealed or transient (password managers do this) and copies from password apps are skipped.
@@ -28,6 +29,19 @@ final class ClipboardHistory: ObservableObject {
             case .files:
                 let names = (filePaths ?? []).map { ($0 as NSString).lastPathComponent }
                 return names.count == 1 ? names[0] : "\(names.count) files"
+            }
+        }
+
+        /// A picture: copied as an image, or copied files that are all pictures (Finder copies files).
+        var isPicture: Bool {
+            switch kind {
+            case .image: return true
+            case .files:
+                let paths = filePaths ?? []
+                return !paths.isEmpty && paths.allSatisfy {
+                    UTType(filenameExtension: ($0 as NSString).pathExtension.lowercased())?.conforms(to: .image) ?? false
+                }
+            default: return false
             }
         }
 
@@ -359,7 +373,7 @@ final class ClipboardHistory: ObservableObject {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         let list = pinned + clips.filter { !$0.pinned }
         return list.filter { clip in
-            (kind == nil || clip.kind == kind) && (q.isEmpty || clip.title.lowercased().contains(q)
+            (kind == nil || clip.kind == kind || (kind == .image && clip.isPicture)) && (q.isEmpty || clip.title.lowercased().contains(q)
                 || (clip.filePaths ?? []).contains { $0.lowercased().contains(q) })
         }
     }

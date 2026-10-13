@@ -267,6 +267,9 @@ enum DebugHooks {
             LiveActivities.shared.slots.forEach { LiveActivities.shared.unpin($0.item) }
             items.forEach { LiveActivities.shared.pin($0) }
         case "speedtest": SpeedTest.shared.start()
+        case "clipshown": // clipshown <text|link|image|files>: how many clips that filter shows
+            let kind = ClipboardHistory.Clip.Kind(rawValue: parts[safe: 1] ?? "")
+            log("CLIPSHOWN \(parts[safe: 1] ?? "all") \(ClipboardHistory.shared.shown(matching: "", kind: kind).count)")
         case "convops": // convops <path>: logs the conversions offered for that file
             let url = URL(fileURLWithPath: parts.dropFirst().joined(separator: " "))
             log("CONVOPS \(url.lastPathComponent): " + MediaConverter.operations(for: [url]).map(\.rawValue).joined(separator: ","))
