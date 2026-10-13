@@ -23,6 +23,31 @@ struct TimerView: View {
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.isActive)
+        .modifier(TabKeyboard(viewModel: viewModel, tab: .timer, handle: handle))
+    }
+
+    /// ← → a minute either way (⇧ five), ↩ or Space to start; Space pauses and resumes once it runs.
+    private func handle(_ event: NSEvent) -> Bool {
+        // Typing in a field (a Pomodoro setting never is one, but to be safe) keeps its keys.
+        if event.window?.firstResponder is NSTextView { return false }
+        let space = ShelfKey.isSpace(event)
+        if store.isActive {
+            guard space else { return false }
+            store.state == .running ? store.pause() : store.resume()
+            return true
+        }
+        if space || (event.keyCode == 36 && ShelfKey.carbon(event.modifierFlags) == 0) {
+            store.start()
+            return true
+        }
+        guard let (step, extend) = ShelfKey.arrow(event), event.keyCode == 123 || event.keyCode == 124 else { return false }
+        let by = step * (extend ? 5 : 1)
+        switch store.mode {
+        case .timer: store.timerMinutes = min(180, max(1, store.timerMinutes + by))
+        case .pomodoro: store.focusMinutes = min(90, max(5, store.focusMinutes + by))
+        case .stopwatch: return false
+        }
+        return true
     }
 
     private var setup: some View {
@@ -383,6 +408,8 @@ private struct MinuteRuler: View {
     @ObservedObject var viewModel: NotchViewModel
 
     @State private var scrolled: Int?
+    /// Where a click-and-drag started: the ruler moves with the pointer, a minute a tick.
+    @State private var dragStart: Int?
     private let pitch: CGFloat = 14
 
     var body: some View {
@@ -413,6 +440,15 @@ private struct MinuteRuler: View {
             }
         }
         .frame(height: 62)
+        // A trackpad scrolls it; a mouse can grab it, as you'd pull a tape measure.
+        .simultaneousGesture(DragGesture(minimumDistance: 3)
+            .onChanged { g in
+                let start = dragStart ?? scrolled ?? value
+                dragStart = start
+                let m = min(range.upperBound, max(range.lowerBound, start - Int((g.translation.width / pitch).rounded())))
+                if m != scrolled { scrolled = m }
+            }
+            .onEnded { _ in dragStart = nil })
         .horizontalScrollRegion("timer.ruler", in: viewModel)
         .onAppear { scrolled = value }
         .onChange(of: scrolled) { old, new in

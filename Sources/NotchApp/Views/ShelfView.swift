@@ -319,7 +319,7 @@ private struct TileStrip<Tile: View>: View {
                 highlight = first.id
             }
         }
-        .modifier(TileKeyboard(viewModel: viewModel, held: $held, handle: handle))
+        .modifier(TabKeyboard(viewModel: viewModel, tab: .shelf, held: $held, handle: handle))
     }
 
     private func handle(_ event: NSEvent) -> Bool {
@@ -442,40 +442,6 @@ private extension View {
     }
 }
 
-/// Keys for a row of tiles in the Shelf tab (see `ShelfKey`): only while this notch's window has
-/// the keyboard and the Shelf tab is showing, and only while the row is on screen.
-private struct TileKeyboard: ViewModifier {
-    @ObservedObject var viewModel: NotchViewModel
-    /// Modifiers held right now: holding quick paste's shows the numbers.
-    @Binding var held: UInt32
-    /// Returns whether it took the key.
-    let handle: (NSEvent) -> Bool
-    @State private var monitor: Any?
-
-    func body(content: Content) -> some View {
-        content
-            .onAppear {
-                guard monitor == nil else { return }
-                monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
-                    MainActor.assumeIsolated { route(event) ? nil : event }
-                }
-            }
-            .onDisappear {
-                if let monitor { NSEvent.removeMonitor(monitor) }
-                monitor = nil
-                held = 0
-            }
-    }
-
-    private func route(_ event: NSEvent) -> Bool {
-        guard event.window is NotchPanel, viewModel.isOpen, viewModel.tab == .shelf, viewModel.overlay == nil else { return false }
-        if event.type == .flagsChanged {
-            held = ShelfKey.carbon(event.modifierFlags)
-            return false
-        }
-        return handle(event)
-    }
-}
 
 private struct ShelfTile: View {
     enum Kind { case shelf, download }
@@ -963,7 +929,7 @@ private struct ClipboardStrip: View {
             }
         }
         .onAppear { if viewModel.openReason == .keyboard { highlight = shown.first?.id } }
-        .modifier(TileKeyboard(viewModel: viewModel, held: $held, handle: handle))
+        .modifier(TabKeyboard(viewModel: viewModel, tab: .shelf, held: $held, handle: handle))
         // A new search highlights its first match, so ↩ pastes it.
         .onChange(of: query) { _, _ in highlight = self.shown.first?.id }
         .onChange(of: kind) { _, _ in if highlight != nil { highlight = self.shown.first?.id } }

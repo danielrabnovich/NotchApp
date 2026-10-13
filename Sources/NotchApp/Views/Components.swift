@@ -607,3 +607,47 @@ extension View {
         contentTransition(.numericText()).animation(.snappy(duration: 0.35), value: value)
     }
 }
+
+/// Keys for one tab's content: only while this notch's window has the keyboard and `tab` is
+/// showing (no overlay over it), and only while the view it's on is on screen. Unhandled keys
+/// carry on as usual.
+struct TabKeyboard: ViewModifier {
+    @ObservedObject var viewModel: NotchViewModel
+    let tab: NotchTab
+    /// Modifiers held right now (the Shelf's quick paste numbers show while they're held).
+    @Binding var held: UInt32
+    /// Returns whether it took the key.
+    let handle: (NSEvent) -> Bool
+    @State private var monitor: Any?
+
+    init(viewModel: NotchViewModel, tab: NotchTab, held: Binding<UInt32> = .constant(0), handle: @escaping (NSEvent) -> Bool) {
+        self.viewModel = viewModel
+        self.tab = tab
+        self._held = held
+        self.handle = handle
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                guard monitor == nil else { return }
+                monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+                    MainActor.assumeIsolated { route(event) ? nil : event }
+                }
+            }
+            .onDisappear {
+                if let monitor { NSEvent.removeMonitor(monitor) }
+                monitor = nil
+                held = 0
+            }
+    }
+
+    private func route(_ event: NSEvent) -> Bool {
+        guard event.window is NotchPanel, viewModel.isOpen, viewModel.tab == tab, viewModel.overlay == nil, !viewModel.mirror else { return false }
+        if event.type == .flagsChanged {
+            held = ShelfKey.carbon(event.modifierFlags)
+            return false
+        }
+        return handle(event)
+    }
+}
