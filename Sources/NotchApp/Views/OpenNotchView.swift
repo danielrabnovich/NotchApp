@@ -4,6 +4,7 @@ struct OpenNotchView: View {
     @ObservedObject var viewModel: NotchViewModel
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var battery: BatteryMonitor
+    @EnvironmentObject private var activity: ActivityCenter
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,6 +45,30 @@ struct OpenNotchView: View {
 
             Color.clear.frame(width: viewModel.notchSize.width + 16)
 
+            // Volume and brightness show here while the notch is open (the closed notch's wings,
+            // where they'd usually appear, are covered), in place of the battery and buttons.
+            // The status items stay in place underneath (faded), rather than being taken out and
+            // put back, so they come back exactly as they were.
+            let flash = activity.peek.flatMap { $0.kind == .volume || $0.kind == .brightness ? $0 : nil }
+            ZStack(alignment: .trailing) {
+                statusItems
+                    .opacity(flash == nil ? 1 : 0)
+                    .blur(radius: flash == nil ? 0 : 6)
+                    .allowsHitTesting(flash == nil)
+                if let flash {
+                    HeaderFlash(peek: flash)
+                        .transition(.blurReplace)
+                }
+            }
+            .animation(.snappy(duration: 0.25), value: flash == nil)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 2)
+    }
+
+    /// The battery, the camera mirror and Settings, on the right of the notch.
+    private var statusItems: some View {
             HStack(spacing: 8) {
                 if battery.hasBattery {
                     HStack(spacing: 5) {
@@ -74,10 +99,55 @@ struct OpenNotchView: View {
                 }
                 .buttonStyle(NotchIconButtonStyle(size: 24))
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+/// Volume or brightness in the open notch's top row: the symbol, a bar and the level, in the
+/// same look as the closed notch's Flash.
+private struct HeaderFlash: View {
+    let peek: SneakPeek
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        let (icon, variable, level, muted): (String, Double?, Float, Bool) = {
+            switch peek {
+            case let .volume(level, muted):
+                let silent = muted || level <= 0.001
+                return (CollapsedNotchView.outputIcon(muted: silent), silent ? nil : Double(level), level, muted)
+            case let .brightness(level):
+                return (level < 0.5 ? "sun.min.fill" : "sun.max.fill", nil, level, false)
+            default:
+                return ("", nil, 0, false)
+            }
+        }()
+        let color = settings.accentMode == .custom ? settings.customAccent : .white
+        let fill = CGFloat(min(1, max(0, level)))
+        HStack(spacing: 8) {
+            Image(systemName: icon, variableValue: variable)
+                .font(.system(size: 12, weight: .semibold))
+                // Muted, like 🔇: the slash red, the speaker white.
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(icon.contains(".slash") ? Color(red: 1, green: 0.27, blue: 0.23) : .white, .white)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 20)
+            ZStack(alignment: .leading) {
+                Capsule().fill(.white.opacity(0.16))
+                Capsule()
+                    .fill(muted ? Color.white.opacity(0.35) : color)
+                    .frame(width: fill > 0 ? max(5, fill * 110) : 0)
+                    .shadow(color: color.opacity(muted ? 0 : 0.5), radius: 4)
+            }
+            .frame(width: 110, height: 5)
+            .animation(.spring(response: 0.28, dampingFraction: 0.86), value: fill)
+            Text(muted ? "Muted" : "\(Int((level * 100).rounded()))")
+                .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white.opacity(muted ? 0.5 : 0.85))
+                .contentTransition(.numericText(value: Double(level)))
+                .frame(minWidth: 26, alignment: .trailing)
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 2)
+        .animation(.snappy(duration: 0.22), value: level)
+        .frame(height: 24)
+        .padding(.trailing, 4)
     }
 }
 
