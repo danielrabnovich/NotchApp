@@ -49,11 +49,21 @@ final class AppSettings: ObservableObject {
         var label: String { rawValue.capitalized }
     }
 
+    /// The open notch: black throughout, or black at the notch melting into glass below it.
+    enum NotchMaterial: String, CaseIterable, Identifiable {
+        case black, glass
+        var id: String { rawValue }
+        var label: String { self == .black ? "Black" : "Dynamic Glass" }
+        static var isAvailable: Bool { if #available(macOS 26, *) { true } else { false } }
+    }
+
     private let defaults = UserDefaults.standard
 
     // General
     @Published var openMode: OpenMode { didSet { defaults.set(openMode.rawValue, forKey: "openMode") } }
     @Published var hoverDelay: Double { didSet { defaults.set(hoverDelay, forKey: "hoverDelay") } }
+    /// The screen the notch opens on: a tab's name, or "last" for wherever it was left.
+    @Published var openTo: String { didSet { defaults.set(openTo, forKey: "openTo") } }
     @Published var displayMode: DisplayMode { didSet { defaults.set(displayMode.rawValue, forKey: "displayMode") } }
     @Published var showFakeNotch: Bool { didSet { defaults.set(showFakeNotch, forKey: "showFakeNotch") } }
     @Published var showMenuBarIcon: Bool { didSet { defaults.set(showMenuBarIcon, forKey: "showMenuBarIcon") } }
@@ -64,6 +74,9 @@ final class AppSettings: ObservableObject {
     @Published var customAccentHex: String { didSet { defaults.set(customAccentHex, forKey: "customAccentHex") } }
     @Published var animationStyle: AnimationStyle { didSet { defaults.set(animationStyle.rawValue, forKey: "animationStyle") } }
     @Published var showShadow: Bool { didSet { defaults.set(showShadow, forKey: "showShadow") } }
+    @Published var notchMaterial: NotchMaterial { didSet { defaults.set(notchMaterial.rawValue, forKey: "notchMaterial") } }
+    /// Glass only where the system can draw it.
+    var usesGlass: Bool { notchMaterial == .glass && NotchMaterial.isAvailable }
     @Published var haptics: Bool { didSet { defaults.set(haptics, forKey: "haptics") } }
     @Published var glanceDensity: GlanceDensity { didSet { defaults.set(glanceDensity.rawValue, forKey: "glanceDensity") } }
     @Published var alertLevel: AlertLevel { didSet { defaults.set(alertLevel.rawValue, forKey: "alertLevel") } }
@@ -143,10 +156,21 @@ final class AppSettings: ObservableObject {
     @Published var hotKeyOverrides: [String: HotKeys.Combo] {
         didSet { defaults.set(try? JSONEncoder().encode(hotKeyOverrides), forKey: "hotKeyOverrides") }
     }
+    /// The Clipboard pane's keys (paste, copy, remove…) rebound one by one; the rest keep their defaults.
+    @Published var clipboardKeyOverrides: [String: HotKeys.Combo] {
+        didSet { defaults.set(try? JSONEncoder().encode(clipboardKeyOverrides), forKey: "clipboardKeyOverrides") }
+    }
 
     // Tools
     @Published var toolsEnabled: Bool { didSet { defaults.set(toolsEnabled, forKey: "toolsEnabled") } }
     @Published var clipboardHistory: Bool { didSet { defaults.set(clipboardHistory, forKey: "clipboardHistory") } }
+    /// Other apps' notifications in the notch, with a reply.
+    @Published var notificationMirror: NotificationMirror.Mode {
+        didSet {
+            defaults.set(notificationMirror.rawValue, forKey: "notificationMirror")
+            if oldValue != notificationMirror { NotificationMirror.shared.apply() }
+        }
+    }
     @Published var deviceBatteryAlerts: Bool { didSet { defaults.set(deviceBatteryAlerts, forKey: "deviceBatteryAlerts") } }
     @Published var privacyAlerts: Bool { didSet { defaults.set(privacyAlerts, forKey: "privacyAlerts") } }
     @Published var lowDiskAlerts: Bool { didSet { defaults.set(lowDiskAlerts, forKey: "lowDiskAlerts") } }
@@ -240,6 +264,8 @@ final class AppSettings: ObservableObject {
             "customAccentHex": "#0A84FF",
             "animationStyle": AnimationStyle.smooth.rawValue,
             "showShadow": true,
+            "openTo": "ask",
+            "notchMaterial": NotchMaterial.glass.rawValue,
             "haptics": true,
             "musicEnabled": false,
             "musicLiveActivity": false,
@@ -283,6 +309,7 @@ final class AppSettings: ObservableObject {
             "statsEnabled": false,
             "toolsEnabled": false,
             "clipboardHistory": false,
+            "notificationMirror": NotificationMirror.Mode.chats.rawValue,
             "deviceBatteryAlerts": true,
             "privacyAlerts": false,
             "lowDiskAlerts": true,
@@ -339,6 +366,8 @@ final class AppSettings: ObservableObject {
         customAccentHex = defaults.string(forKey: "customAccentHex") ?? "#0A84FF"
         animationStyle = AnimationStyle(rawValue: defaults.string(forKey: "animationStyle") ?? "") ?? .smooth
         showShadow = defaults.bool(forKey: "showShadow")
+        openTo = defaults.string(forKey: "openTo") ?? "ask"
+        notchMaterial = NotchMaterial(rawValue: defaults.string(forKey: "notchMaterial") ?? "") ?? .glass
         haptics = defaults.bool(forKey: "haptics")
         glanceDensity = GlanceDensity(rawValue: defaults.string(forKey: "glanceDensity") ?? "") ?? .regular
         alertLevel = AlertLevel(rawValue: defaults.string(forKey: "alertLevel") ?? "") ?? .all
@@ -382,9 +411,11 @@ final class AppSettings: ObservableObject {
         hotKeysEnabled = defaults.bool(forKey: "hotKeysEnabled")
         hotKeyModifiers = HotKeys.Modifiers(rawValue: defaults.string(forKey: "hotKeyModifiers") ?? "") ?? .controlOption
         hotKeyOverrides = defaults.data(forKey: "hotKeyOverrides").flatMap { try? JSONDecoder().decode([String: HotKeys.Combo].self, from: $0) } ?? [:]
+        clipboardKeyOverrides = defaults.data(forKey: "clipboardKeyOverrides").flatMap { try? JSONDecoder().decode([String: HotKeys.Combo].self, from: $0) } ?? [:]
         statsEnabled = defaults.bool(forKey: "statsEnabled")
         toolsEnabled = defaults.bool(forKey: "toolsEnabled")
         clipboardHistory = defaults.bool(forKey: "clipboardHistory")
+        notificationMirror = NotificationMirror.Mode(rawValue: defaults.string(forKey: "notificationMirror") ?? "") ?? .chats
         deviceBatteryAlerts = defaults.bool(forKey: "deviceBatteryAlerts")
         privacyAlerts = defaults.bool(forKey: "privacyAlerts")
         lowDiskAlerts = defaults.bool(forKey: "lowDiskAlerts")

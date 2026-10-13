@@ -38,7 +38,9 @@ enum DebugHooks {
         case "done": if let t = TaskStore.shared.open.first { TaskStore.shared.setDone(t.id, true) }
         case "page": c.viewModel.pageOffset = CGFloat(Double(parts[safe: 1] ?? "0") ?? 0)
         case "drag":
-            c.viewModel.dragPreview = DragPreview(taskTitle: "Reply to Sarah about the Q3 budget", hasFiles: parts[safe: 1] == "files", icon: "envelope.fill")
+            // drag files <path…>: the drop bins as for those files (one-drop conversions included)
+            c.viewModel.dragPreview = DragPreview(taskTitle: "Reply to Sarah about the Q3 budget", hasFiles: parts[safe: 1] == "files", icon: "envelope.fill",
+                                                  files: parts.dropFirst(2).map { URL(fileURLWithPath: $0) })
             c.viewModel.isDragActive = parts[safe: 1] != "0"
         case "duesoon":
             TaskStore.shared.add(TaskItem(title: "Send updated deck to Sarah", due: Date().addingTimeInterval(95 * 60)))
@@ -90,6 +92,8 @@ enum DebugHooks {
         case "spane": // spane <pane raw value…>: opens Settings on a pane at 900×1100
             SettingsWindowController.shared.show(pane: SettingsPane(rawValue: parts.dropFirst().joined(separator: " ")))
             SettingsWindowController.shared.debugResize(width: 900, height: 1100)
+        case "sresize": // sresize <w> <h>: resizes Settings (taller than the screen, to snapshot a long pane)
+            SettingsWindowController.shared.debugResize(width: CGFloat(Double(parts[safe: 1] ?? "") ?? 900), height: CGFloat(Double(parts[safe: 2] ?? "") ?? 1100))
         case "sshot": SettingsWindowController.shared.debugSnapshot(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/settings.png"))
         case "smove", "sclick", "srclick": // x y in points, top-left of the content
             let x = CGFloat(Double(parts[safe: 1] ?? "") ?? 0), y = CGFloat(Double(parts[safe: 2] ?? "") ?? 0)
@@ -277,6 +281,31 @@ enum DebugHooks {
         case "shelfadd": // shelfadd <path…>: a quick drop, as if dragged onto the notch
             ShelfStore.shared.add(parts.dropFirst().map { URL(fileURLWithPath: $0) })
         case "shelfclearquick": ShelfStore.shared.remove(ShelfStore.shared.stack)
+        case "shelfselect": // shelfselect <n>: picks the first n files on the shelf (0 lets go)
+            ShelfStore.shared.selection = Set(ShelfStore.shared.shown.prefix(Int(parts[safe: 1] ?? "") ?? 0).map(\.id))
+        case "convertpicker": ShelfStore.shared.convertPicker = parts.count > 1 ? parts.dropFirst().map { URL(fileURLWithPath: $0) } : nil
+        case "replytest": // a banner with a Reply box, like a chat app's (replies are logged)
+            Notifier.debugReplyBanner(from: parts.dropFirst().joined(separator: " "))
+        case "fakenotify": NotificationMirror.shared.debugFake()
+        case "fakereply": if let item = NotificationMirror.shared.recent.first { NotchPresenter.shared.presentReply(to: item) }
+        case "notifydump": NotificationMirror.shared.debugDump()
+        case "notifyscan": NotificationMirror.shared.scan()
+        case "prompter": // prompter start|stop|pause|voice
+            switch parts[safe: 1] {
+            case "start":
+                if Teleprompter.shared.script.isEmpty {
+                    Teleprompter.shared.script = "Good morning everyone, and thanks for joining. Today I want to walk you through three things: where the launch stands, what we learned from the beta, and what we need from each team over the next two weeks. Let's start with the launch. We are on track for the twenty-first, and the last open question is pricing for teams."
+                }
+                Teleprompter.shared.start()
+            case "pause": Teleprompter.shared.togglePause()
+            default: Teleprompter.shared.stop()
+            }
+        case "clipselect": // clipselect <n>: picks the first n clips
+            ClipboardHistory.shared.selection = Set(ClipboardHistory.shared.clips.prefix(Int(parts[safe: 1] ?? "") ?? 0).map(\.id))
+        case "ql": QuickLookPreview.shared.show(parts.dropFirst().map { URL(fileURLWithPath: $0) })
+        case "call": MeetingMonitor.shared.debugSimulate(parts[safe: 1] != "0")
+        case "convertall": // convertall <operation>: every file on the shelf, as one batch
+            if let op = MediaConverter.Operation(rawValue: parts[safe: 1] ?? "") { MediaConverter.shared.convert(ShelfStore.shared.items.map(\.url), op) }
         case "stackhover": c.viewModel.stackHovered = parts[safe: 1] != "0"
         case "glancepeek": // glancepeek <item> (none: ends it): what resting the pointer on a Glance shows
             if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { c.viewModel.hoverGlance(item, true) } else { c.viewModel.endGlancePeek() }

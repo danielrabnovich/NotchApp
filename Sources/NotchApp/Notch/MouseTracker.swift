@@ -14,7 +14,9 @@ final class MouseTracker {
     private var dragStartedInNotch = false
 
     /// True while the user drags something (text, links, files, emails) from another app.
-    private(set) static var isExternalDrag = false
+    private(set) static var isExternalDrag = false {
+        didSet { if DragActivity.shared.active != isExternalDrag { DragActivity.shared.active = isExternalDrag } }
+    }
     /// Bumped whenever a new external drag begins, so views can refresh their preview.
     private(set) static var dragGeneration = 0
 
@@ -71,4 +73,13 @@ final class MouseTracker {
         RunLoop.main.add(t, forMode: .default) // paused during menu tracking on purpose
         timer = t
     }
+}
+
+/// Something is being dragged that the notch could take, for views that only show their drop
+/// targets then. External drags come from `MouseTracker`; a drag out of the notch itself (a clip
+/// card) sets it as it starts, and the tracker clears it once the mouse is let go.
+@MainActor
+final class DragActivity: ObservableObject {
+    static let shared = DragActivity()
+    @Published var active = false
 }

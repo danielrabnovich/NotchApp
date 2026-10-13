@@ -17,17 +17,33 @@ struct NotchRootView: View {
 
     var body: some View {
         let vm = viewModel
-        let shape = NotchShape(topRadius: vm.topRadius, bottomRadius: vm.bottomRadius)
+        // Open, the bottom corners are true quarter circles: the glass is drawn with those.
         let body = vm.bodySize
+        // Glass wherever the notch has grown past the hardware notch: open (its bottom third), or
+        // closed but dropped down a little (a Banner, the shelf's stack, a peek, captions), where
+        // everything below the notch itself is glass.
+        let extended = !vm.isOpen && vm.shapeSize.height > vm.notchSize.height + 4
+        let glass = settings.usesGlass && (vm.isOpen ? vm.overlay != .teleprompter : extended)
+        // The black part, as a fraction of the height: two thirds open, the notch's own height closed.
+        let solid = vm.isOpen ? 0.62 : min(0.9, (vm.notchSize.height + 2) / max(vm.shapeSize.height, 1))
+        // With glass, the bottom corners are true quarter circles: the glass is drawn with those.
+        let shape = NotchShape(topRadius: vm.topRadius, bottomRadius: vm.bottomRadius,
+                               roundness: vm.isOpen || glass ? NotchShape.circle : 1.0 / 3)
 
-        ZStack(alignment: .top) {
-            // The shadow is only drawn once the shape has settled: re-rendering a large blurred
-            // shadow on every frame of the spring is what made opening feel heavy. For the same
-            // reason it goes at once when closing, rather than fading out across the close.
-            shape
-                .fill(Color.black)
-                .shadow(color: .black.opacity(vm.isSettled && settings.showShadow ? 0.6 : 0), radius: 14, y: 6)
-                .animation(vm.isSettled ? .easeOut(duration: 0.2) : nil, value: vm.isSettled)
+        let notch = ZStack(alignment: .top) {
+            // Without glass the notch is SwiftUI's own black. With glass, black and glass alike are
+            // drawn by NotchSurface (below), and this is only there under it once settled, for the
+            // shadow: a SwiftUI shape and a Core Animation one don't land on screen on the same
+            // frame, so mid-spring this one would show as a second edge out of step with the first.
+            if !settings.usesGlass || (vm.isSettled && !glass) {
+                shape.fill(Color.black)
+                    .transition(.identity)
+                    // The shadow is only drawn once the shape has settled: re-rendering a large
+                    // blurred shadow on every frame of the spring is what made opening feel heavy.
+                    // For the same reason it goes at once when closing, rather than fading out.
+                    .shadow(color: .black.opacity(vm.isSettled && settings.showShadow && !glass ? 0.6 : 0), radius: 14, y: 6)
+                    .animation(vm.isSettled ? .easeOut(duration: 0.2) : nil, value: vm.isSettled)
+            }
 
             // Content is laid out once at its final size and revealed by the growing shape,
             // instead of being re-laid out on every animation frame.
@@ -55,15 +71,279 @@ struct NotchRootView: View {
             if !vm.isOpen { vm.open() }
         }
         .contextMenu {
-            Button("Glances…") { SettingsWindowController.shared.show(pane: .live) }
-            Button("Settings…") { SettingsWindowController.shared.show() }
+            MenuItem("Glances…", "capsule.on.rectangle") { SettingsWindowController.shared.show(pane: .live) }
+            MenuItem("Settings…", "gearshape") { SettingsWindowController.shared.show() }
             Divider()
-            Button("Quit NotchApp") { NSApp.terminate(nil) }
+            MenuItem("Quit NotchApp", "power") { NSApp.terminate(nil) }
+        }
+
+        ZStack(alignment: .top) {
+            // Dynamic Glass: black at the notch, the bottom third Liquid Glass. Black, shade, rim and
+            // glass are one layer tree, laid out together in a single transaction, so they can't
+            // drift apart; it stays in place whenever glass is on (fading between black and glass)
+            // so it takes the same spring as the content instead of appearing at its final size.
+            if settings.usesGlass {
+                NotchSurface(shape: shape, size: vm.shapeSize, glass: glass ? 1 : 0, solid: solid, settled: vm.isSettled)
+                    .allowsHitTesting(false)
+            }
+            notch
         }
         .animation(vm.isOpen ? settings.openAnimation : settings.closeAnimation, value: vm.isOpen)
         .animation(.spring(response: 0.36, dampingFraction: 0.78), value: vm.collapsedSize)
         .animation(.spring(response: 0.45, dampingFraction: 0.84), value: vm.openSize)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
+    }
+}
+
+/// Black at the notch, melting into glass: solid through the top two thirds, then the bottom
+/// third Liquid Glass (the desktop shows through, bent at the rim), with a light along its edge.
+enum DynamicGlass {
+    /// Dark enough to read white text over anything, clearing toward the rim so the bend shows.
+    /// `solid` is how far down (a fraction of the height) it stays black.
+    static func shade(solid: CGFloat) -> [(alpha: CGFloat, location: CGFloat)] {
+        let rest = 1 - solid
+        return [(1, 0), (1, solid), (0.72, solid + rest * 0.32), (0.6, solid + rest * 0.68), (0.46, 1)]
+    }
+
+    /// Nothing along the black (it's flush with the screen edge), a fine highlight on the glass.
+    static func rim(solid: CGFloat) -> [(alpha: CGFloat, location: CGFloat)] {
+        [(0, 0), (0, solid), (0.32, 1)]
+    }
+}
+
+/// The notch's surface with Dynamic Glass on: the black, the shade, the rim and the glass, all
+/// Core Animation layers in one view that fills the window, so every frame of the spring moves
+/// them together. Being Animatable, SwiftUI hands it the shape as it is at each frame; the view
+/// itself never moves or resizes, only its layers' paths do.
+private struct NotchSurface: View, Animatable {
+    var shape: NotchShape
+    var size: CGSize
+    /// 0 black, 1 glass; fades with the shape's own spring.
+    var glass: Double
+    var solid: CGFloat
+    /// Open and still: the one time the window may show past the shape (the black notch's shadow).
+    let settled: Bool
+
+    var animatableData: AnimatablePair<NotchShape.AnimatableData,
+                                       AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<Double, CGFloat>>> {
+        get { AnimatablePair(shape.animatableData, AnimatablePair(AnimatablePair(size.width, size.height), AnimatablePair(glass, solid))) }
+        set {
+            shape.animatableData = newValue.first
+            size = CGSize(width: newValue.second.first.first, height: newValue.second.first.second)
+            glass = newValue.second.second.first
+            solid = newValue.second.second.second
+        }
+    }
+
+    var body: some View {
+        Layers(shape: shape, size: size, glass: glass, solid: solid, settled: settled)
+    }
+
+    private struct Layers: NSViewRepresentable {
+        let shape: NotchShape
+        let size: CGSize
+        let glass: Double
+        let solid: CGFloat
+        let settled: Bool
+
+        func makeNSView(context: Context) -> SurfaceView { SurfaceView() }
+
+        func updateNSView(_ view: SurfaceView, context: Context) {
+            view.state = (shape, size, glass, solid, settled)
+            view.relayout()
+        }
+    }
+
+    final class SurfaceView: NSView {
+        var state: (shape: NotchShape, size: CGSize, glass: Double, solid: CGFloat, settled: Bool)?
+        private let root = CALayer()
+        private let glassLayer = CALayer()
+        private let clip = CALayer()
+        private let shade = CAGradientLayer()
+        private let shadeMask = CAShapeLayer()
+        private let rim = CAGradientLayer()
+        private let rimMask = CAShapeLayer()
+        private let black = CAShapeLayer()
+        private var lens: GlassLens.Lens?
+        /// Cuts the whole window to the shape these layers draw. The content's own SwiftUI clip
+        /// lands on screen a frame apart from Core Animation's layers, so mid-spring it would let
+        /// the content show past the black; masked here, content and surface share one edge.
+        private let windowMask = CAShapeLayer()
+
+        init() {
+            super.init(frame: .zero)
+            // Layer-hosting: these layers are ours, in Core Animation's coordinates (y up).
+            layer = root
+            wantsLayer = true
+            if let layerClass = NSClassFromString("CABackdropLayer") as? CALayer.Type, LiquidGlass.isAvailable {
+                let backdrop = layerClass.init()
+                backdrop.setValue(true, forKey: "windowServerAware") // samples other apps' windows, not just its own
+                backdrop.setValue(UUID().uuidString, forKey: "groupName")
+                // The window server pays no attention to masks around a backdrop, but it does clip to
+                // rounded corners: the glass sits in a layer cut to the notch's body, its bottom
+                // corners the same quarter circles as the notch's.
+                clip.masksToBounds = true
+                clip.cornerCurve = .circular
+                clip.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner] // y runs up: the bottom two
+                clip.addSublayer(backdrop)
+                lens = GlassLens.attach(to: backdrop, blur: 0.4)
+                glassLayer.addSublayer(clip)
+            }
+            shade.mask = shadeMask
+            rimMask.fillColor = nil
+            rimMask.strokeColor = NSColor.white.cgColor
+            rimMask.lineWidth = 1
+            rim.mask = rimMask
+            black.fillColor = NSColor.black.cgColor
+            for sub in [glassLayer, shade, rim, black] { root.addSublayer(sub) }
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func layout() {
+            super.layout()
+            relayout()
+        }
+
+        /// Glass turned off: the window goes back to unmasked.
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow == nil, let host = window?.contentView?.layer, host.mask === windowMask { host.mask = nil }
+            super.viewWillMove(toWindow: newWindow)
+        }
+
+        override func viewDidChangeBackingProperties() {
+            super.viewDidChangeBackingProperties()
+            relayout()
+        }
+
+        /// Cuts every layer to the notch as it is now: centred, from the top of the window.
+        func relayout() {
+            guard let (shape, size, glass, solid, settled) = state, bounds.width > 0, size.width > 0, size.height > 0 else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            defer { CATransaction.commit() }
+
+            let scale = window?.backingScaleFactor ?? 2
+            for l in [root, glassLayer, shade, shadeMask, rim, rimMask, black, windowMask] { l.contentsScale = scale }
+            let H = bounds.height
+            let x0 = (bounds.width - size.width) / 2 // centred, exactly where SwiftUI puts the content
+
+            // SwiftUI's path for the shape (y down), turned over into the layers' y-up space.
+            var flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: H)
+            let topDown = shape.path(in: CGRect(x: x0, y: 0, width: size.width, height: size.height)).cgPath
+            let path = topDown.copy(using: &flip)
+            let amount = Float(min(1, max(0, glass)))
+
+            // Settled and black (the teleprompter), the shadow outside the shape is let through.
+            if let host = window?.contentView?.layer {
+                if settled && amount == 0 {
+                    if host.mask === windowMask { host.mask = nil }
+                } else {
+                    windowMask.frame = host.bounds
+                    windowMask.path = host.isGeometryFlipped ? topDown : path
+                    if host.mask !== windowMask { host.mask = windowMask }
+                }
+            }
+
+            black.frame = bounds
+            black.path = path
+            black.opacity = 1 - amount
+
+            // The shade and rim gradients run down the shape: from the top of the window (1 in
+            // unit space, y up) to the shape's bottom edge.
+            let bottom = 1 - size.height / H
+            for (layer, mask, stops) in [(shade, shadeMask, DynamicGlass.shade(solid: solid)),
+                                         (rim, rimMask, DynamicGlass.rim(solid: solid))] {
+                layer.frame = bounds
+                mask.frame = bounds
+                mask.path = path
+                layer.startPoint = CGPoint(x: 0.5, y: 1)
+                layer.endPoint = CGPoint(x: 0.5, y: bottom)
+                layer.colors = stops.map { (layer === rim ? NSColor.white : NSColor.black).withAlphaComponent($0.alpha).cgColor }
+                layer.locations = stops.map { NSNumber(value: Double($0.location)) }
+            }
+            rim.opacity = amount
+
+            // The glass: hidden outright when faded out, so a closed notch isn't sampling the screen.
+            glassLayer.frame = bounds
+            glassLayer.opacity = amount
+            glassLayer.isHidden = amount == 0
+            guard let lens, !glassLayer.isHidden else { return }
+            let t = shape.topRadius
+            let b = max(0, min(shape.bottomRadius, size.height - t, (size.width - 2 * t) / 2))
+            // The body between the ears (the ears and the top are black anyway).
+            clip.frame = CGRect(x: x0 + t, y: H - size.height, width: max(1, size.width - 2 * t), height: size.height)
+            clip.cornerRadius = b
+            clip.sublayers?.first?.frame = clip.bounds
+            lens.layout(width: clip.bounds.width, height: clip.bounds.height, radius: b)
+        }
+    }
+}
+
+enum LiquidGlass {
+    /// Core Animation's backdrop layer and the filter Liquid Glass is drawn with.
+    static let isAvailable = NSClassFromString("CABackdropLayer") != nil && NSClassFromString("CASDFLayer") != nil
+        && NSClassFromString("CASDFElementLayer") != nil && GlassLens.filter("glassBackground") != nil
+}
+
+/// Liquid Glass, as the system draws it: what's behind bends at the glass's edges as through a
+/// thick lens and stays clear in the middle. It's Core Animation's own glass filter on a backdrop,
+/// shaped by a distance field (a rounded rectangle as wide as the notch's body; its top runs past
+/// the window, so only the sides and bottom have a rim).
+enum GlassLens {
+    static func filter(_ type: String) -> NSObject? {
+        guard let cls = NSClassFromString("CAFilter") as? NSObject.Type else { return nil }
+        return cls.perform(NSSelectorFromString("filterWithType:"), with: type)?.takeUnretainedValue() as? NSObject
+    }
+
+    final class Lens {
+        let element: CALayer
+        init(element: CALayer) { self.element = element }
+
+        /// The glass's shape: the clip's own rectangle with the same corners, carried well past the
+        /// top so only the sides and bottom have a rim.
+        func layout(width: CGFloat, height: CGFloat, radius: CGFloat) {
+            element.frame = CGRect(x: 0, y: 0, width: width, height: height + 80)
+            element.cornerRadius = radius
+            element.superlayer?.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        }
+    }
+
+    static func attach(to backdrop: CALayer, blur: Double) -> Lens? {
+        guard let sdfClass = NSClassFromString("CASDFLayer") as? CALayer.Type,
+              let elementClass = NSClassFromString("CASDFElementLayer") as? CALayer.Type,
+              let glass = filter("glassBackground") else { return nil }
+        // The filter finds its shape by name: the backdrop and its distance field share one.
+        backdrop.name = "@0"
+        let field = sdfClass.init()
+        field.name = "@0"
+        let element = elementClass.init()
+        field.addSublayer(element)
+        backdrop.addSublayer(field)
+        let values: [String: Any] = [
+            "inputSourceSublayerName": "@0",
+            // The system's own bend: −60 over the 20 points inside the rim.
+            "inputInnerRefractionAmount": -60, "inputInnerRefractionHeight": 20,
+            "inputRefractionDistance0": -1, "inputRefractionDistance1": 0,
+            // A breath of blur: clear glass, not frosted, with the page behind just soft enough
+            // not to fight the notch's own text.
+            "inputBlurRadius": blur, "inputBlurOpacity0": 1, "inputBlurOpacity1": 1, "inputBlurOpacity2": 1, "inputBlurOpacity3": 1,
+            "inputBlurFillBlurRadius": 0, "inputBlurFillNormalOpacity": 0,
+            // The face left as it is: outside the glass's shape the backdrop shows the desktop exactly as
+            // it is behind (the window server clips it to nothing), so any tint here would show as a
+            // square at the corners. The darkening is the notch's own shade, which is clipped.
+            "inputFaceOpacity": 1, "inputFaceColorMatrixWhite": 1, "inputFaceColorMatrixBlack": 0,
+            "inputFaceColorMatrixSaturation": 1, "inputFaceColorMatrixMaxLuma": 1, "inputFaceColorMatrixMaxLumaSDR": 1,
+            // The light caught along the top of the rim.
+            "inputKeyFillHighlightHeight": 0.5, "inputKeyFillHighlightAngle": Double.pi / 2, "inputKeyFillHighlightSpread": 1.309,
+            "inputKeyFillHighlightSpreadSDR": 1.309, "inputKeyFillHighlightAmount": 0.4, "inputKeyFillHighlightEffectOffset": -0.5,
+            "inputKeyFillHighlightColorBias": -0.25,
+            "inputMaxHeadroom": 1.2, "inputClamp": 1, "inputSDRGradientDistance0": 1, "inputSDRGradientDistance1": 1,
+            "inputBleedDistance0": 1,
+        ]
+        for (key, value) in values { glass.setValue(value, forKey: key) }
+        backdrop.filters = [glass]
+        return Lens(element: element)
     }
 }

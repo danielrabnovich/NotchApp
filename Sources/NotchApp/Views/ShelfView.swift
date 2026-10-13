@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -21,6 +22,9 @@ struct ShelfView: View {
     @EnvironmentObject private var videos: VideoDownloader
     @EnvironmentObject private var converter: MediaConverter
     @AppStorage("shelf.pane") private var pane: ShelfPane = .shelf
+    @State private var clipQuery = ""
+    @State private var clipKind: ClipboardHistory.Clip.Kind?
+    @ObservedObject private var drag = DragActivity.shared
 
     private var showsTaildrop: Bool { settings.taildropZone && TaildropService.cli != nil }
 
@@ -34,13 +38,17 @@ struct ShelfView: View {
                 if !taildrop.pending.isEmpty {
                     DevicePicker(viewModel: viewModel)
                         .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                } else if let urls = shelf.convertPicker {
+                    ConvertPicker(urls: urls)
+                        .onDisappear { shelf.convertPicker = nil } // closing the notch puts it away
+                        .transition(.opacity.combined(with: .scale(scale: 0.97)))
                 } else if shelf.items.isEmpty && !hasPanes {
                     emptyState
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
-                        header
+                        header.notchHeaderRow()
                         if showingClipboard {
-                            ClipboardStrip(viewModel: viewModel)
+                            ClipboardStrip(viewModel: viewModel, query: $clipQuery, kind: $clipKind)
                         } else if showingDownloads {
                             if !videos.jobs.isEmpty {
                                 HStack(spacing: 6) {
@@ -64,11 +72,15 @@ struct ShelfView: View {
                             emptyState
                         } else {
                             HStack(spacing: 6) {
-                                ForEach(converter.jobs.filter(\.isActive).prefix(2)) { ConvertJobTile(job: $0) }
+                                ForEach(converter.activeBatches.prefix(2)) { ConvertJobTile(batch: $0) }
                                 // Quick drops first (newest first), then what's pinned to stay.
-                                TileStrip(items: shelf.stack + shelf.items.filter(\.pinned), regionID: "shelf", viewModel: viewModel) {
+                                TileStrip(items: shelf.shown, regionID: "shelf", viewModel: viewModel) {
                                     ShelfTile(item: $0, kind: .shelf)
                                 }
+                                // A click between the files lets go of the picked ones.
+                                .background(Color.clear.contentShape(Rectangle()).onTapGesture {
+                                    withAnimation(.easeOut(duration: 0.12)) { shelf.selection = [] }
+                                })
                             }
                         }
                     }
@@ -76,15 +88,19 @@ struct ShelfView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: taildrop.pending.isEmpty)
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: shelf.convertPicker)
 
-            if settings.airDropZone || showsTaildrop {
+            // Beside the clipboard they're only drop targets, so they wait for something to be dragged.
+            if (settings.airDropZone || showsTaildrop) && (!showingClipboard || drag.active) {
                 VStack(spacing: 8) {
                     if settings.airDropZone { AirDropZone(compact: showsTaildrop) }
                     if showsTaildrop { TaildropZone(compact: settings.airDropZone) }
                 }
                 .frame(width: 104)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showingClipboard && !drag.active)
     }
 
     private var header: some View {
@@ -97,7 +113,20 @@ struct ShelfView: View {
                     .foregroundStyle(.white.opacity(0.6))
             }
             Spacer()
-            if showingClipboard {
+            if showingClipboard, !clipboard.selection.isEmpty {
+                let picked = clipboard.clips.filter { clipboard.selection.contains($0.id) }
+                HStack(spacing: 10) {
+                    Text("\(picked.count) selected")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.75))
+                    headerButton("Paste") { clipboard.pasteTogether(picked) }
+                    headerButton("Copy") { clipboard.copyTogether(picked) }
+                    headerButton("Save to Shelf") { picked.forEach(clipboard.saveToShelf) }
+                    headerButton("Remove") { clipboard.remove(picked) }
+                    headerButton("Done") { withAnimation(.easeOut(duration: 0.12)) { clipboard.selection = [] } }
+                }
+            } else if showingClipboard {
+                if !clipboard.clips.isEmpty { clipboardFilters }
                 if clipboard.clips.contains(where: { !$0.pinned }) {
                     Button("Clear") { clipboard.clear() }
                         .buttonStyle(.plain)
@@ -116,6 +145,8 @@ struct ShelfView: View {
                     .buttonStyle(.plain)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white.opacity(0.5))
+            } else if !shelf.selection.isEmpty {
+                selectionBar
             } else if !shelf.items.isEmpty {
                 // Like the clipboard: Clear keeps pinned files; with only pinned ones left it clears those.
                 let quick = shelf.stack
@@ -128,6 +159,79 @@ struct ShelfView: View {
                 .help(quick.isEmpty ? "Removes everything from the shelf" : "Clears everything except pinned files")
             }
         }
+    }
+
+    /// Find a copy: a search box and the kinds of thing copied.
+    private var clipboardFilters: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.white.opacity(0.4))
+                TextField("", text: $clipQuery, prompt: Text("Search").foregroundStyle(.white.opacity(0.35)))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .frame(width: 92)
+                if !clipQuery.isEmpty {
+                    Button { clipQuery = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 10)) }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            .notchSurface(Capsule())
+            HStack(spacing: 1) {
+                ForEach([(nil, "square.grid.2x2", "Everything"), (ClipboardHistory.Clip.Kind.text, "text.alignleft", "Text"),
+                         (.link, "link", "Links"), (.image, "photo", "Images"), (.files, "doc", "Files")], id: \.1) { kind, icon, help in
+                    Button { withAnimation(.easeOut(duration: 0.15)) { clipKind = kind } } label: {
+                        Image(systemName: icon)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(clipKind == kind ? 0.95 : 0.4))
+                            .frame(width: 22, height: 18)
+                            .background(Capsule().fill(.white.opacity(clipKind == kind ? 0.16 : 0)))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(help)
+                }
+            }
+        }
+    }
+
+    /// With files picked: what can be done to all of them at once.
+    private var selectionBar: some View {
+        let picked = shelf.selectedItems
+        let urls = picked.map(\.url)
+        let conversions = MediaConverter.operations(for: urls)
+        return HStack(spacing: 10) {
+            Text("\(picked.count) selected")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.75))
+            if !conversions.isEmpty {
+                Menu {
+                    ForEach(conversions.filter { !$0.isEdit }) { op in Button(op.title) { converter.convert(urls, op) } }
+                    Divider()
+                    ForEach(conversions.filter(\.isEdit)) { op in Button(op.title) { converter.convert(urls, op) } }
+                } label: {
+                    Label("Convert", systemImage: "wand.and.stars")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .fixedSize()
+            }
+            headerButton("Zip") { shelf.compress(picked) }
+            headerButton("AirDrop") { ShelfStore.airDrop(urls) }
+            headerButton("Remove") { withAnimation(.spring(response: 0.3)) { shelf.remove(picked) } }
+            headerButton("Done") { withAnimation(.easeOut(duration: 0.12)) { shelf.selection = [] } }
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.white.opacity(0.5))
+    }
+
+    private func headerButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.white.opacity(0.5))
     }
 
     private func placeholder(icon: String, text: String) -> some View {
@@ -174,6 +278,7 @@ private struct TileStrip<Tile: View>: View {
                 HStack(spacing: 6) {
                     ForEach(items) { item in
                         tile(item)
+                            .scrollEdgeFade()
                             .transition(.scale(scale: 0.6).combined(with: .opacity))
                     }
                 }
@@ -184,6 +289,7 @@ private struct TileStrip<Tile: View>: View {
                         .onChange(of: inner.size.width > outer.size.width + 1) { _, o in overflows = o }
                 })
             }
+
         }
         .horizontalScrollRegion(regionID, in: viewModel, active: overflows)
     }
@@ -194,7 +300,12 @@ private struct ShelfTile: View {
 
     @ObservedObject var item: ShelfItem
     let kind: Kind
+    @EnvironmentObject private var shelf: ShelfStore
     @State private var hovering = false
+
+    private var selected: Bool { kind == .shelf && shelf.selection.contains(item.id) }
+    /// What a drag or a menu acts on: everything picked, when this is one of them.
+    private var targets: [ShelfItem] { kind == .shelf ? shelf.targets(for: item) : [item] }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -208,11 +319,19 @@ private struct ShelfTile: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .truncationMode(.middle)
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(.white.opacity(selected ? 1 : 0.8))
                 .frame(width: 72, height: 26, alignment: .top)
         }
         .padding(6)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(hovering ? 0.1 : 0)))
+        .background {
+            let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+            if selected {
+                shape.fill(Color.accentColor.opacity(0.3))
+                    .overlay(shape.strokeBorder(Color.accentColor.opacity(0.85), lineWidth: 1))
+            } else {
+                shape.fill(.white.opacity(hovering ? 0.1 : 0))
+            }
+        }
         .overlay(alignment: .topLeading) {
             if kind == .shelf && item.pinned {
                 Image(systemName: "pin.fill")
@@ -224,8 +343,18 @@ private struct ShelfTile: View {
                     .help("Pinned: stays on the shelf")
             }
         }
+        // Clicks and drags in AppKit: a drag carries every picked file, which SwiftUI's can't.
+        .overlay {
+            FileDragSource(items: targets, onClick: {}, onClickEvent: { event in
+                if event.clickCount >= 2 {
+                    NSWorkspace.shared.open(item.url)
+                } else if kind == .shelf {
+                    withAnimation(.easeOut(duration: 0.12)) { shelf.click(item, modifiers: event.modifierFlags) }
+                }
+            }, removesDelivered: false)
+        }
         .overlay(alignment: .topTrailing) {
-            if hovering && kind == .shelf {
+            if hovering && kind == .shelf && shelf.selection.count < 2 {
                 Button { withAnimation(.spring(response: 0.3)) { ShelfStore.shared.remove(item) } } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14))
@@ -237,43 +366,104 @@ private struct ShelfTile: View {
             }
         }
         .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
-        .onDrag {
-            // A saved web link drops as the link itself (into a browser, Messages, a doc…).
-            if let web = ShelfStore.webLink(in: item.url) { return NSItemProvider(object: web as NSURL) }
-            return NSItemProvider(object: ShelfNames.outgoing(item.url) as NSURL)
+        .contextMenu { ShelfFileMenu(item: item, targets: targets, kind: kind) }
+        .help(item.url.path)
+    }
+}
+
+/// Right-click on a file on the shelf (or in Downloads): for every picked file at once.
+private struct ShelfFileMenu: View {
+    let item: ShelfItem
+    let targets: [ShelfItem]
+    let kind: ShelfTile.Kind
+
+    private var urls: [URL] { targets.map(\.url) }
+    private var many: Bool { targets.count > 1 }
+
+    /// The selection's size, worked out once per selection (the menu is rebuilt on every redraw).
+    @MainActor private static var sizeCache: (key: [URL], bytes: Int64)?
+    @MainActor static func size(of urls: [URL]) -> Int64 {
+        if let hit = sizeCache, hit.key == urls { return hit.bytes }
+        let bytes = urls.reduce(Int64(0)) { $0 + Cleaner.allocatedSize($1) }
+        sizeCache = (urls, bytes)
+        return bytes
+    }
+
+    var body: some View {
+        if many {
+            Text("\(targets.count) files · \(formatBytes(Self.size(of: urls)))")
         }
-        .onTapGesture(count: 2) { NSWorkspace.shared.open(item.url) }
-        .contextMenu {
-            Button("Open") { NSWorkspace.shared.open(item.url) }
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
-            if kind == .shelf {
-                // Pinned files stay; unpinned ones are quick drops that leave once used or expired.
-                Button(item.pinned ? "Unpin" : "Pin to Shelf") { ShelfStore.shared.setPinned(item, !item.pinned) }
+        MenuItem(many ? "Open All" : "Open", "arrow.up.forward.square") { urls.forEach { NSWorkspace.shared.open($0) } }
+        OpenWithMenu(urls: urls)
+        MenuItem("Quick Look", "eye") { QuickLookPreview.shared.show(urls) }
+        MenuItem("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+        Divider()
+        MenuItem("Copy", "doc.on.doc") { ShelfStore.copy(urls) }
+        Menu {
+            MenuItem(many ? "Paths" : "Path", "point.topleft.down.to.point.bottomright.curvepath") { ShelfStore.copyPaths(urls) }
+            MenuItem(many ? "Names" : "Name", "textformat") { ShelfStore.copyText(urls.map(\.lastPathComponent).joined(separator: "\n")) }
+            if !many, MediaConverter.kind(of: item.url) == .image {
+                MenuItem("Text in Image", "text.viewfinder") { ShelfStore.copyTextInImage(item.url) }
             }
-            if kind == .download {
-                Button("Add to Shelf") { ShelfStore.shared.add([item.url]) }
-            }
-            Button("AirDrop") { ShelfStore.airDrop([item.url]) }
-            let conversions = MediaConverter.operations(for: [item.url])
-            if !conversions.isEmpty {
-                Menu("Convert") {
-                    ForEach(conversions) { op in
-                        Button(op.title) { MediaConverter.shared.convert([item.url], op) }
-                    }
+        } label: {
+            Label("Copy As", systemImage: "doc.on.clipboard")
+        }
+        Divider()
+        ShareLink(items: urls) { Label("Share…", systemImage: "square.and.arrow.up") }
+        MenuItem("AirDrop", "dot.radiowaves.left.and.right") { ShelfStore.airDrop(urls) }
+        if AppSettings.shared.taildropZone, TaildropService.cli != nil {
+            MenuItem("Taildrop…", "paperplane") { TaildropService.shared.offer(urls) }
+        }
+        Divider()
+        let conversions = MediaConverter.operations(for: urls)
+        if !conversions.isEmpty {
+            Menu {
+                ForEach(conversions.filter { !$0.isEdit }) { op in
+                    MenuItem(op.title, op.symbol) { MediaConverter.shared.convert(urls, op) }
                 }
+                Divider()
+                ForEach(conversions.filter(\.isEdit)) { op in
+                    MenuItem(op.title, op.symbol) { MediaConverter.shared.convert(urls, op) }
+                }
+            } label: {
+                Label(many ? "Convert \(targets.count) Files" : "Convert", systemImage: "wand.and.stars")
             }
-            Button("Copy") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.writeObjects([item.url as NSURL])
+        }
+        if targets.allSatisfy({ MediaConverter.kind(of: $0.url) == .image }), targets.count <= 10 {
+            MenuItem("Remove Background", "person.crop.rectangle") { Cutout.run(urls) }
+        }
+        MenuItem(many ? "Compress \(targets.count) Files" : "Compress", "doc.zipper") { ShelfStore.shared.compress(targets) }
+        MenuItem(many ? "Duplicate All" : "Duplicate", "plus.square.on.square") { ShelfStore.shared.duplicate(targets) }
+        Menu {
+            let fm = FileManager.default
+            ForEach([(FileManager.SearchPathDirectory.desktopDirectory, "menubar.dock.rectangle"), (.documentDirectory, "doc"),
+                     (.downloadsDirectory, "arrow.down.circle")], id: \.1) { dir, icon in
+                let folder = fm.urls(for: dir, in: .userDomainMask)[0]
+                MenuItem(folder.lastPathComponent, icon) { ShelfStore.shared.move(targets, to: folder) }
             }
             Divider()
-            if kind == .shelf {
-                Button("Remove from Shelf") { ShelfStore.shared.remove(item) }
-            } else {
-                Button("Move to Trash") { DownloadsStore.shared.moveToTrash(item) }
-            }
+            MenuItem("Choose Folder…", "folder.badge.plus") { ShelfStore.shared.chooseFolderAndMove(targets) }
+        } label: {
+            Label("Move To", systemImage: "folder.badge.gearshape")
         }
-        .help(item.url.path)
+        Divider()
+        if kind == .shelf {
+            // Pinned files stay; unpinned ones are quick drops that leave once used or expired.
+            let pin = !targets.allSatisfy(\.pinned)
+            MenuItem(pin ? "Pin to Shelf" : "Unpin", pin ? "pin" : "pin.slash") { targets.forEach { ShelfStore.shared.setPinned($0, pin) } }
+            MenuItem("Select All", "checkmark.circle") { ShelfStore.shared.selectAll() }
+        } else {
+            MenuItem("Add to Shelf", "tray.and.arrow.down") { ShelfStore.shared.add(urls) }
+        }
+        Divider()
+        if kind == .shelf {
+            MenuItem(many ? "Remove \(targets.count) from Shelf" : "Remove from Shelf", "xmark.circle") {
+                withAnimation(.spring(response: 0.3)) { ShelfStore.shared.remove(targets) }
+            }
+            MenuItem("Move to Trash", "trash", role: .destructive) { ShelfStore.shared.trash(targets) }
+        } else {
+            MenuItem("Move to Trash", "trash", role: .destructive) { DownloadsStore.shared.moveToTrash(item) }
+        }
     }
 }
 
@@ -505,47 +695,214 @@ struct TaildropIcon: View {
 // MARK: - Clipboard
 
 /// Recent copies as cards: click one to put it back on the clipboard (the notch closes so you can paste).
+/// With the keyboard: ← → move a highlight, typing searches, and the Clipboard keys (↩ paste,
+/// ⌘C copy, ⌃X remove, ⇧⌘P pin, ⌘1–⌘9 paste by position; see `ClipboardKey`) act on it.
 private struct ClipboardStrip: View {
     @ObservedObject var viewModel: NotchViewModel
+    @Binding var query: String
+    @Binding var kind: ClipboardHistory.Clip.Kind?
     @EnvironmentObject private var clipboard: ClipboardHistory
+    @EnvironmentObject private var settings: AppSettings
     @State private var overflows = false
+    /// The clip the keys act on. Opened with a shortcut it starts on the newest; otherwise the
+    /// first arrow press puts it there, so the mouse alone never shows a highlight.
+    @State private var highlight: UUID?
+    /// Modifiers held right now: holding quick paste's shows the numbers on the cards.
+    @State private var held: UInt32 = 0
+    @State private var monitor: Any?
+
+    private var shown: [ClipboardHistory.Clip] { clipboard.shown(matching: query, kind: kind) }
 
     var body: some View {
-        if clipboard.clips.isEmpty {
-            VStack(spacing: 6) {
-                Image(systemName: "doc.on.clipboard").font(.system(size: 20, weight: .medium))
-                Text("Things you copy show up here").font(.system(size: 12, weight: .medium))
-            }
-            .foregroundStyle(.white.opacity(0.45))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            GeometryReader { outer in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        // Pinned first, then newest.
-                        ForEach(clipboard.pinned + clipboard.clips.filter { !$0.pinned }) { clip in
-                            ClipCard(clip: clip) {
-                                clipboard.copy(clip)
-                                viewModel.close()
+        let shown = shown
+        let numbered = ClipboardKey.quickPaste.combo.map { $0.modifiers == held } ?? false
+        Group {
+            if !clipboard.clips.isEmpty, shown.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 20, weight: .medium))
+                    Text("Nothing matches").font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.white.opacity(0.45))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if clipboard.clips.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "doc.on.clipboard").font(.system(size: 20, weight: .medium))
+                    Text("Things you copy show up here").font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(.white.opacity(0.45))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                GeometryReader { outer in
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                // Pinned first, then newest.
+                                ForEach(Array(shown.enumerated()), id: \.element.id) { index, clip in
+                                    ClipCard(clip: clip, highlighted: highlight == clip.id,
+                                             number: numbered && index < 9 ? index + 1 : nil) {
+                                        // ⌘ or ⇧: pick it (to act on several); a plain click puts it back to paste.
+                                        let mods = NSEvent.modifierFlags
+                                        if mods.contains(.command) || mods.contains(.shift) {
+                                            withAnimation(.easeOut(duration: 0.12)) { clipboard.pick(clip, modifiers: mods, in: shown) }
+                                        } else if !clipboard.selection.isEmpty {
+                                            withAnimation(.easeOut(duration: 0.12)) { clipboard.selection = [] }
+                                        } else {
+                                            clipboard.copy(clip)
+                                            viewModel.close()
+                                        }
+                                    }
+                                    .id(clip.id)
+                                    .scrollEdgeFade()
+                                    .transition(.scale(scale: 0.7).combined(with: .opacity))
+                                }
                             }
-                            .transition(.scale(scale: 0.7).combined(with: .opacity))
+                            .frame(height: outer.size.height)
+                            .background(GeometryReader { inner in
+                                Color.clear
+                                    .onAppear { overflows = inner.size.width > outer.size.width + 1 }
+                                    .onChange(of: inner.size.width > outer.size.width + 1) { _, o in overflows = o }
+                            })
+                        }
+                        .onChange(of: highlight) { _, id in
+                            guard let id else { return }
+                            withAnimation(.easeOut(duration: 0.18)) { proxy.scrollTo(id) }
                         }
                     }
-                    .frame(height: outer.size.height)
-                    .background(GeometryReader { inner in
-                        Color.clear
-                            .onAppear { overflows = inner.size.width > outer.size.width + 1 }
-                            .onChange(of: inner.size.width > outer.size.width + 1) { _, o in overflows = o }
-                    })
                 }
+                .horizontalScrollRegion("clipboard", in: viewModel, active: overflows)
             }
-            .horizontalScrollRegion("clipboard", in: viewModel, active: overflows)
+        }
+        .onAppear {
+            if viewModel.openReason == .keyboard { highlight = shown.first?.id }
+            startKeys()
+        }
+        .onDisappear(perform: stopKeys)
+        // A new search highlights its first match, so ↩ pastes it.
+        .onChange(of: query) { _, _ in highlight = self.shown.first?.id }
+        .onChange(of: kind) { _, _ in if highlight != nil { highlight = self.shown.first?.id } }
+    }
+
+    // MARK: Keys
+
+    private func startKeys() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+            MainActor.assumeIsolated { handle(event) ? nil : event }
+        }
+    }
+
+    private func stopKeys() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        held = 0
+    }
+
+    /// Only keys meant for this notch's Clipboard pane, while it's the one showing.
+    private func handle(_ event: NSEvent) -> Bool {
+        guard event.window is NotchPanel, viewModel.isOpen, viewModel.tab == .shelf, viewModel.overlay == nil,
+              settings.clipboardHistory else { return false }
+        let mods = ClipboardKey.carbon(event.modifierFlags)
+        if event.type == .flagsChanged {
+            held = mods
+            return false
+        }
+        let editor = event.window?.firstResponder as? NSTextView
+        // ⌘C with words picked in the search field copies those words.
+        if let editor, editor.selectedRange().length > 0, mods == UInt32(cmdKey), event.charactersIgnoringModifiers == "c" {
+            return false
+        }
+        if let (key, digit) = ClipboardKey.match(event) {
+            run(key, digit: digit)
+            return true
+        }
+        let plain = mods & UInt32(controlKey | optionKey | cmdKey) == 0
+        let code = Int(event.keyCode)
+        if plain, [kVK_LeftArrow, kVK_UpArrow, kVK_RightArrow, kVK_DownArrow].contains(code) {
+            move([kVK_LeftArrow, kVK_UpArrow].contains(code) ? -1 : 1, extend: mods & UInt32(shiftKey) != 0)
+            return true
+        }
+        if plain, code == kVK_Escape, !query.isEmpty {
+            query = "" // the first Esc clears the search; the next one backs out as usual
+            return true
+        }
+        // Typing with the search field not focused still searches.
+        guard editor == nil, plain else { return false }
+        if event.keyCode == UInt16(kVK_Delete) {
+            guard !query.isEmpty else { return false }
+            query.removeLast()
+            return true
+        }
+        guard let chars = event.characters, !chars.isEmpty,
+              chars.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else { return false }
+        query += chars
+        return true
+    }
+
+    /// Moves the highlight; with ⇧, the picked clips run from where it was to where it lands.
+    private func move(_ step: Int, extend: Bool) {
+        let shown = shown
+        guard !shown.isEmpty else { return }
+        let current = highlight.flatMap { id in shown.firstIndex { $0.id == id } }
+        let next = current.map { max(0, min(shown.count - 1, $0 + step)) } ?? 0
+        withAnimation(.easeOut(duration: 0.12)) {
+            if extend {
+                if clipboard.selection.isEmpty { clipboard.pick(shown[current ?? next], modifiers: [], in: shown) }
+                clipboard.pick(shown[next], modifiers: .shift, in: shown)
+            }
+            highlight = shown[next].id
+        }
+    }
+
+    /// What a key acts on: everything picked, else the highlighted clip.
+    private var targets: [ClipboardHistory.Clip] {
+        let shown = shown
+        if !clipboard.selection.isEmpty { return shown.filter { clipboard.selection.contains($0.id) } }
+        return shown.filter { $0.id == highlight }
+    }
+
+    private func run(_ key: ClipboardKey, digit: Int?) {
+        let shown = shown
+        if key == .quickPaste {
+            guard let digit, digit <= shown.count else { NSSound.beep(); return }
+            clipboard.selection = []
+            clipboard.paste(shown[digit - 1])
+            return
+        }
+        let group = targets
+        guard let first = group.first else {
+            // Nothing highlighted yet: the first press shows where the keys will act.
+            if !shown.isEmpty { withAnimation(.easeOut(duration: 0.12)) { highlight = shown[0].id } }
+            return
+        }
+        switch key {
+        case .paste:
+            clipboard.selection = []
+            group.count > 1 ? clipboard.pasteTogether(group) : clipboard.paste(first)
+        case .copy:
+            clipboard.selection = []
+            if group.count > 1 { clipboard.copyTogether(group) } else { clipboard.copy(first) }
+            viewModel.close()
+        case .delete:
+            // The highlight moves on to the clip after (or before) the ones removed.
+            let ids = Set(group.map(\.id))
+            let last = shown.lastIndex { ids.contains($0.id) } ?? 0
+            let after = shown[(last + 1)...].first { !ids.contains($0.id) } ?? shown[..<last].last { !ids.contains($0.id) }
+            group.count > 1 ? clipboard.remove(group) : clipboard.delete(first)
+            highlight = after?.id
+        case .pin:
+            if group.count > 1 { clipboard.setPinned(group, !group.allSatisfy(\.pinned)) } else { clipboard.togglePin(first) }
+        case .quickPaste:
+            break
         }
     }
 }
 
 private struct ClipCard: View {
     let clip: ClipboardHistory.Clip
+    /// Where the keyboard is.
+    var highlighted = false
+    /// Shown while quick paste's modifiers are held: the digit that pastes this clip.
+    var number: Int?
     let action: () -> Void
     @EnvironmentObject private var clipboard: ClipboardHistory
     @State private var hovering = false
@@ -583,8 +940,36 @@ private struct ClipCard: View {
         .padding(8)
         .frame(width: 132)
         .frame(maxHeight: .infinity)
-        .notchSurface(RoundedRectangle(cornerRadius: 12, style: .continuous), active: hovering)
+        .notchSurface(RoundedRectangle(cornerRadius: 12, style: .continuous), active: hovering || highlighted)
+        .overlay {
+            if highlighted, !clipboard.selection.contains(clip.id) {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(.white.opacity(0.75), lineWidth: 1.5)
+                    .allowsHitTesting(false)
+            }
+        }
         .overlay(alignment: .topTrailing) {
+            if let number, let combo = ClipboardKey.quickPaste.combo {
+                Text(combo.modifierSymbols + "\(number)")
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5).frame(height: 16)
+                    .background(Capsule().fill(.black.opacity(0.75)))
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
+                    .padding(5)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay {
+            if clipboard.selection.contains(clip.id) {
+                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.accentColor.opacity(0.18))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.accentColor.opacity(0.9), lineWidth: 1.5))
+                    .allowsHitTesting(false)
+            }
+        }
+        // Over the empty end of the bottom row (beside the time), not over what was copied.
+        .overlay(alignment: .bottomTrailing) {
             if hovering, flash == nil {
                 HStack(spacing: 2) {
                     // The most fitting action, one click away (the rest are on right-click).
@@ -595,6 +980,11 @@ private struct ClipCard: View {
                         .buttonStyle(NotchIconButtonStyle(size: 20))
                         .help(first.title + (suggestions.count > 1 ? " · right-click for more" : ""))
                     }
+                    Button { clipboard.paste(clip) } label: {
+                        Image(systemName: "arrow.turn.down.left").font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(NotchIconButtonStyle(size: 20))
+                    .help("Paste into \(FrontmostTracker.shared.userApp?.localizedName ?? "the app you're in")")
                     Button { clipboard.togglePin(clip) } label: {
                         Image(systemName: clip.pinned ? "pin.slash.fill" : "pin.fill").font(.system(size: 9, weight: .semibold))
                     }
@@ -624,35 +1014,13 @@ private struct ClipCard: View {
         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
         .onTapGesture(perform: action)
-        .onDrag { dragItem }
-        .task(id: clip.id) { suggestions = ClipActions.suggestions(for: clip) }
-        .contextMenu {
-            Button("Copy") { clipboard.copy(clip) }
-            if !suggestions.isEmpty {
-                Divider()
-                ForEach(suggestions) { suggestion in
-                    Button { run(suggestion) } label: { Label(suggestion.title, systemImage: suggestion.icon) }
-                }
-            }
-            if let link = clip.kind == .link ? clip.text.flatMap(VideoDownloader.webURL) : nil, VideoDownloader.isAvailable {
-                Button("Download Video…") { VideoDownloader.shared.chooseQuality(for: link) }
-                Button("Download Audio") { VideoDownloader.shared.download(link, format: .audio, height: nil) }
-            }
-            if clip.kind == .text, let text = clip.text {
-                Menu("Transform") {
-                    ForEach(TextTransform.applicable(to: text).filter { $0 != .plain }) { t in
-                        Button(t.title) {
-                            clipboard.copy(clip)
-                            TextTransform.applyToClipboard(t)
-                        }
-                    }
-                }
-            }
-            Divider()
-            Button(clip.pinned ? "Unpin" : "Pin") { clipboard.togglePin(clip) }
-            Button("Remove") { clipboard.delete(clip) }
+        .onDrag {
+            DragActivity.shared.active = true // shows AirDrop and Taildrop to drop it on
+            return dragItem
         }
-        .help("Click to copy")
+        .task(id: clip.id) { suggestions = ClipActions.suggestions(for: clip) }
+        .contextMenu { ClipMenu(clip: clip, suggestions: suggestions, run: run) }
+        .help("Click to copy · ⌘-click to select several")
     }
 
     @ViewBuilder private var content: some View {
@@ -694,6 +1062,117 @@ private struct ClipCard: View {
         case .image: clipboard.image(for: clip).map { NSItemProvider(object: $0) } ?? NSItemProvider()
         default: NSItemProvider(object: (clip.text ?? "") as NSString)
         }
+    }
+}
+
+/// Right-click on a copy: everything it can do, for every picked copy at once.
+private struct ClipMenu: View {
+    let clip: ClipboardHistory.Clip
+    let suggestions: [ClipAction]
+    let run: (ClipAction) -> Void
+    @EnvironmentObject private var clipboard: ClipboardHistory
+
+    private var app: String { FrontmostTracker.shared.userApp?.localizedName ?? "App" }
+
+    var body: some View {
+        let group = clipboard.targets(for: clip)
+        if group.count > 1 {
+            many(group)
+        } else {
+            one
+        }
+    }
+
+    // MARK: Several
+
+    @ViewBuilder private func many(_ group: [ClipboardHistory.Clip]) -> some View {
+        Text("\(group.count) items")
+        MenuItem("Paste Together into \(app)", "arrow.turn.down.left") { clipboard.pasteTogether(group) }
+        MenuItem("Copy Together", "doc.on.doc") { clipboard.copyTogether(group) }
+        MenuItem("Save All to Shelf", "tray.and.arrow.down") { group.forEach(clipboard.saveToShelf) }
+        let files = group.flatMap { $0.filePaths ?? [] }.map { URL(fileURLWithPath: $0) }
+        if !files.isEmpty {
+            Divider()
+            OpenWithMenu(urls: files)
+            MenuItem("Quick Look", "eye") { QuickLookPreview.shared.show(files) }
+            ShareLink(items: files) { Label("Share…", systemImage: "square.and.arrow.up") }
+        }
+        Divider()
+        let pin = !group.allSatisfy(\.pinned)
+        MenuItem(pin ? "Pin All" : "Unpin All", pin ? "pin" : "pin.slash") { clipboard.setPinned(group, pin) }
+        MenuItem("Deselect", "circle.dashed") { clipboard.selection = [] }
+        Divider()
+        MenuItem("Remove \(group.count) Items", "trash", role: .destructive) { clipboard.remove(group) }
+    }
+
+    // MARK: One
+
+    @ViewBuilder private var one: some View {
+        MenuItem("Paste into \(app)", "arrow.turn.down.left") { clipboard.paste(clip) }
+        MenuItem("Copy", "doc.on.doc") { clipboard.copy(clip) }
+        if !suggestions.isEmpty {
+            Divider()
+            ForEach(suggestions) { suggestion in MenuItem(suggestion.title, suggestion.icon) { run(suggestion) } }
+        }
+        Divider()
+        switch clip.kind {
+        case .link:
+            if let url = clip.text.flatMap({ URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }) {
+                MenuItem("Open Link", "safari") { NSWorkspace.shared.open(url) }
+                if let host = url.host() { Text(host) }
+                if let link = VideoDownloader.webURL(url.absoluteString), VideoDownloader.isAvailable {
+                    MenuItem("Download Video…", "arrow.down.circle") { VideoDownloader.shared.chooseQuality(for: link) }
+                    MenuItem("Download Audio", "music.note") { VideoDownloader.shared.download(link, format: .audio, height: nil) }
+                }
+                ShareLink(item: url) { Label("Share…", systemImage: "square.and.arrow.up") }
+            }
+        case .files:
+            let urls = (clip.filePaths ?? []).map { URL(fileURLWithPath: $0) }
+            MenuItem("Open", "arrow.up.forward.square") { urls.forEach { NSWorkspace.shared.open($0) } }
+            OpenWithMenu(urls: urls)
+            MenuItem("Quick Look", "eye") { QuickLookPreview.shared.show(urls) }
+            MenuItem("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            MenuItem(urls.count > 1 ? "Copy Paths" : "Copy Path", "point.topleft.down.to.point.bottomright.curvepath") { ShelfStore.copyPaths(urls) }
+            ShareLink(items: urls) { Label("Share…", systemImage: "square.and.arrow.up") }
+        case .image:
+            if let url = clipboard.imageURL(for: clip) {
+                MenuItem("Quick Look", "eye") { QuickLookPreview.shared.show([url]) }
+                MenuItem("Copy Text in Image", "text.viewfinder") { clipboard.copyText(in: clip) }
+                MenuItem("Remove Background", "person.crop.rectangle") { Cutout.run([url]) }
+                OpenWithMenu(urls: [url])
+                ShareLink(item: url) { Label("Share…", systemImage: "square.and.arrow.up") }
+            }
+        case .text:
+            if let text = clip.text {
+                let words = text.split(whereSeparator: \.isWhitespace).count
+                Text("\(words) \(words == 1 ? "word" : "words") · \(text.count) characters")
+                MenuItem("Search the Web", "magnifyingglass") { clipboard.searchWeb(clip) }
+                MenuItem("Ask About It", "sparkles") {
+                    NotchPresenter.shared.open(tab: .ask)
+                    AssistantStore.shared.run("Explain this briefly: \(text.prefix(2000))")
+                }
+                let transforms = TextTransform.applicable(to: text).filter { $0 != .plain }
+                if !transforms.isEmpty {
+                    Menu {
+                        ForEach(transforms) { t in
+                            Button(t.title) {
+                                clipboard.copy(clip, announce: false)
+                                TextTransform.applyToClipboard(t)
+                            }
+                        }
+                    } label: {
+                        Label("Transform & Copy", systemImage: "textformat")
+                    }
+                }
+                ShareLink(item: text) { Label("Share…", systemImage: "square.and.arrow.up") }
+            }
+        }
+        MenuItem("Save to Shelf", "tray.and.arrow.down") { clipboard.saveToShelf(clip) }
+        Divider()
+        MenuItem(clip.pinned ? "Unpin" : "Pin", clip.pinned ? "pin.slash" : "pin") { clipboard.togglePin(clip) }
+        MenuItem("Select", "checkmark.circle") { clipboard.pick(clip, modifiers: .command, in: clipboard.clips) }
+        Divider()
+        MenuItem("Remove", "trash", role: .destructive) { clipboard.delete(clip) }
     }
 }
 
@@ -781,9 +1260,72 @@ private struct VideoJobTile: View {
     }
 }
 
-/// A conversion in progress on the shelf.
+/// Every conversion for files dropped on "More…": new formats on the first row, changes that keep
+/// the format after them. Picking one starts it and goes back to the shelf.
+private struct ConvertPicker: View {
+    let urls: [URL]
+    @EnvironmentObject private var shelf: ShelfStore
+
+    var body: some View {
+        let ops = MediaConverter.operations(for: urls)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "wand.and.stars").font(.system(size: 11, weight: .semibold)).foregroundStyle(.purple)
+                Text(urls.count == 1 ? "Convert “\(urls[0].lastPathComponent)” to…" : "Convert \(urls.count) files to…")
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button("Cancel") { shelf.convertPicker = nil }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 6)], alignment: .leading, spacing: 6) {
+                    ForEach(ops.filter { !$0.isEdit } + ops.filter(\.isEdit)) { op in
+                        ConvertChoice(op: op) {
+                            MediaConverter.shared.convert(urls, op)
+                            shelf.convertPicker = nil
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ConvertChoice: View {
+    let op: MediaConverter.Operation
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: op.symbol)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(hovering ? .purple : .white.opacity(0.6))
+                    .frame(width: 14)
+                Text(op.shortTitle)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 26)
+            .notchSurface(RoundedRectangle(cornerRadius: 8, style: .continuous), active: hovering)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(op.title)
+    }
+}
+
+/// A conversion in progress on the shelf: one file, or a batch as "3 of 12".
 private struct ConvertJobTile: View {
-    let job: MediaConverter.Job
+    let batch: MediaConverter.BatchStatus
     @EnvironmentObject private var converter: MediaConverter
     @State private var hovering = false
 
@@ -791,21 +1333,22 @@ private struct ConvertJobTile: View {
         VStack(spacing: 6) {
             ZStack {
                 Circle().stroke(.white.opacity(0.12), lineWidth: 3)
-                if let p = job.progress {
+                if let p = batch.progress {
                     Circle().trim(from: 0, to: max(0.03, p))
                         .stroke(Color.purple, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .rotationEffect(.degrees(-90))
+                        .animation(.easeOut(duration: 0.3), value: p)
                 } else {
                     ProgressView().controlSize(.small).tint(.white)
                 }
-                Image(systemName: "wand.and.stars").font(.system(size: 13, weight: .semibold)).foregroundStyle(.purple)
+                Image(systemName: batch.operation.symbol).font(.system(size: 13, weight: .semibold)).foregroundStyle(.purple)
             }
             .frame(width: 44, height: 44)
-            Text(job.operation.title)
+            Text(batch.operation.shortTitle)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white.opacity(0.8))
                 .lineLimit(1)
-            Text(job.progress.map { "\(Int(($0 * 100).rounded()))%" } ?? job.source.lastPathComponent)
+            Text(detail)
                 .font(.system(size: 9.5).monospacedDigit())
                 .foregroundStyle(.white.opacity(0.45))
                 .lineLimit(1)
@@ -814,15 +1357,23 @@ private struct ConvertJobTile: View {
         .padding(6)
         .frame(width: 84)
         .frame(maxHeight: .infinity)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(hovering ? 0.1 : 0.05)))
+        .notchSurface(RoundedRectangle(cornerRadius: 12, style: .continuous), active: hovering)
         .overlay(alignment: .topTrailing) {
             if hovering {
-                Button { converter.cancel(job) } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
+                Button {
+                    if batch.total > 1 { converter.cancel(batch: batch.id) } else if let job = batch.jobs.first { converter.cancel(job) }
+                } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
                     .buttonStyle(NotchIconButtonStyle(size: 18))
-                    .help("Cancel")
+                    .help(batch.total > 1 ? "Stop the rest" : "Cancel")
             }
         }
         .onHover { hovering = $0 }
-        .help(job.source.path)
+        .help(batch.jobs.map(\.source.lastPathComponent).joined(separator: "\n"))
+    }
+
+    private var detail: String {
+        if batch.total > 1 { return "\(batch.finished + 1) of \(batch.total)" }
+        if batch.jobs.first?.state == .queued { return "Waiting…" }
+        return batch.progress.map { "\(Int(($0 * 100).rounded()))%" } ?? batch.jobs.first?.source.lastPathComponent ?? ""
     }
 }

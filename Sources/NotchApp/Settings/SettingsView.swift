@@ -318,6 +318,13 @@ private struct GeneralPane: View {
                     RowLabel(title: "Open the notch on", subtitle: s.openMode == .hover ? "Rest the pointer on the notch to open it." : "Click the notch to open it.")
                 }
                 .pickerStyle(.segmented)
+                Picker(selection: $s.openTo) {
+                    ForEach(NotchTab.allCases) { Text($0.title).tag($0.rawValue) }
+                    Divider()
+                    Text("Where I left it").tag("last")
+                } label: {
+                    RowLabel(title: "Open on", subtitle: "The screen the notch shows when it opens. Shortcuts and drops still go where they point.")
+                }
                 if s.openMode == .hover {
                     LabeledContent {
                         HStack {
@@ -369,6 +376,29 @@ private struct AppearancePane: View {
                                 supportsOpacity: false)
                 }
             }
+            if AppSettings.NotchMaterial.isAvailable {
+                Section {
+                    HStack(spacing: 14) {
+                        ForEach(AppSettings.NotchMaterial.allCases) { material in
+                            NotchPreviewCard(title: material.label,
+                                             subtitle: material == .black ? "Solid, like the notch itself" : "Melts into clear glass",
+                                             isOn: s.notchMaterial == material, notchHeight: 58, notchWidth: 200,
+                                             glass: material == .glass, action: { s.notchMaterial = material }) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Capsule().fill(.white.opacity(0.85)).frame(width: 60, height: 4)
+                                    Capsule().fill(.white.opacity(0.45)).frame(width: 100, height: 4)
+                                    Capsule().fill(.white.opacity(0.45)).frame(width: 80, height: 4)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 16)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                } header: {
+                    Text("Open notch")
+                }
+            }
             Section("Motion") {
                 Picker(selection: $s.animationStyle) {
                     ForEach(AppSettings.AnimationStyle.allCases) { Text($0.label).tag($0) }
@@ -387,10 +417,17 @@ private struct AppearancePane: View {
                              subtitle: "Important keeps only the ones that ask something of you, like a meeting about to start.")
                 }
                 .pickerStyle(.segmented)
+                Picker(selection: $s.notificationMirror) {
+                    ForEach(NotificationMirror.Mode.allCases) { Text($0.label).tag($0) }
+                } label: {
+                    RowLabel(title: "Other apps' notifications",
+                             subtitle: "Under the notch instead of the corner, with a reply.")
+                }
+                .pickerStyle(.segmented)
             } header: {
                 Text("Alerts")
             } footer: {
-                FooterText("Alerts drop down under the notch without moving your Glances, wait while a full-screen app is in front, and stay while the pointer rests on them. Volume, brightness and charging have their own switches.")
+                FooterText("Alerts drop down under the notch without moving your Glances, wait while a full-screen app is in front, and stay while the pointer rests on them. Volume, brightness and charging have their own switches. Replies to Messages, WhatsApp, Telegram and other chats are sent without leaving what you're doing.")
             }
         }
     }
@@ -444,8 +481,17 @@ private struct HUDPane: View {
     var body: some View {
         SettingsPage(pane: .hud) {
             Section {
-                ToggleRow("Volume", isOn: $s.volumeHUD)
-                ToggleRow("Brightness", isOn: $s.brightnessHUD)
+                HStack(spacing: 14) {
+                    NotchPreviewCard(title: "Volume", subtitle: "In place of the macOS pop-up", isOn: s.volumeHUD,
+                                     notchWidth: 190, action: { s.volumeHUD.toggle() }) {
+                        PreviewFlash(icon: "speaker.wave.2.fill", level: 0.62, tint: .white)
+                    }
+                    NotchPreviewCard(title: "Brightness", subtitle: "In place of the macOS pop-up", isOn: s.brightnessHUD,
+                                     notchWidth: 190, action: { s.brightnessHUD.toggle() }) {
+                        PreviewFlash(icon: "sun.max.fill", level: 0.4, tint: .yellow)
+                    }
+                }
+                .padding(.vertical, 4)
             } header: {
                 Text("Show in the notch")
             } footer: {
@@ -464,14 +510,44 @@ private struct HUDPane: View {
     }
 }
 
+/// A Flash as the preview shows it: a glyph and a level bar.
+private struct PreviewFlash: View {
+    let icon: String
+    let level: Double
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 8.5, weight: .semibold))
+            GeometryReader { g in
+                Capsule().fill(.white.opacity(0.2))
+                    .overlay(alignment: .leading) { Capsule().fill(tint).frame(width: g.size.width * level) }
+            }
+            .frame(height: 3.5)
+            Text("\(Int(level * 100))%").font(.system(size: 8, weight: .semibold).monospacedDigit())
+        }
+    }
+}
+
 private struct BatteryPane: View {
     @EnvironmentObject private var s: AppSettings
 
     var body: some View {
         SettingsPage(pane: .battery) {
             Section {
-                ToggleRow("Charging animation", subtitle: "Show the battery level beside the notch when you plug in.",
-                          isOn: $s.chargingAnimation)
+                HStack(spacing: 14) {
+                    NotchPreviewCard(title: "Charging animation", subtitle: "The level beside the notch when you plug in",
+                                     isOn: s.chargingAnimation, notchWidth: 190, action: { s.chargingAnimation.toggle() }) {
+                        HStack {
+                            Label("Charging", systemImage: "bolt.fill").labelStyle(.titleAndIcon)
+                                .font(.system(size: 8.5, weight: .semibold)).foregroundStyle(.green)
+                            Spacer()
+                            Text("64%").font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                        }
+                    }
+                    Spacer(minLength: 0).frame(maxWidth: .infinity)
+                }
+                .padding(.vertical, 4)
             }
         }
     }
@@ -1785,18 +1861,25 @@ private struct UpdatesPane: View {
 private struct ShortcutsPane: View {
     @EnvironmentObject private var s: AppSettings
     @ObservedObject private var hotKeys = HotKeys.shared
-    @State private var recording: HotKeys.Action?
+    /// The field recording keys: "hot.<action>" or "clip.<key>".
+    @State private var recording: String?
     @State private var filter = ""
     /// Said after a recording took keys from another action, which got this one's old keys.
     @State private var notice: String?
 
-    private var shown: [HotKeys.Action] {
-        let q = filter.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return HotKeys.Action.allCases }
-        return HotKeys.Action.allCases.filter { action in
-            action.title.lowercased().contains(q)
-                || (HotKeys.combo(for: action).map { $0.display.lowercased().contains(q) || $0.key.lowercased() == q } ?? false)
-        }
+    private var query: String { filter.trimmingCharacters(in: .whitespaces).lowercased() }
+
+    private func matches(_ title: String, _ combo: HotKeys.Combo?) -> Bool {
+        query.isEmpty || title.lowercased().contains(query)
+            || (combo.map { $0.display.lowercased().contains(query) || $0.key.lowercased() == query } ?? false)
+    }
+
+    private func shown(_ group: ShortcutGroup) -> [HotKeys.Action] {
+        group.actions.filter { matches($0.title, HotKeys.combo(for: $0)) }
+    }
+
+    private var shownClipboardKeys: [ClipboardKey] {
+        s.clipboardHistory ? ClipboardKey.allCases.filter { matches($0.title, $0.combo) } : []
     }
 
     var body: some View {
@@ -1813,83 +1896,143 @@ private struct ShortcutsPane: View {
                     .pickerStyle(.segmented)
                 }
             }
-            if s.hotKeysEnabled {
-                Section {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
-                        TextField("Filter by name or key", text: $filter)
-                            .textFieldStyle(.plain)
-                        if !filter.isEmpty {
-                            Button { filter = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
-                                .buttonStyle(.borderless)
-                        }
-                    }
-                    if shown.isEmpty {
-                        Text("No shortcuts match “\(filter)”")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity)
-                    }
-                    ForEach(shown) { action in
-                        LabeledContent {
-                            HStack(spacing: 6) {
-                                if let problem = problem(for: action) {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundStyle(.yellow)
-                                        .help(problem)
-                                }
-                                ShortcutRecorder(action: action, recording: $recording) { notice = $0 }
-                                Button {
-                                    s.hotKeyOverrides[action.rawValue] = nil
-                                } label: {
-                                    Image(systemName: "arrow.uturn.backward.circle.fill")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .buttonStyle(.borderless)
-                                .help("Reset to \(action.defaultCombo(s.hotKeyModifiers).display)")
-                                .opacity(s.hotKeyOverrides[action.rawValue] == nil ? 0 : 1)
-                                .disabled(s.hotKeyOverrides[action.rawValue] == nil)
-                            }
-                        } label: {
-                            Text(action.title)
-                                .foregroundStyle(HotKeys.combo(for: action) == nil ? .secondary : .primary)
-                        }
-                        .contextMenu {
-                            Button("Record New Shortcut") { recording = action }
-                            Button("Turn Off") { s.hotKeyOverrides[action.rawValue] = HotKeys.Combo.off }
-                                .disabled(HotKeys.combo(for: action) == nil)
-                            Button("Restore Default (\(action.defaultCombo(s.hotKeyModifiers).display))") {
-                                s.hotKeyOverrides[action.rawValue] = nil
-                            }
-                            .disabled(s.hotKeyOverrides[action.rawValue] == nil)
-                        }
-                    }
-                } header: {
-                    HStack {
-                        Text("Shortcuts")
-                        Spacer()
-                        // Turning everything off, then picking the few you want, keeps stray presses harmless.
-                        if HotKeys.Action.allCases.contains(where: { HotKeys.combo(for: $0) != nil }) {
-                            Button("Turn Off All") {
-                                s.hotKeyOverrides = Dictionary(uniqueKeysWithValues: HotKeys.Action.allCases.map { ($0.rawValue, HotKeys.Combo.off) })
-                            }
+            Section {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
+                    TextField("Filter by name or key", text: $filter)
+                        .textFieldStyle(.plain)
+                    if !filter.isEmpty {
+                        Button { filter = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
                             .buttonStyle(.borderless)
-                            .font(.caption)
+                    }
+                }
+                if (s.hotKeysEnabled ? ShortcutGroup.allCases.allSatisfy({ shown($0).isEmpty }) : true) && shownClipboardKeys.isEmpty {
+                    Text("No shortcuts match “\(filter)”")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+            } header: {
+                HStack {
+                    Text("Shortcuts")
+                    Spacer()
+                    // Turning everything off, then picking the few you want, keeps stray presses harmless.
+                    if s.hotKeysEnabled, HotKeys.Action.allCases.contains(where: { HotKeys.combo(for: $0) != nil }) {
+                        Button("Turn Off All") {
+                            s.hotKeyOverrides = Dictionary(uniqueKeysWithValues: HotKeys.Action.allCases.map { ($0.rawValue, HotKeys.Combo.off) })
                         }
-                        if !s.hotKeyOverrides.isEmpty {
-                            Button("Restore Defaults") { s.hotKeyOverrides = [:] }
-                                .buttonStyle(.borderless)
-                                .font(.caption)
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                    }
+                    if !s.hotKeyOverrides.isEmpty || !s.clipboardKeyOverrides.isEmpty {
+                        Button("Restore Defaults") {
+                            s.hotKeyOverrides = [:]
+                            s.clipboardKeyOverrides = [:]
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                    }
+                }
+            } footer: {
+                FooterText(notice ?? "Click a shortcut and press new keys, or ⎋ to cancel. Click ✕ (or press ⌫ while recording) to turn one off. Keys another shortcut uses are swapped with it.")
+            }
+            if s.hotKeysEnabled {
+                ForEach(ShortcutGroup.allCases) { group in
+                    let actions = shown(group)
+                    if !actions.isEmpty {
+                        Section {
+                            ForEach(actions) { row(for: $0, in: group) }
+                        } header: {
+                            Text(group.title)
+                        } footer: {
+                            if let note = group.note { FooterText(note) }
                         }
                     }
-                } footer: {
-                    FooterText(notice ?? "Click a shortcut and press new keys, or ⎋ to cancel. Click ✕ (or press ⌫ while recording) to turn one off. Keys another shortcut uses are swapped with it.")
                 }
             }
+            if !shownClipboardKeys.isEmpty { clipboardKeys }
         }
         .onDisappear { recording = nil }
         .onChange(of: notice) { _, text in
             guard let text else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { if notice == text { notice = nil } }
+        }
+    }
+
+    private func row(for action: HotKeys.Action, in group: ShortcutGroup) -> some View {
+        LabeledContent {
+            HStack(spacing: 6) {
+                if let problem = problem(for: action) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.yellow)
+                        .help(problem)
+                }
+                ShortcutRecorder(action: action, recording: $recording) { notice = $0 }
+                Button {
+                    s.hotKeyOverrides[action.rawValue] = nil
+                } label: {
+                    Image(systemName: "arrow.uturn.backward.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Reset to \(action.defaultCombo(s.hotKeyModifiers).display)")
+                .opacity(s.hotKeyOverrides[action.rawValue] == nil ? 0 : 1)
+                .disabled(s.hotKeyOverrides[action.rawValue] == nil)
+            }
+        } label: {
+            Text(group.label(for: action))
+                .foregroundStyle(HotKeys.combo(for: action) == nil ? .secondary : .primary)
+        }
+        .contextMenu {
+            Button("Record New Shortcut") { recording = "hot." + action.rawValue }
+            Button("Turn Off") { s.hotKeyOverrides[action.rawValue] = HotKeys.Combo.off }
+                .disabled(HotKeys.combo(for: action) == nil)
+            Button("Restore Default (\(action.defaultCombo(s.hotKeyModifiers).display))") {
+                s.hotKeyOverrides[action.rawValue] = nil
+            }
+            .disabled(s.hotKeyOverrides[action.rawValue] == nil)
+        }
+    }
+
+    /// Keys inside the Clipboard pane, while the notch has the keyboard.
+    private var clipboardKeys: some View {
+        Section {
+            ForEach(shownClipboardKeys) { key in
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        if let combo = key.combo, let global = HotKeys.Action.allCases.first(where: { HotKeys.combo(for: $0) == combo }) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.yellow)
+                                .help("\(combo.display) is also the shortcut for “\(global.title)”, which takes it first.")
+                        }
+                        ClipboardKeyRecorder(key: key, recording: $recording) { notice = $0 }
+                        Button {
+                            s.clipboardKeyOverrides[key.rawValue] = nil
+                        } label: {
+                            Image(systemName: "arrow.uturn.backward.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Reset to \(key.defaultCombo.display)")
+                        .opacity(s.clipboardKeyOverrides[key.rawValue] == nil ? 0 : 1)
+                        .disabled(s.clipboardKeyOverrides[key.rawValue] == nil)
+                    }
+                } label: {
+                    Text(key.title)
+                        .foregroundStyle(key.combo == nil ? .secondary : .primary)
+                }
+                .contextMenu {
+                    Button("Record New Shortcut") { recording = "clip." + key.rawValue }
+                    Button("Turn Off") { s.clipboardKeyOverrides[key.rawValue] = HotKeys.Combo.off }
+                        .disabled(key.combo == nil)
+                    Button("Restore Default (\(key.defaultCombo.display))") { s.clipboardKeyOverrides[key.rawValue] = nil }
+                        .disabled(s.clipboardKeyOverrides[key.rawValue] == nil)
+                }
+            }
+        } header: {
+            Text("In Clipboard History")
+        } footer: {
+            FooterText("While the Clipboard pane has the keyboard: ← → move between clips (⇧ picks several), and typing searches. "
+                       + "These act on the highlighted clip, or on all the picked ones. Hold quick paste's modifiers to see each clip's number.")
         }
     }
 
@@ -1904,31 +2047,137 @@ private struct ShortcutsPane: View {
     }
 }
 
-/// A shortcut field: shows the keys, and records new ones when clicked (like System Settings' fields).
+/// How the Shortcuts pane sorts the global shortcuts: by what they do.
+private enum ShortcutGroup: CaseIterable, Identifiable {
+    case notch, tabs, actions, windows
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .notch: "Opening the Notch"
+        case .tabs: "Go to a Tab"
+        case .actions: "Actions"
+        case .windows: "Windows"
+        }
+    }
+
+    var note: String? {
+        switch self {
+        case .tabs: "Opens the notch on that tab; press it again to close."
+        case .windows: "Moves the window in front. Some start off, since other window tools often use them."
+        default: nil
+        }
+    }
+
+    /// In the order they're listed (tabs roughly as the tab bar has them).
+    var actions: [HotKeys.Action] {
+        switch self {
+        case .notch: [.toggle, .search]
+        case .tabs: [.home, .shelf, .downloads, .clipboard, .tasks, .notes, .timer, .mixer, .controls, .camera, .stats, .tools, .agents]
+        // Plus any new action not given a group yet, so it can't go missing from the pane.
+        case .actions: [.copyText, .askScreen, .ramble] + HotKeys.Action.allCases.filter { a in !Self.listed.contains(a) }
+        case .windows: [.windowLeft, .windowRight, .windowMaximize, .windowCenter, .windowNextDisplay, .windowRestore]
+        }
+    }
+
+    private static let listed = Set<HotKeys.Action>([.copyText, .askScreen, .ramble] + notch.actions + tabs.actions + windows.actions)
+
+    /// The action's name, without what the group heading already says.
+    func label(for action: HotKeys.Action) -> String {
+        guard self == .windows, action.title.hasPrefix("Window: ") else { return action.title }
+        let rest = action.title.dropFirst("Window: ".count)
+        return rest.prefix(1).uppercased() + rest.dropFirst()
+    }
+}
+
+/// A global shortcut's field: records keys for a `HotKeys.Action`, swapping with whichever
+/// other action had them.
 private struct ShortcutRecorder: View {
     let action: HotKeys.Action
-    @Binding var recording: HotKeys.Action?
+    @Binding var recording: String?
     /// Called with a message when recording swapped keys with another action.
     var swapped: (String) -> Void = { _ in }
     @EnvironmentObject private var s: AppSettings
+
+    var body: some View {
+        KeyRecorder(title: action.title, combo: HotKeys.combo(for: action),
+                    isRecording: Binding(get: { recording == "hot." + action.rawValue },
+                                         set: { recording = $0 ? "hot." + action.rawValue : nil }),
+                    read: { HotKeys.Combo(event: $0) }, set: set)
+    }
+
+    private func set(_ combo: HotKeys.Combo) {
+        let old = HotKeys.combo(for: action)
+        var overrides = s.hotKeyOverrides
+        // Keys another action has: it takes this one's old keys (or none), so nothing clashes.
+        if !combo.isNone, combo != old,
+           let other = HotKeys.Action.allCases.first(where: { $0 != action && HotKeys.combo(for: $0) == combo }) {
+            let given = old ?? HotKeys.Combo.off
+            overrides[other.rawValue] = given == other.defaultCombo(s.hotKeyModifiers) ? nil : given
+            swapped(old.map { "Swapped with “\(other.title)”, which is now \($0.display)." } ?? "“\(other.title)” had \(combo.display), so it's now off.")
+        }
+        // Back to the default? Then it's not an override any more, and follows the default modifiers.
+        overrides[action.rawValue] = combo == action.defaultCombo(s.hotKeyModifiers) ? nil : combo
+        s.hotKeyOverrides = overrides
+    }
+}
+
+/// A Clipboard pane key's field, swapping with whichever other Clipboard key had them.
+private struct ClipboardKeyRecorder: View {
+    let key: ClipboardKey
+    @Binding var recording: String?
+    var swapped: (String) -> Void = { _ in }
+    @EnvironmentObject private var s: AppSettings
+
+    var body: some View {
+        KeyRecorder(title: key.title, combo: key.combo,
+                    isRecording: Binding(get: { recording == "clip." + key.rawValue },
+                                         set: { recording = $0 ? "clip." + key.rawValue : nil }),
+                    read: key.record, set: set)
+    }
+
+    private func set(_ combo: HotKeys.Combo) {
+        let old = key.combo
+        var overrides = s.clipboardKeyOverrides
+        if !combo.isNone, combo != old, let other = ClipboardKey.allCases.first(where: { $0 != key && $0.combo == combo }) {
+            let given = old ?? HotKeys.Combo.off
+            overrides[other.rawValue] = given == other.defaultCombo ? nil : given
+            swapped(old.map { "Swapped with “\(other.title)”, which is now \($0.display)." } ?? "“\(other.title)” had \(combo.display), so it's now off.")
+        }
+        overrides[key.rawValue] = combo == key.defaultCombo ? nil : combo
+        s.clipboardKeyOverrides = overrides
+    }
+}
+
+/// A shortcut field: shows the keys, and records new ones when clicked (like System Settings' fields).
+private struct KeyRecorder: View {
+    /// What the keys do, for VoiceOver.
+    let title: String
+    let combo: HotKeys.Combo?
+    @Binding var isRecording: Bool
+    /// The keys a press makes, or nil if they can't be used (a beep).
+    let read: (NSEvent) -> HotKeys.Combo?
+    /// Takes new keys, or `.off`.
+    let set: (HotKeys.Combo) -> Void
     @State private var monitor: Any?
     @State private var held: String = ""
     @State private var hovering = false
-
-    private var isRecording: Bool { recording == action }
+    /// Fields recording right now: global shortcuts stay unregistered until none is.
+    private static var active = 0
 
     var body: some View {
         // The field and its turn-off ✕ are sibling buttons (a button nested in another never gets
         // the click). Plain tap gestures don't work here: Form rows don't pass them clicks.
         ZStack {
             Button {
-                recording = isRecording ? nil : action
+                isRecording.toggle()
             } label: {
                 Group {
                     if isRecording {
                         Text(held.isEmpty ? "Type Shortcut" : held)
                             .foregroundStyle(held.isEmpty ? .secondary : .primary)
-                    } else if let combo = HotKeys.combo(for: action) {
+                    } else if let combo {
                         Text(combo.display)
                     } else {
                         Text("None").foregroundStyle(.tertiary)
@@ -1950,12 +2199,12 @@ private struct ShortcutRecorder: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Shortcut for \(action.title)")
+            .accessibilityLabel("Shortcut for \(title)")
             HStack {
                 Spacer()
-                if hovering, !isRecording, HotKeys.combo(for: action) != nil {
+                if hovering, !isRecording, combo != nil {
                     Button {
-                        s.hotKeyOverrides[action.rawValue] = HotKeys.Combo.off
+                        set(.off)
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 12))
@@ -1965,7 +2214,7 @@ private struct ShortcutRecorder: View {
                     }
                     .buttonStyle(.plain)
                     .help("Turn off this shortcut")
-                    .accessibilityLabel("Turn off shortcut for \(action.title)")
+                    .accessibilityLabel("Turn off shortcut for \(title)")
                     .transition(.opacity)
                 }
             }
@@ -1981,25 +2230,29 @@ private struct ShortcutRecorder: View {
     }
 
     private func start() {
+        guard monitor == nil else { return }
         held = ""
+        Self.active += 1
         HotKeys.shared.suspended = true
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged, .leftMouseDown]) { event in
             switch event.type {
             case .leftMouseDown:
                 // Clicking anywhere else ends recording; the click still goes through.
-                DispatchQueue.main.async { if recording == action { recording = nil } }
+                DispatchQueue.main.async { if isRecording { isRecording = false } }
                 return event
             case .flagsChanged:
-                held = (HotKeys.Combo(keyCode: 0, modifiers: carbon(event.modifierFlags), key: "x").modifierSymbols)
+                held = HotKeys.Combo(keyCode: 0, modifiers: ClipboardKey.carbon(event.modifierFlags), key: "x").modifierSymbols
                 return nil
             default:
                 let bare = event.modifierFlags.intersection([.control, .option, .command, .shift]).isEmpty
                 if event.keyCode == UInt16(kVK_Escape), bare {
-                    recording = nil
-                } else if [UInt16(kVK_Delete), UInt16(kVK_ForwardDelete)].contains(event.keyCode), bare {
+                    isRecording = false
+                } else if [UInt16(kVK_Delete), UInt16(kVK_ForwardDelete)].contains(event.keyCode), bare, read(event) == nil {
                     set(.off)
-                } else if let combo = HotKeys.Combo(event: event) {
+                    isRecording = false
+                } else if let combo = read(event) {
                     set(combo)
+                    isRecording = false
                 } else {
                     NSSound.beep()
                 }
@@ -2008,36 +2261,13 @@ private struct ShortcutRecorder: View {
         }
     }
 
-    private func set(_ combo: HotKeys.Combo) {
-        let old = HotKeys.combo(for: action)
-        var overrides = s.hotKeyOverrides
-        // Keys another action has: it takes this one's old keys (or none), so nothing clashes.
-        if !combo.isNone, combo != old,
-           let other = HotKeys.Action.allCases.first(where: { $0 != action && HotKeys.combo(for: $0) == combo }) {
-            let given = old ?? HotKeys.Combo.off
-            overrides[other.rawValue] = given == other.defaultCombo(s.hotKeyModifiers) ? nil : given
-            swapped(old.map { "Swapped with “\(other.title)”, which is now \($0.display)." } ?? "“\(other.title)” had \(combo.display), so it's now off.")
-        }
-        // Back to the default? Then it's not an override any more, and follows the default modifiers.
-        overrides[action.rawValue] = combo == action.defaultCombo(s.hotKeyModifiers) ? nil : combo
-        s.hotKeyOverrides = overrides
-        recording = nil
-    }
-
     private func stop() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
+        guard let monitor else { return }
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
         held = ""
-        if recording == nil { HotKeys.shared.suspended = false }
-    }
-
-    private func carbon(_ flags: NSEvent.ModifierFlags) -> UInt32 {
-        var out: UInt32 = 0
-        if flags.contains(.control) { out |= UInt32(controlKey) }
-        if flags.contains(.option) { out |= UInt32(optionKey) }
-        if flags.contains(.shift) { out |= UInt32(shiftKey) }
-        if flags.contains(.command) { out |= UInt32(cmdKey) }
-        return out
+        Self.active -= 1
+        if Self.active == 0 { HotKeys.shared.suspended = false }
     }
 }
 
