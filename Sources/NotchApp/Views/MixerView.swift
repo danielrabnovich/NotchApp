@@ -175,14 +175,17 @@ private struct ChannelStrip<Icon: View>: View {
             }
             .buttonStyle(.plain)
             .help(muted ? "Unmute" : "Mute")
+            // Two lines, so "MacBook Pro Speakers" reads whole; every strip keeps the same height.
             Text(name)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundStyle(.white.opacity(0.55))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(width: 54)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .frame(width: 58, height: 22, alignment: .top)
+                .help(name)
         }
-        .frame(width: 54)
+        .frame(width: 58)
         .opacity(dimmed ? 0.55 : 1)
     }
 }

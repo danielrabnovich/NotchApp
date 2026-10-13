@@ -1983,10 +1983,10 @@ private struct ShortcutsPane: View {
                 .foregroundStyle(HotKeys.combo(for: action) == nil ? .secondary : .primary)
         }
         .contextMenu {
-            Button("Record New Shortcut") { recording = "hot." + action.rawValue }
-            Button("Turn Off") { s.hotKeyOverrides[action.rawValue] = HotKeys.Combo.off }
+            MenuItem("Record New Shortcut", "record.circle") { recording = "hot." + action.rawValue }
+            MenuItem("Turn Off", "xmark.circle") { s.hotKeyOverrides[action.rawValue] = HotKeys.Combo.off }
                 .disabled(HotKeys.combo(for: action) == nil)
-            Button("Restore Default (\(action.defaultCombo(s.hotKeyModifiers).display))") {
+            MenuItem("Restore Default (\(action.defaultCombo(s.hotKeyModifiers).display))", "arrow.uturn.backward") {
                 s.hotKeyOverrides[action.rawValue] = nil
             }
             .disabled(s.hotKeyOverrides[action.rawValue] == nil)
@@ -2021,10 +2021,10 @@ private struct ShortcutsPane: View {
                         .foregroundStyle(key.combo == nil ? .secondary : .primary)
                 }
                 .contextMenu {
-                    Button("Record New Shortcut") { recording = "clip." + key.rawValue }
-                    Button("Turn Off") { s.shelfKeyOverrides[key.rawValue] = HotKeys.Combo.off }
+                    MenuItem("Record New Shortcut", "record.circle") { recording = "clip." + key.rawValue }
+                    MenuItem("Turn Off", "xmark.circle") { s.shelfKeyOverrides[key.rawValue] = HotKeys.Combo.off }
                         .disabled(key.combo == nil)
-                    Button("Restore Default (\(key.defaultCombo.display))") { s.shelfKeyOverrides[key.rawValue] = nil }
+                    MenuItem("Restore Default (\(key.defaultCombo.display))", "arrow.uturn.backward") { s.shelfKeyOverrides[key.rawValue] = nil }
                         .disabled(s.shelfKeyOverrides[key.rawValue] == nil)
                 }
             }

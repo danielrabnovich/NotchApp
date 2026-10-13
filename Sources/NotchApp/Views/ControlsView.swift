@@ -408,7 +408,9 @@ private struct KeepAwakeTile: View {
             .help("Click to let your Mac sleep again")
         } else {
             ControlTile(icon: "cup.and.saucer.fill", title: "Keep Awake", on: false) {
-                PopUpMenu.show(KeepAwake.Length.presets.map { length in (length.label, { keepAwake.start(length) }) },
+                PopUpMenu.show(KeepAwake.Length.presets.map { length in
+                    (length.label, length == .indefinitely ? "infinity" : "timer", { keepAwake.start(length) })
+                },
                                title: "Keep awake for")
             }
             .help("Keep your Mac awake for…")
@@ -564,12 +566,15 @@ enum PopUpMenu {
         @objc func run() { action() }
     }
 
-    static func show(_ items: [(String, () -> Void)], title: String? = nil) {
+    /// A choice: its title, its symbol (every item has one, as in the app's other menus), and what it does.
+    typealias Item = (title: String, symbol: String, action: () -> Void)
+
+    static func show(_ items: [Item], title: String? = nil) {
         show(sections: [items], title: title)
     }
 
     /// Groups of items with a separator between them.
-    static func show(sections: [[(String, () -> Void)]], title: String? = nil) {
+    static func show(sections: [[Item]], title: String? = nil) {
         let menu = NSMenu()
         if let title {
             let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -579,10 +584,11 @@ enum PopUpMenu {
         var targets: [Target] = []
         for (i, items) in sections.filter({ !$0.isEmpty }).enumerated() {
             if i > 0 { menu.addItem(.separator()) }
-            for (label, action) in items {
+            for (label, symbol, action) in items {
                 let target = Target(action)
                 targets.append(target)
                 let item = NSMenuItem(title: label, action: #selector(Target.run), keyEquivalent: "")
+                item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
                 item.target = target
                 menu.addItem(item)
             }

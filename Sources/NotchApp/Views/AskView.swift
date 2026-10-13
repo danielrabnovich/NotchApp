@@ -2499,10 +2499,10 @@ struct DownloadModelMenu: View {
     var body: some View {
         Menu {
             ForEach(OllamaModelCatalog.recommended) { option in
-                Button("\(option.title) · \(option.size) — \(option.blurb)") { assistant.pullModel(option.name) }
+                MenuItem("\(option.title) · \(option.size) — \(option.blurb)", "arrow.down.circle") { assistant.pullModel(option.name) }
             }
             Divider()
-            Button("Choose another model…") { SettingsWindowController.shared.show(pane: .assistant) }
+            MenuItem("Choose Another Model…", "gearshape") { SettingsWindowController.shared.show(pane: .assistant) }
         } label: {
             Text("Download a model")
         }

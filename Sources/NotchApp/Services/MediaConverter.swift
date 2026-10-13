@@ -225,7 +225,7 @@ final class MediaConverter: ObservableObject {
                                                detail: anyMedia ? "brew install ffmpeg" : "Videos, audio and images", icon: "wand.and.stars", tone: .warning), for: 3)
             return
         }
-        let item = { (op: Operation) in (op.title, { MediaConverter.shared.convert(urls, op) }) }
+        let item = { (op: Operation) -> PopUpMenu.Item in (op.title, op.symbol, { MediaConverter.shared.convert(urls, op) }) }
         PopUpMenu.show(sections: [ops.filter { !$0.isEdit }.map(item), ops.filter(\.isEdit).map(item)],
                        title: urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files")
     }

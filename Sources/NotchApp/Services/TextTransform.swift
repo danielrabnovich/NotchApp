@@ -26,6 +26,26 @@ enum TextTransform: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Its symbol in menus.
+    var symbol: String {
+        switch self {
+        case .plain: "textformat"
+        case .prettyJSON: "curlybraces"
+        case .minifyJSON: "arrow.down.right.and.arrow.up.left"
+        case .base64Encode: "lock"
+        case .base64Decode: "lock.open"
+        case .urlEncode: "link.badge.plus"
+        case .urlDecode: "link"
+        case .uppercase: "textformat.size.larger"
+        case .lowercase: "textformat.size.smaller"
+        case .titleCase: "textformat.alt"
+        case .trim: "scissors"
+        case .oneLine: "arrow.right.to.line"
+        case .sortLines: "arrow.up.arrow.down"
+        case .uniqueLines: "line.3.horizontal.decrease"
+        }
+    }
+
     /// Words typed in Search that pick this transform.
     var phrases: [String] {
         switch self {

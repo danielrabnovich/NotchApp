@@ -71,7 +71,7 @@ struct NotchRootView: View {
             if !vm.isOpen { vm.open() }
         }
         .contextMenu {
-            MenuItem("Glances…", "capsule.on.rectangle") { SettingsWindowController.shared.show(pane: .live) }
+            MenuItem("Edit Glances…", "capsule.on.rectangle") { SettingsWindowController.shared.show(pane: .live) }
             MenuItem("Settings…", "gearshape") { SettingsWindowController.shared.show() }
             Divider()
             MenuItem("Quit NotchApp", "power") { NSApp.terminate(nil) }

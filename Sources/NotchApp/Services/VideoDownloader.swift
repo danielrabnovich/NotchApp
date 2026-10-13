@@ -310,10 +310,10 @@ final class VideoDownloader: ObservableObject {
                 download(url, format: .video) // the site didn't list resolutions; take what it has
                 return
             }
-            var items: [(String, () -> Void)] = info.qualities.map { q in
-                ("\(q.label)  ·  \(q.detail)", { VideoDownloader.shared.download(url, format: .video, height: q.height) })
+            var items: [PopUpMenu.Item] = info.qualities.map { q in
+                ("\(q.label)  ·  \(q.detail)", q.height >= 2160 ? "4k.tv" : "film", { VideoDownloader.shared.download(url, format: .video, height: q.height) })
             }
-            items.append(("Audio only (M4A)" + (info.audioSize.map { "  ·  ~" + formatBytes($0) } ?? ""),
+            items.append(("Audio Only (M4A)" + (info.audioSize.map { "  ·  ~" + formatBytes($0) } ?? ""), "music.note",
                           { VideoDownloader.shared.download(url, format: .audio, height: nil) }))
             PopUpMenu.show(items, title: info.title.map { String($0.prefix(60)) } ?? "Download")
         }

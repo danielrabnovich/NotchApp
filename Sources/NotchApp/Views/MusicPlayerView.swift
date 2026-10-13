@@ -215,18 +215,25 @@ struct ScrubBar: View {
     }
 }
 
+/// The sound outputs as menu items: each with its own symbol, the one in use checked.
+struct OutputDeviceItems: View {
+    @ObservedObject private var audio = AudioOutputManager.shared
+
+    var body: some View {
+        ForEach(audio.devices) { device in
+            Toggle(isOn: Binding(get: { audio.currentID == device.id }, set: { _ in audio.select(device) })) {
+                Label(device.name, systemImage: device.icon)
+            }
+        }
+    }
+}
+
 struct OutputDeviceMenu: View {
     @EnvironmentObject private var audio: AudioOutputManager
 
     var body: some View {
         Menu {
-            ForEach(audio.devices) { device in
-                Button {
-                    audio.select(device)
-                } label: {
-                    Label(device.name, systemImage: device.id == audio.currentID ? "checkmark" : device.icon)
-                }
-            }
+            OutputDeviceItems()
         } label: {
             Image(systemName: audio.current?.icon ?? "hifispeaker")
                 .font(.system(size: 13))

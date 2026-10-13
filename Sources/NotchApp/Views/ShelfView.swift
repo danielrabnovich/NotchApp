@@ -208,9 +208,9 @@ struct ShelfView: View {
                 .foregroundStyle(.white.opacity(0.75))
             if !conversions.isEmpty {
                 Menu {
-                    ForEach(conversions.filter { !$0.isEdit }) { op in Button(op.title) { converter.convert(urls, op) } }
+                    ForEach(conversions.filter { !$0.isEdit }) { op in MenuItem(op.title, op.symbol) { converter.convert(urls, op) } }
                     Divider()
-                    ForEach(conversions.filter(\.isEdit)) { op in Button(op.title) { converter.convert(urls, op) } }
+                    ForEach(conversions.filter(\.isEdit)) { op in MenuItem(op.title, op.symbol) { converter.convert(urls, op) } }
                 } label: {
                     Label("Convert", systemImage: "wand.and.stars")
                 }
@@ -594,7 +594,7 @@ private struct ShelfFileMenu: View {
         }
         Divider()
         ShareLink(items: urls) { Label("Share…", systemImage: "square.and.arrow.up") }
-        MenuItem("AirDrop", "dot.radiowaves.left.and.right") { ShelfStore.airDrop(urls) }
+        MenuItem("AirDrop…", "dot.radiowaves.left.and.right") { ShelfStore.airDrop(urls) }
         if AppSettings.shared.taildropZone, TaildropService.cli != nil {
             MenuItem("Taildrop…", "paperplane") { TaildropService.shared.offer(urls) }
         }
@@ -1307,7 +1307,7 @@ private struct ClipMenu: View {
                 if !transforms.isEmpty {
                     Menu {
                         ForEach(transforms) { t in
-                            Button(t.title) {
+                            MenuItem(t.title, t.symbol) {
                                 clipboard.copy(clip, announce: false)
                                 TextTransform.applyToClipboard(t)
                             }
@@ -1374,13 +1374,13 @@ private struct VideoJobTile: View {
         }
         .contextMenu {
             if case .done(let url) = job.state {
-                Button("Open") { NSWorkspace.shared.open(url) }
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                MenuItem("Open", "arrow.up.forward.square") { NSWorkspace.shared.open(url) }
+                MenuItem("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }
-            Button("Open Link") { NSWorkspace.shared.open(job.url) }
+            MenuItem("Open Link", "safari") { NSWorkspace.shared.open(job.url) }
             if case .failed = job.state {
-                Button("Try Again") { videos.dismiss(job); videos.download(job.url, format: job.format) }
-                Button("Update yt-dlp") { videos.upgrade() }
+                MenuItem("Try Again", "arrow.clockwise") { videos.dismiss(job); videos.download(job.url, format: job.format) }
+                MenuItem("Update yt-dlp", "arrow.down.circle") { videos.upgrade() }
             }
         }
         .help(job.url.absoluteString)

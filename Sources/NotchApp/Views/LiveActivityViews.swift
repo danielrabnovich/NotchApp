@@ -102,7 +102,7 @@ private struct GlanceMenu: View {
         if item == .meeting { MeetingMenu(viewModel: viewModel) }
         Divider()
         if let slot = live.slot(for: item) { placement(slot) }
-        MenuItem("Edit Glances…", "slider.horizontal.3") { SettingsWindowController.shared.show(pane: .live) }
+        MenuItem("Edit Glances…", "capsule.on.rectangle") { SettingsWindowController.shared.show(pane: .live) }
     }
 
     @ViewBuilder private func placement(_ slot: LiveSlot) -> some View {
@@ -125,14 +125,14 @@ private struct DuoSoundMenu: View {
     @ObservedObject private var audio = AudioOutputManager.shared
 
     var body: some View {
-        Menu("Sound Output") {
-            ForEach(audio.devices) { device in
-                Toggle(isOn: Binding(get: { audio.currentID == device.id }, set: { _ in audio.select(device) })) {
-                    Label(device.name, systemImage: device.icon)
-                }
-            }
+        Menu {
+            OutputDeviceItems()
+        } label: {
+            Label("Sound Output", systemImage: "hifispeaker")
         }
-        Toggle("Mute", isOn: Binding(get: { audio.muted }, set: { AudioOutputManager.isMuted = $0 }))
+        Toggle(isOn: Binding(get: { audio.muted }, set: { AudioOutputManager.isMuted = $0 })) {
+            Label("Mute", systemImage: "speaker.slash")
+        }
     }
 }
 
@@ -1884,11 +1884,13 @@ private struct ShortcutGlancePicker: View {
                     Text("No Shortcuts yet")
                 }
                 ForEach(shortcuts.all) { s in
-                    Toggle(s.name, isOn: Binding(get: { shortcuts.isInGlance(s) }, set: { _ in shortcuts.toggleGlance(s) }))
+                    Toggle(isOn: Binding(get: { shortcuts.isInGlance(s) }, set: { _ in shortcuts.toggleGlance(s) })) {
+                        Label(s.name, systemImage: "square.2.layers.3d")
+                    }
                         .disabled(!shortcuts.isInGlance(s) && shortcuts.glance.count >= ShortcutsApp.glanceLimit)
                 }
                 Divider()
-                Button("Open Shortcuts…") { NSWorkspace.shared.open(URL(string: "shortcuts://")!) }
+                MenuItem("Open Shortcuts", "arrow.up.forward.app") { NSWorkspace.shared.open(URL(string: "shortcuts://")!) }
             } label: {
                 Text(shortcuts.glanceShortcuts.isEmpty ? "Choose…" : shortcuts.glanceShortcuts.map(\.name).joined(separator: ", "))
             }
