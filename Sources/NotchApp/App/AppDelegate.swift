@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ImageIndex.shared.start()
         Cleaner.shared.start()
         ClipboardHistory.shared.start()
+        NotificationMirror.shared.apply()
         DeviceBatteries.shared.start()
         PrivacyMonitor.shared.start()
         AgentMonitor.shared.start()

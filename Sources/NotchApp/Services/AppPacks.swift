@@ -280,19 +280,7 @@ enum AppPack {
         }
     }
 
-    private static func icon(_ op: MediaConverter.Operation) -> String {
-        switch op {
-        case .toGIF: "photo.stack"
-        case .compressVideo: "arrow.down.right.and.arrow.up.left"
-        case .makeVertical: "rectangle.portrait"
-        case .normalizeLoudness: "speaker.wave.2"
-        case .audioM4A, .audioMP3, .audioWAV, .toMP3, .toM4A, .toWAV, .toFLAC, .toAIFF: "waveform"
-        case .halfSize: "arrow.down.left.and.arrow.up.right"
-        case .youtubeThumbnail: "play.rectangle"
-        case .toMP4, .toWebM: "film"
-        default: "photo"
-        }
-    }
+    private static func icon(_ op: MediaConverter.Operation) -> String { op.symbol }
 
     // MARK: - Helpers
 

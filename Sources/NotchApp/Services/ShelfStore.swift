@@ -48,6 +48,10 @@ final class ShelfStore: ObservableObject {
     static let shared = ShelfStore()
 
     @Published private(set) var items: [ShelfItem] = []
+    /// Files picked on the shelf (click, ⌘-click, ⇧-click): right-click and dragging act on all of them.
+    @Published var selection: Set<UUID> = []
+    /// Files waiting for a conversion to be picked on the shelf (dropped on "More…").
+    @Published var convertPicker: [URL]?
     private let key = "shelf.items"
     private var expiryTimer: Timer?
 
@@ -263,7 +267,166 @@ final class ShelfStore: ObservableObject {
     func remove(_ gone: [ShelfItem]) {
         let ids = Set(gone.map(\.id))
         items.removeAll { ids.contains($0.id) }
+        selection.subtract(ids)
         save()
+    }
+
+    // MARK: - Selection
+
+    /// The order the shelf shows its files in: quick drops (newest first), then pinned ones.
+    var shown: [ShelfItem] { stack + items.filter(\.pinned) }
+
+    /// A click on a file: picks just it; ⌘ adds or takes it away; ⇧ picks everything from the last pick to it.
+    func click(_ item: ShelfItem, modifiers: NSEvent.ModifierFlags) {
+        if modifiers.contains(.command) {
+            if selection.contains(item.id) { selection.remove(item.id) } else { selection.insert(item.id) }
+            anchor = item.id
+        } else if modifiers.contains(.shift), let anchor, let a = shown.firstIndex(where: { $0.id == anchor }),
+                  let b = shown.firstIndex(where: { $0.id == item.id }) {
+            selection = Set(shown[min(a, b)...max(a, b)].map(\.id))
+        } else {
+            selection = selection == [item.id] ? [] : [item.id]
+            anchor = item.id
+        }
+    }
+    private var anchor: UUID?
+
+    /// What an action on `item` applies to: everything picked when it's one of them, else just it.
+    func targets(for item: ShelfItem) -> [ShelfItem] {
+        selection.contains(item.id) ? shown.filter { selection.contains($0.id) } : [item]
+    }
+
+    var selectedItems: [ShelfItem] { shown.filter { selection.contains($0.id) } }
+
+    func selectAll() { selection = Set(items.map(\.id)) }
+
+    // MARK: - File actions
+
+    /// Moves the files themselves to a folder; the shelf follows them there.
+    func move(_ moving: [ShelfItem], to folder: URL) {
+        var moved: [(ShelfItem, URL)] = []
+        for item in moving {
+            let target = Self.free(folder.appendingPathComponent(item.url.lastPathComponent))
+            do {
+                try FileManager.default.moveItem(at: item.url, to: target)
+                moved.append((item, target))
+            } catch {
+                DebugHooks.log("Shelf: couldn't move \(item.url.path): \(error)")
+            }
+        }
+        guard !moved.isEmpty else {
+            ActivityCenter.shared.show(.notice(title: "Couldn't move", detail: folder.lastPathComponent, icon: "folder", tone: .warning), for: 3)
+            return
+        }
+        let replacements = moved.map { ShelfItem(url: $1, added: $0.added, pinned: $0.pinned, isScreenshot: $0.isScreenshot) }
+        let ids = Set(moved.map(\.0.id))
+        items.removeAll { ids.contains($0.id) }
+        items.append(contentsOf: replacements)
+        selection.subtract(ids)
+        save()
+        ActivityCenter.shared.show(.notice(title: moved.count == 1 ? "Moved to \(folder.lastPathComponent)" : "Moved \(moved.count) files",
+                                           detail: moved.count == 1 ? moved[0].1.lastPathComponent : folder.lastPathComponent,
+                                           icon: "folder.fill", tone: .success), for: 2.5)
+    }
+
+    /// Asks where to move them.
+    func chooseFolderAndMove(_ moving: [ShelfItem]) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Move Here"
+        panel.message = moving.count == 1 ? "Move “\(moving[0].url.lastPathComponent)” to…" : "Move \(moving.count) files to…"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        move(moving, to: folder)
+    }
+
+    /// The files to the Trash, and off the shelf.
+    func trash(_ gone: [ShelfItem]) {
+        for item in gone { try? FileManager.default.trashItem(at: item.url, resultingItemURL: nil) }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { remove(gone) }
+    }
+
+    /// A zip of the files, next to the first one (or in Downloads), put on the shelf.
+    func compress(_ files: [ShelfItem]) {
+        let urls = files.map(\.url)
+        guard let first = urls.first else { return }
+        let folder = FileManager.default.isWritableFile(atPath: first.deletingLastPathComponent().path)
+            ? first.deletingLastPathComponent() : FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        let name = urls.count == 1 ? first.deletingPathExtension().lastPathComponent : "Archive"
+        let output = Self.free(folder.appendingPathComponent(name).appendingPathExtension("zip"))
+        Task.detached {
+            let ok: Bool
+            if urls.count == 1 {
+                ok = Shell.runSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", first.path, output.path], timeout: 600).ok
+            } else {
+                // ditto zips one folder: gather clones of the files in one (instant on APFS).
+                let staging = FileManager.default.temporaryDirectory.appendingPathComponent("NotchApp Zip \(UUID().uuidString)/\(name)")
+                try? FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+                for url in urls { try? FileManager.default.copyItem(at: url, to: staging.appendingPathComponent(url.lastPathComponent)) }
+                ok = Shell.runSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", staging.path, output.path], timeout: 600).ok
+                try? FileManager.default.removeItem(at: staging.deletingLastPathComponent())
+            }
+            await MainActor.run {
+                if ok {
+                    ShelfStore.shared.add([output])
+                    ActivityCenter.shared.show(.notice(title: "Compressed", detail: "\(output.lastPathComponent) · \(formatBytes(Cleaner.allocatedSize(output)))",
+                                                       icon: "doc.zipper", tone: .success), for: 3)
+                } else {
+                    ActivityCenter.shared.show(.notice(title: "Couldn't compress", detail: name, icon: "doc.zipper", tone: .warning), for: 3)
+                }
+            }
+        }
+    }
+
+    /// Copies of the files next to them ("Report copy.pdf"), on the shelf.
+    func duplicate(_ files: [ShelfItem]) {
+        var made: [URL] = []
+        for item in files {
+            let base = item.url.deletingPathExtension().lastPathComponent + " copy"
+            let target = Self.free(item.url.deletingLastPathComponent().appendingPathComponent(base).appendingPathExtension(item.url.pathExtension))
+            if (try? FileManager.default.copyItem(at: item.url, to: target)) != nil { made.append(target) }
+        }
+        add(made)
+    }
+
+    static func copyText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// The words in a picture, on the clipboard.
+    static func copyTextInImage(_ url: URL) {
+        Task {
+            let text = await SystemTweaks.recognizeText(in: url)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !text.isEmpty else {
+                ActivityCenter.shared.show(.notice(title: "No text in the image", detail: url.lastPathComponent, icon: "text.viewfinder", tone: .warning), for: 2.5)
+                return
+            }
+            copyText(text)
+            ActivityCenter.shared.show(.notice(title: "Copied the text", detail: String(text.prefix(48)), icon: "text.viewfinder"), for: 2.5)
+        }
+    }
+
+    /// The paths, one a line, for pasting into a terminal or a message.
+    static func copyPaths(_ urls: [URL]) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
+    }
+
+    /// `url`, or "name 2.ext" (and so on) when that's taken.
+    nonisolated static func free(_ url: URL) -> URL {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: url.path) else { return url }
+        let folder = url.deletingLastPathComponent(), ext = url.pathExtension
+        let base = url.deletingPathExtension().lastPathComponent
+        var n = 2
+        while true {
+            let next = folder.appendingPathComponent(ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)")
+            if !fm.fileExists(atPath: next.path) { return next }
+            n += 1
+        }
     }
 
     func setPinned(_ item: ShelfItem, _ pinned: Bool) {
@@ -275,6 +438,7 @@ final class ShelfStore: ObservableObject {
 
     func clear() {
         items.removeAll()
+        selection = []
         save()
     }
 

@@ -46,11 +46,11 @@ struct CaptionStripView: View {
         .contentShape(Rectangle())
         .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
         .contextMenu {
-            Button("Copy Transcript") {
+            MenuItem("Copy Transcript", "doc.on.doc") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(captions.transcript, forType: .string)
             }
-            Button("Stop Captions") { captions.stopCaptions() }
+            MenuItem("Stop Captions", "captions.bubble") { captions.stopCaptions() }
         }
     }
 

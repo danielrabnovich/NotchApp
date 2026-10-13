@@ -83,6 +83,31 @@ final class NotchWindowController {
         panel.onCancel = { [weak vm] in vm?.backOut() }
         panel.onTypeAhead = { [weak vm] event in vm?.keepTypeAhead(event) ?? false }
 
+        // A right-click menu holds the notch still: it mustn't close (or change) while the pointer
+        // is out over the menu, and when the menu goes, it's as if the pointer had just moved.
+        let center = NotificationCenter.default
+        menuObservers.append(center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.menuOpen = true
+                self.closeWork?.cancel()
+                self.closeWork = nil
+                self.openWork?.cancel()
+                self.openWork = nil
+            }
+        })
+        menuObservers.append(center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.menuOpen = false
+                // Give a chosen command a moment to run (it may open something), then look again.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    self?.lastPointer = NSPoint(x: -1, y: -1)
+                    self?.handleMouse(.moved)
+                }
+            }
+        })
+
         // Hand keyboard focus back to the previous app once the notch closes.
         vm.$isOpen
             .removeDuplicates()
@@ -171,8 +196,12 @@ final class NotchWindowController {
 
     // MARK: - Mouse handling
 
+    /// A menu of ours (a right-click) is open.
+    private var menuOpen = false
+    private var menuObservers: [Any] = []
+
     func handleMouse(_ kind: MouseEventKind) {
-        if DebugHooks.pinned { return }
+        if DebugHooks.pinned || menuOpen { return }
         let p = NSEvent.mouseLocation
         let dragging = MouseTracker.isExternalDrag && (settings.tasksEnabled || settings.shelfEnabled)
         let inside = hotRect.contains(p) || (dragging && dragHotRect.contains(p))
@@ -243,6 +272,8 @@ final class NotchWindowController {
 
             guard viewModel.isOpen else { return }
             if kind == .down {
+                // The teleprompter stays up while you click into the call or your notes.
+                if viewModel.overlay == .teleprompter { return }
                 viewModel.close()
             } else if viewModel.overlay != nil {
                 // Briefs and nudges stay put until acted on or clicked away.
@@ -267,7 +298,7 @@ final class NotchWindowController {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.closeWork = nil
-            if !self.hotRect.contains(NSEvent.mouseLocation) { self.viewModel.close() }
+            if !self.menuOpen, !self.hotRect.contains(NSEvent.mouseLocation) { self.viewModel.close() }
         }
         closeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)

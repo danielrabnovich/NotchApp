@@ -44,18 +44,23 @@ struct DropZonesView: View {
                     finish(on: .shelf)
                     return true
                 }
-                DropBin(icon: "wand.and.stars", title: "Convert",
-                        detail: preview?.hasFiles == true ? "Compress, GIF, JPEG…" : "Files only",
-                        detailIcon: nil, tint: .purple, enabled: preview?.hasFiles == true) {
-                    let urls = NSPasteboard(name: .drag)
-                        .readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-                    guard !urls.isEmpty else { return false }
-                    viewModel.isDragActive = false
-                    // The menu waits for the drop to finish first.
-                    DispatchQueue.main.async { MediaConverter.shared.offer(urls) }
-                    return true
+                let quick = MediaConverter.quick(for: preview?.files ?? [])
+                if quick.isEmpty {
+                    DropBin(icon: "wand.and.stars", title: "Convert",
+                            detail: preview?.hasFiles == true ? "Compress, GIF, JPEG…" : "Files only",
+                            detailIcon: nil, tint: .purple, enabled: preview?.hasFiles == true) { convertDrop(nil) }
+                    .frame(width: 120)
+                } else {
+                    // Drop straight onto a format: the conversions you use most for this kind of file.
+                    VStack(spacing: 6) {
+                        ForEach(quick) { op in
+                            DropChip(icon: op.symbol, title: op.shortTitle, tint: .purple) { convertDrop(op) }
+                                .help(op.title)
+                        }
+                        DropChip(icon: "ellipsis", title: "More…", tint: .purple) { convertDrop(nil) }
+                    }
+                    .frame(width: 128)
                 }
-                .frame(width: 120)
                 if settings.airDropZone {
                     DropBin(icon: "dot.radiowaves.left.and.right", image: SystemIcons.airDrop, title: "AirDrop",
                             detail: preview?.hasFiles == true ? "Send nearby" : "Files only",
@@ -89,6 +94,28 @@ struct DropZonesView: View {
         // Room for a bin to grow when something's over it (3%): the outer ones would otherwise
         // push their borders past the notch's edge.
         .padding(5)
+    }
+
+    /// Converts the dropped files to `op` (and goes to the shelf, where the result lands), or offers
+    /// every conversion when there's none.
+    private func convertDrop(_ op: MediaConverter.Operation?) -> Bool {
+        let urls = NSPasteboard(name: .drag)
+            .readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        guard !urls.isEmpty else { return false }
+        if let op {
+            MediaConverter.shared.convert(urls, op)
+            finish(on: .shelf)
+        } else if MediaConverter.operations(for: urls).isEmpty {
+            viewModel.isDragActive = false
+            MediaConverter.shared.offer(urls) // says why there's nothing to convert
+        } else {
+            // Every choice, laid out on the shelf. Not a menu: one opened while the drop is still
+            // finishing never takes the mouse, and the whole app waits on it.
+            ShelfStore.shared.convertPicker = urls
+            UserDefaults.standard.set(ShelfPane.shelf.rawValue, forKey: "shelf.pane")
+            finish(on: .shelf)
+        }
+        return true
     }
 
     private func finish(on tab: NotchTab) {
@@ -160,5 +187,38 @@ private struct DropBin: View {
             // Felt while the finger is still down: the drop itself lands as it lifts, when a
             // trackpad can't be felt any more.
             .onChange(of: targeted) { _, over in if over { Haptics.level() } }
+    }
+}
+
+/// A small drop target, for one choice among several in a column (a format to convert to).
+private struct DropChip: View {
+    let icon: String
+    let title: String
+    let tint: Color
+    let onDrop: () -> Bool
+
+    @State private var targeted = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(targeted ? tint : .white.opacity(0.7))
+                .frame(width: 16)
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(targeted ? tint.opacity(0.3) : .white.opacity(0.06)))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(targeted ? tint : .white.opacity(0.16), style: StrokeStyle(lineWidth: targeted ? 1.5 : 1, dash: targeted ? [] : [5, 4])))
+        .scaleEffect(targeted ? 1.04 : 1)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: targeted)
+        .onDrop(of: [UTType.item], isTargeted: $targeted) { _ in onDrop() }
+        .onChange(of: targeted) { _, over in if over { Haptics.level() } }
     }
 }

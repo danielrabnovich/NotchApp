@@ -527,3 +527,99 @@ private struct PaneShortcuts: View {
         }
     }
 }
+
+// MARK: - Preview cards
+
+/// Your desktop picture, read once, for previews that show the notch as it sits on your screen.
+@MainActor
+enum WallpaperPreview {
+    static let image: NSImage? = {
+        guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main,
+              let url = NSWorkspace.shared.desktopImageURL(for: screen) else { return nil }
+        // Big wallpapers are scaled down once, so the cards stay cheap.
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let thumb = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                                                          kCGImageSourceThumbnailMaxPixelSize: 900] as CFDictionary)
+        else { return NSImage(contentsOf: url) }
+        return NSImage(cgImage: thumb, size: .zero)
+    }()
+}
+
+/// A feature shown as it looks: a small notch over your wallpaper, its name and a line under it.
+/// Click to turn it on or off (or pick it, among several); the ring says which.
+struct NotchPreviewCard<Content: View>: View {
+    let title: String
+    var subtitle: String? = nil
+    let isOn: Bool
+    /// How tall the notch in the preview is (it grows to show what opens).
+    var notchHeight: CGFloat = 26
+    var notchWidth: CGFloat = 150
+    var glass = false
+    let action: () -> Void
+    @ViewBuilder let content: () -> Content
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 74)
+                    .background { wallpaper }
+                    .overlay(alignment: .top) { notch }
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(isOn ? Color.accentColor : Color.primary.opacity(hovering ? 0.25 : 0.12), lineWidth: isOn ? 2.5 : 1))
+                .shadow(color: .black.opacity(hovering ? 0.18 : 0.1), radius: hovering ? 6 : 3, y: 2)
+                .scaleEffect(hovering ? 1.015 : 1)
+                VStack(spacing: 1) {
+                    HStack(spacing: 4) {
+                        if isOn { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor).font(.system(size: 11)) }
+                        Text(title).font(.system(size: 12, weight: .semibold))
+                    }
+                    if let subtitle {
+                        Text(subtitle).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { h in withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { hovering = h } }
+        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: isOn)
+    }
+
+    private var wallpaper: some View {
+        Group {
+            if let image = WallpaperPreview.image {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+            } else {
+                LinearGradient(colors: [.blue.opacity(0.6), .purple.opacity(0.5)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+    }
+
+    private var notch: some View {
+        let shape = NotchShape(topRadius: 6, bottomRadius: min(14, notchHeight / 2.2))
+        return ZStack(alignment: .top) {
+            if glass {
+                // Black at the notch, melting into glass: the wallpaper shows through below.
+                Color.clear.background { wallpaper.blur(radius: 3) }.clipShape(shape)
+                shape.fill(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.35),
+                                                  .init(color: .black.opacity(0.35), location: 1)], startPoint: .top, endPoint: .bottom))
+                shape.stroke(LinearGradient(colors: [.clear, .white.opacity(0.45)], startPoint: .center, endPoint: .bottom), lineWidth: 1)
+            } else {
+                shape.fill(.black)
+            }
+            content()
+                .environment(\.colorScheme, .dark)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(width: notchWidth, height: notchHeight)
+        .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+    }
+}

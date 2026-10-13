@@ -29,9 +29,12 @@ struct TimerView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
                 ModeTabs(selection: $store.mode)
+                    // Its titles on the header line, the underline hanging just below.
+                    .offset(y: 3)
                 Spacer()
                 TimerButton(title: "Start", icon: "play.fill", prominent: true) { store.start() }
             }
+            .notchHeaderRow()
             switch store.mode {
             case .timer:
                 HStack(alignment: .center, spacing: 14) {
@@ -91,6 +94,7 @@ private struct RunningTimerView: View {
                 Spacer()
                 controls
             }
+            .notchHeaderRow()
 
             HStack(alignment: .center, spacing: 18) {
                 BigTime(text: store.displayTime, size: 50, color: store.state == .paused ? .white.opacity(0.5) : color)
@@ -228,7 +232,7 @@ private struct ModeTabs: View {
                 } label: {
                     VStack(spacing: 4) {
                         Text(mode.label)
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.white.opacity(selected ? 0.95 : 0.4))
                         ZStack {
                             Capsule().fill(.clear).frame(height: 2)
@@ -389,7 +393,9 @@ private struct MinuteRuler: View {
         .frame(height: 62)
         .horizontalScrollRegion("timer.ruler", in: viewModel)
         .onAppear { scrolled = value }
-        .onChange(of: scrolled) { _, new in
+        .onChange(of: scrolled) { old, new in
+            // A detent for every minute that passes the pointer, a firmer one on each five.
+            if let new, let old, new != old { new % 5 == 0 ? Haptics.level() : Haptics.align() }
             if let new, new != value { value = new }
         }
         .onChange(of: value) { _, new in

@@ -101,26 +101,42 @@ private struct StackThumb: View {
 struct FileDragSource: NSViewRepresentable {
     let items: [ShelfItem]
     let onClick: () -> Void
+    var onClickEvent: ((NSEvent) -> Void)? = nil
+    var removesDelivered = true
 
     func makeNSView(context: Context) -> DragSourceView {
         let view = DragSourceView()
-        view.items = items
-        view.onClick = onClick
+        updateNSView(view, context: context)
         return view
     }
 
     func updateNSView(_ view: DragSourceView, context: Context) {
         view.items = items
         view.onClick = onClick
+        view.onClickEvent = onClickEvent
+        view.removesDelivered = removesDelivered
     }
 }
 
 final class DragSourceView: NSView, NSDraggingSource {
     var items: [ShelfItem] = []
     var onClick: () -> Void = {}
+    /// A click that knows its modifiers and count (the shelf's tiles: pick, ⌘/⇧ to pick more, double-click to open).
+    var onClickEvent: ((NSEvent) -> Void)?
+    /// Delivered files leave the shelf (the stack's quick drops); the shelf's own tiles stay put.
+    var removesDelivered = true
     private var mouseDown: NSEvent?
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// Right-clicks go through to the SwiftUI view underneath, for its context menu.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        switch NSApp.currentEvent?.type {
+        case .rightMouseDown, .rightMouseUp, .otherMouseDown: return nil
+        case .leftMouseDown where NSApp.currentEvent?.modifierFlags.contains(.control) == true: return nil
+        default: return super.hitTest(point)
+        }
+    }
 
     override func mouseDown(with event: NSEvent) {
         mouseDown = event
@@ -153,7 +169,7 @@ final class DragSourceView: NSView, NSDraggingSource {
     override func mouseUp(with event: NSEvent) {
         guard mouseDown != nil else { return }
         mouseDown = nil
-        onClick()
+        if let onClickEvent { onClickEvent(event) } else { onClick() }
     }
 
     // Copy only: dropping into a Finder folder must never move the original file away.
@@ -164,7 +180,7 @@ final class DragSourceView: NSView, NSDraggingSource {
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
         // Delivered: it's done its job, so it leaves the shelf, unless ⌥ is held to keep it.
-        guard operation != [], !NSEvent.modifierFlags.contains(.option) else { return }
+        guard removesDelivered, operation != [], !NSEvent.modifierFlags.contains(.option) else { return }
         MainActor.assumeIsolated {
             let gone = items.filter { !$0.pinned }
             guard !gone.isEmpty else { return }

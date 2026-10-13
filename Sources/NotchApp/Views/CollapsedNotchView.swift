@@ -20,6 +20,8 @@ enum BannerActions {
             NotchPresenter.shared.reopenPending()
         case let .notice(_, _, _, tone) where tone == .action:
             NotchPresenter.shared.reopenPending()
+        case let .message(id, _, _, _, _, _):
+            if let item = NotificationMirror.shared.item(id) { NotchPresenter.shared.presentReply(to: item) }
         default:
             break // informational: the click just clears it
         }
@@ -222,6 +224,14 @@ struct CollapsedNotchView: View {
             Image(systemName: isWeb ? "globe" : "doc.text.magnifyingglass")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.white)
+        case let .message(_, _, bundleID, _, _, _):
+            if let id = bundleID, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+                AppIcon(bundlePath: url.path, size: 24)
+            } else {
+                Image(systemName: "bell.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
         }
     }
 
@@ -284,6 +294,11 @@ struct CollapsedNotchView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(title.hasPrefix("No") || title.hasSuffix("failed") ? Color.orange : Color.green)
                 .symbolEffect(.bounce, value: title)
+        case let .message(_, _, _, _, _, replyable):
+            // Click to answer (or, without a reply, to open it).
+            Image(systemName: replyable ? "arrowshape.turn.up.left.circle.fill" : "chevron.down.circle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
         }
     }
 
@@ -294,9 +309,18 @@ struct CollapsedNotchView: View {
     private func bannerCard(_ banner: SneakPeek) -> some View {
         let text = banner.bannerText
         return HStack(spacing: 11) {
-            peekLeading(banner)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(.white.opacity(0.1)))
+            Group {
+                // An app's own icon stands on its own; a glyph sits in a soft disc.
+                if case let .message(_, _, bundleID, _, _, _) = banner, let id = bundleID,
+                   let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+                    AppIcon(bundlePath: url.path, size: 32)
+                } else {
+                    peekLeading(banner)
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(.white.opacity(0.1)))
+                }
+            }
+            .frame(width: 30, height: 30)
             VStack(alignment: .leading, spacing: 1) {
                 Text(text.title)
                     .font(.system(size: 12.5, weight: .semibold))

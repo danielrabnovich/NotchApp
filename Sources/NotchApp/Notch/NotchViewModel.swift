@@ -18,6 +18,21 @@ enum NotchTab: String, CaseIterable, Identifiable {
         case .agents: "sparkles.rectangle.stack.fill"
         }
     }
+
+    var title: String {
+        switch self {
+        case .ask: "Search"
+        case .home: "Home"
+        case .shelf: "Shelf"
+        case .tasks: "Tasks"
+        case .timer: "Timer"
+        case .mixer: "Mixer"
+        case .controls: "Controls"
+        case .stats: "Stats"
+        case .tools: "Tools"
+        case .agents: "Agents"
+        }
+    }
 }
 
 /// What the collapsed notch is currently showing beside the hardware notch.
@@ -356,9 +371,11 @@ final class NotchViewModel: ObservableObject {
             openReason = reason
             pointerVisited = false
         }
-        // Search is the default view each time the notch opens, unless something was just dropped
-        // on the shelf: then it opens where those files are.
-        var target = tab ?? (tabs.contains(.ask) ? .ask : nil)
+        // The screen chosen in Settings (Search unless changed, or wherever it was left), unless
+        // something was just dropped on the shelf: then it opens where those files are.
+        let start = AppSettings.shared.openTo
+        var target = tab ?? (start == "last" ? nil : NotchTab(rawValue: start).flatMap { tabs.contains($0) ? $0 : nil }
+            ?? (tabs.contains(.ask) ? .ask : nil))
         if tab == nil, tabs.contains(.shelf), ShelfStore.shared.hasFreshDrop {
             target = .shelf
             UserDefaults.standard.set(ShelfPane.shelf.rawValue, forKey: "shelf.pane")

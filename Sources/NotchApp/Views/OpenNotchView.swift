@@ -226,10 +226,19 @@ struct HomeView: View {
     /// card in the same place and the day takes the room. Decided on appearing, so pausing while you look doesn't
     /// reshuffle the page (starting playback does bring the player back).
     @State private var musicLarge = true
+    @ObservedObject private var meetings = MeetingMonitor.shared
 
     private var showsToday: Bool { settings.calendarEnabled || settings.tasksEnabled }
 
     var body: some View {
+        VStack(spacing: 8) {
+            if settings.meetingMode, meetings.call != nil { CallBar() }
+            content
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: meetings.call != nil)
+    }
+
+    private var content: some View {
         HStack(spacing: 18) {
             if settings.musicEnabled, musicLarge || !showsToday {
                 MusicPlayerView()

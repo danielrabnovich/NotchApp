@@ -20,15 +20,17 @@ enum SneakPeek: Equatable {
     case taildrop(title: String, detail: String, received: Bool)
     /// A general heads-up: an icon, a title and a detail line. The tone picks the mark on the right.
     case notice(title: String, detail: String, icon: String, tone: NoticeTone = .success)
+    /// Another app's notification (a message), shown in place of the system's banner.
+    case message(id: String, app: String, bundleID: String?, sender: String, text: String, replyable: Bool)
 
     enum Kind: Equatable {
-        case volume, brightness, charging, meeting, screenshot, timer, download, assistant, taildrop, notice
+        case volume, brightness, charging, meeting, screenshot, timer, download, assistant, taildrop, notice, message
 
         func sideWidth(notchHeight h: CGFloat) -> CGFloat {
             switch self {
             case .volume, .brightness: 92
             case .charging: 78
-            case .meeting, .screenshot, .timer, .download, .taildrop, .notice: h + 14
+            case .meeting, .screenshot, .timer, .download, .taildrop, .notice, .message: h + 14
             case .assistant: 72
             }
         }
@@ -47,6 +49,7 @@ enum SneakPeek: Equatable {
         case .assistant: .assistant
         case .taildrop: .taildrop
         case .notice: .notice
+        case .message: .message
         }
     }
 }
@@ -75,6 +78,7 @@ extension SneakPeek {
         case let .timer(message): (message, "Timer")
         case let .download(name): ("Downloaded", name)
         case let .assistant(title, detail, _), let .taildrop(title, detail, _), let .notice(title, detail, _, _): (title, detail)
+        case let .message(_, _, _, sender, text, _): (sender, text)
         case .volume, .brightness, .charging: ("", "")
         }
     }

@@ -7,6 +7,10 @@ enum NotchOverlay: Equatable {
     case brief(Brief)
     case nudge(Nudge)
     case prompt(Prompt)
+    /// Another app's notification, opened to answer it.
+    case message(NotificationMirror.Item)
+    /// The script rolling under the camera.
+    case teleprompter
 }
 
 /// A heads-up with buttons ("localhost:5173 is up · Open", "Design review in 3 min · Join"). It's
@@ -62,6 +66,12 @@ final class NotchPresenter {
     func open(tab: NotchTab) {
         primary?.overlay = nil
         primary?.open(tab: tab, reason: .system)
+    }
+
+    /// A notification's reply box, ready to type into.
+    func presentReply(to item: NotificationMirror.Item) {
+        NotificationMirror.shared.beginReply(item)
+        present(.message(item))
     }
 
     func present(_ overlay: NotchOverlay) {

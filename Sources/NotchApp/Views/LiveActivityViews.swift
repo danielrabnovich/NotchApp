@@ -81,27 +81,41 @@ struct GlanceButton<Label: View>: View {
                 Haptics.level()
                 GlanceActions.openDetail(item, in: viewModel)
             } onPressingChanged: { pressed = $0 }
-            .contextMenu {
-                Button(GlanceActions.hint(for: item)) { GlanceActions.perform(item, in: viewModel) }
-                if GlanceActions.hasDetail(item) {
-                    Button("Open in Notch") { GlanceActions.openDetail(item, in: viewModel) }
-                }
-                if item == .duo { DuoSoundMenu() }
-                Divider()
-                if let slot = live.slot(for: item) {
-                    Toggle("Compact", isOn: Binding(get: { slot.compact }, set: { on in live.update(item) { $0.compact = on } }))
-                    let other: LiveSlot.Side = slot.side == .left ? .right : .left
-                    Button(other == .left ? "Move to Left Side" : "Move to Right Side") {
-                        live.place(item, side: other, at: other == .left ? live.items(on: .left).count : 0)
-                    }
-                    .disabled(live.isFull(other))
-                    Button("Remove") { live.remove([item]) }
-                    Divider()
-                }
-                Button("Edit Glances…") { SettingsWindowController.shared.show(pane: .live) }
-            }
+            .contextMenu { GlanceMenu(item: item, viewModel: viewModel) }
             .animation(.easeOut(duration: 0.12), value: hovering)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: pressed)
+    }
+}
+
+/// A Glance's right-click: its action, its own options, then where it sits.
+private struct GlanceMenu: View {
+    let item: LiveItem
+    let viewModel: NotchViewModel
+    @ObservedObject private var live = LiveActivities.shared
+
+    var body: some View {
+        MenuItem(GlanceActions.hint(for: item), item.icon) { GlanceActions.perform(item, in: viewModel) }
+        if GlanceActions.hasDetail(item) {
+            MenuItem("Open in Notch", "rectangle.expand.vertical") { GlanceActions.openDetail(item, in: viewModel) }
+        }
+        if item == .duo { DuoSoundMenu() }
+        if item == .meeting { MeetingMenu(viewModel: viewModel) }
+        Divider()
+        if let slot = live.slot(for: item) { placement(slot) }
+        MenuItem("Edit Glances…", "slider.horizontal.3") { SettingsWindowController.shared.show(pane: .live) }
+    }
+
+    @ViewBuilder private func placement(_ slot: LiveSlot) -> some View {
+        Toggle(isOn: Binding(get: { slot.compact }, set: { on in live.update(item) { $0.compact = on } })) {
+            Label("Compact", systemImage: "rectangle.compress.vertical")
+        }
+        let other: LiveSlot.Side = slot.side == .left ? .right : .left
+        MenuItem(other == .left ? "Move to Left Side" : "Move to Right Side", other == .left ? "arrow.left" : "arrow.right") {
+            live.place(item, side: other, at: other == .left ? live.items(on: .left).count : 0)
+        }
+        .disabled(live.isFull(other))
+        MenuItem("Remove", "minus.circle") { live.remove([item]) }
+        Divider()
     }
 }
 
@@ -119,6 +133,41 @@ private struct DuoSoundMenu: View {
             }
         }
         Toggle("Mute", isOn: Binding(get: { audio.muted }, set: { AudioOutputManager.isMuted = $0 }))
+    }
+}
+
+/// The Meeting Glance's right-click: the call app's own camera, hand and leave, captions and notes.
+private struct MeetingMenu: View {
+    let viewModel: NotchViewModel
+    @ObservedObject private var captions = LiveCaptions.shared
+    @ObservedObject private var meetings = MeetingMonitor.shared
+
+    var body: some View {
+        ForEach(MeetingControls.available(), id: \.self) { action in
+            Button { MeetingControls.perform(action) } label: { Label(action.title, systemImage: action.symbol) }
+        }
+        if let call = meetings.call {
+            MenuItem("Show \(call.app)", "macwindow") { MeetingControls.showCall() }
+        }
+        if LiveCaptions.isSupported {
+            Divider()
+            MenuItem(captions.showing ? "Hide Captions" : "Show Captions", "captions.bubble") { captions.toggleCaptions() }
+            if captions.recording {
+                MenuItem("Catch Me Up", "sparkles") {
+                    viewModel.open(tab: .ask, takeKeyboard: false, reason: .click)
+                    MeetingAssistant.shared.catchUp("catch me up")
+                }
+            } else {
+                MenuItem("Transcribe This Call", "waveform") { captions.startRecording() }
+            }
+        }
+        MenuItem("Take Notes", "note.text") {
+            let ramble = RambleStore.shared
+            if let title = meetings.call?.title, !ramble.text.contains("Notes from \(title):") {
+                ramble.text = (ramble.text.isEmpty ? "" : ramble.text + "\n\n") + "Notes from \(title):\n"
+            }
+            ramble.open()
+        }
     }
 }
 
@@ -889,8 +938,10 @@ private struct ProgressReading: View {
     }
 }
 
-/// A call in progress: a red dot, how long it's been going, and the microphone (red while muted).
-private struct MeetingReading: View {
+/// A call in progress: a blue dot (a red waveform while it's transcribed), how long it's been
+/// going, and the microphone (red while muted).
+struct MeetingReading: View {
+    static let callBlue = Color(red: 0.25, green: 0.6, blue: 1)
     var compact = false
     @ObservedObject private var meetings = MeetingMonitor.shared
     @ObservedObject private var controls = ControlsService.shared
@@ -899,16 +950,15 @@ private struct MeetingReading: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             HStack(spacing: compact ? 4 : 5) {
-                // Being transcribed: a waveform instead of the dot, so it's plain the call is listened to.
-                Group {
-                    if captions.recording {
-                        Image(systemName: "waveform").font(.system(size: 9.5, weight: .bold)).foregroundStyle(.red)
-                    } else {
-                        Circle().fill(.red).frame(width: 6, height: 6)
-                    }
+                // Red means it's being kept: a pulsing red waveform while the call is transcribed.
+                // Otherwise a steady blue dot, just "you're on a call".
+                if captions.recording {
+                    Image(systemName: "waveform").font(.system(size: 9.5, weight: .bold)).foregroundStyle(.red)
+                        .opacity(Int(context.date.timeIntervalSinceReferenceDate) % 2 == 0 ? 1 : 0.45)
+                        .animation(.easeInOut(duration: 0.6), value: Int(context.date.timeIntervalSinceReferenceDate))
+                } else {
+                    Circle().fill(MeetingReading.callBlue).frame(width: 6, height: 6)
                 }
-                .opacity(Int(context.date.timeIntervalSinceReferenceDate) % 2 == 0 ? 1 : 0.45)
-                .animation(.easeInOut(duration: 0.6), value: Int(context.date.timeIntervalSinceReferenceDate))
                 Text(elapsed(at: context.date))
                     .font(LiveItemView.valueFont)
                     .foregroundStyle(.white.opacity(0.92))
@@ -921,7 +971,7 @@ private struct MeetingReading: View {
                 }
             }
         }
-        .help(meetings.call.map { "\($0.title) · \($0.app)" } ?? "")
+        .help(meetings.call.map { "\($0.title) · \($0.app)" + (captions.recording ? " · transcribing" : "") } ?? "")
     }
 
     private func elapsed(at now: Date) -> String {

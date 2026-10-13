@@ -32,8 +32,8 @@ struct AgentsView: View {
                     PeriodPicker(period: $period)
                 }
             }
-            // The period picker's height, on both panes, so the cards below don't shift when switching.
-            .frame(height: 24)
+            // One height on both panes (and every tab), so the cards below don't shift when switching.
+            .notchHeaderRow()
             Group {
                 switch pane {
                 case .sessions:

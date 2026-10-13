@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import SwiftUI
 
 /// Everything you copy, kept for later: text, links, images and files. Copies marked as
@@ -41,6 +42,9 @@ final class ClipboardHistory: ObservableObject {
     }
 
     @Published private(set) var clips: [Clip] = []
+    /// Clips picked in the Clipboard pane (⌘-click, ⇧-click): right-click acts on all of them.
+    @Published var selection: Set<UUID> = []
+    private var anchor: UUID?
 
     static let limit = 60
     private var timer: Timer?
@@ -178,7 +182,7 @@ final class ClipboardHistory: ObservableObject {
     // MARK: - Use
 
     /// Puts a clip back on the clipboard, ready to paste.
-    func copy(_ clip: Clip) {
+    func copy(_ clip: Clip, announce: Bool = true) {
         let pb = NSPasteboard.general
         pb.clearContents()
         switch clip.kind {
@@ -199,7 +203,135 @@ final class ClipboardHistory: ObservableObject {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { clips = list }
             save()
         }
-        ActivityCenter.shared.show(.notice(title: "Copied", detail: String(clip.title.prefix(40)), icon: "doc.on.clipboard"), for: 2)
+        if announce { ActivityCenter.shared.show(.notice(title: "Copied", detail: String(clip.title.prefix(40)), icon: "doc.on.clipboard"), for: 2) }
+    }
+
+    /// Puts a clip back and pastes it into the app you were in, without switching to it first.
+    func paste(_ clip: Clip) {
+        copy(clip, announce: false)
+        pasteClipboard()
+    }
+
+    /// Presses ⌘V in the app you were in (the notch closes first, so the keys reach it).
+    private func pasteClipboard() {
+        let target = FrontmostTracker.shared.userApp
+        NotchPresenter.shared.primary?.close()
+        guard AXIsProcessTrusted(), let target else {
+            ActivityCenter.shared.show(.notice(title: "Copied", detail: "Press ⌘V to paste", icon: "doc.on.clipboard"), for: 2)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier != target.processIdentifier { target.activate() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                for down in [true, false] {
+                    let e = CGEvent(keyboardEventSource: nil, virtualKey: 9, keyDown: down) // kVK_ANSI_V
+                    e?.flags = .maskCommand
+                    e?.post(tap: .cghidEventTap)
+                }
+            }
+        }
+    }
+
+    /// Keeps a clip on the shelf as a file: text as .txt, a link as a .webloc, an image as .png.
+    func saveToShelf(_ clip: Clip) {
+        let shelf = ShelfStore.shared
+        switch clip.kind {
+        case .files:
+            shelf.add((clip.filePaths ?? []).map { URL(fileURLWithPath: $0) }, pinned: true)
+        case .link:
+            guard let url = clip.text.flatMap({ URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }) else { return }
+            shelf.addLink(url, title: url.host() ?? "Link")
+        case .text:
+            let text = clip.text ?? ""
+            let firstLine = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "Text"
+            let file = ShelfStore.free(ShelfStore.answerFile(for: String(firstLine.prefix(40))))
+            try? text.write(to: file, atomically: true, encoding: .utf8)
+            shelf.add([file], pinned: true)
+        case .image:
+            guard let source = imageURL(for: clip) else { return }
+            let file = ShelfStore.free(ShelfStore.clippingsFolder.appendingPathComponent("Image \(clip.date.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false)).replacingOccurrences(of: ":", with: "."))).png"))
+            try? FileManager.default.copyItem(at: source, to: file)
+            shelf.add([file], pinned: true)
+        }
+        ActivityCenter.shared.show(.notice(title: "Saved to Shelf", detail: String(clip.title.prefix(40)), icon: "tray.and.arrow.down.fill", tone: .success), for: 2)
+    }
+
+    // MARK: - Several at once
+
+    /// ⌘-click adds or takes away; ⇧-click picks everything from the last pick to it, in `order`.
+    func pick(_ clip: Clip, modifiers: NSEvent.ModifierFlags, in order: [Clip]) {
+        if modifiers.contains(.shift), let anchor, let a = order.firstIndex(where: { $0.id == anchor }),
+           let b = order.firstIndex(where: { $0.id == clip.id }) {
+            selection = Set(order[min(a, b)...max(a, b)].map(\.id))
+        } else {
+            if selection.contains(clip.id) { selection.remove(clip.id) } else { selection.insert(clip.id) }
+            anchor = clip.id
+        }
+    }
+
+    /// What an action on `clip` applies to: everything picked when it's one of them.
+    func targets(for clip: Clip) -> [Clip] {
+        selection.contains(clip.id) ? clips.filter { selection.contains($0.id) } : [clip]
+    }
+
+    /// Several copies as one: their text a line apart, or all their files together.
+    func copyTogether(_ group: [Clip], announce: Bool = true) {
+        let pb = NSPasteboard.general
+        let files = group.flatMap { $0.filePaths ?? [] }.map { URL(fileURLWithPath: $0) as NSURL }
+        pb.clearContents()
+        if !files.isEmpty, group.allSatisfy({ $0.kind == .files }) {
+            pb.writeObjects(files)
+        } else {
+            pb.setString(group.compactMap(\.text).joined(separator: "\n"), forType: .string)
+        }
+        ignoreChange = pb.changeCount
+        lastChange = pb.changeCount
+        if announce {
+            ActivityCenter.shared.show(.notice(title: "Copied \(group.count) items", detail: "Together, ready to paste", icon: "doc.on.clipboard"), for: 2)
+        }
+    }
+
+    /// Pastes them as one into the app you were in.
+    func pasteTogether(_ group: [Clip]) {
+        copyTogether(group, announce: false)
+        pasteClipboard()
+    }
+
+    func remove(_ group: [Clip]) {
+        let ids = Set(group.map(\.id))
+        group.forEach(remove(fileOf:))
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { clips.removeAll { ids.contains($0.id) } }
+        selection.subtract(ids)
+        save()
+    }
+
+    func setPinned(_ group: [Clip], _ pinned: Bool) {
+        let ids = Set(group.map(\.id))
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            for i in clips.indices where ids.contains(clips[i].id) { clips[i].pinned = pinned }
+        }
+        save()
+    }
+
+    /// The words in a copied picture, put on the clipboard.
+    func copyText(in clip: Clip) {
+        guard let url = imageURL(for: clip) else { return }
+        Task {
+            let text = await SystemTweaks.recognizeText(in: url)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !text.isEmpty else {
+                ActivityCenter.shared.show(.notice(title: "No text in the image", detail: "Nothing to copy", icon: "text.viewfinder", tone: .warning), for: 2.5)
+                return
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            ActivityCenter.shared.show(.notice(title: "Copied the text", detail: String(text.prefix(48)), icon: "text.viewfinder"), for: 2.5)
+        }
+    }
+
+    /// A search for the copied text in your browser.
+    func searchWeb(_ clip: Clip) {
+        let q = String((clip.text ?? "").prefix(300)).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        if let url = URL(string: "https://www.google.com/search?q=\(q)") { NSWorkspace.shared.open(url) }
     }
 
     func togglePin(_ clip: Clip) {
@@ -209,6 +341,7 @@ final class ClipboardHistory: ObservableObject {
     }
 
     func delete(_ clip: Clip) {
+        selection.remove(clip.id)
         remove(fileOf: clip)
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { clips.removeAll { $0.id == clip.id } }
         save()
@@ -219,6 +352,16 @@ final class ClipboardHistory: ObservableObject {
         clips.filter { !$0.pinned }.forEach(remove(fileOf:))
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { clips = clips.filter(\.pinned) }
         save()
+    }
+
+    /// What the Clipboard pane lists: pinned first, then newest, narrowed by a search and a kind.
+    func shown(matching query: String, kind: Clip.Kind?) -> [Clip] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let list = pinned + clips.filter { !$0.pinned }
+        return list.filter { clip in
+            (kind == nil || clip.kind == kind) && (q.isEmpty || clip.title.lowercased().contains(q)
+                || (clip.filePaths ?? []).contains { $0.lowercased().contains(q) })
+        }
     }
 
     func search(_ query: String, limit: Int = 5) -> [Clip] {

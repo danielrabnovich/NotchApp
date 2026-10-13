@@ -353,6 +353,116 @@ extension View {
 }
 
 /// Title-style switcher between the panes that share a tab ("Tasks · Notes", "Shelf · Downloads").
+extension View {
+    /// For an item in a horizontal scroll view: it fades out over the last stretch before either
+    /// edge, so a row that scrolls reads as continuing instead of being cut off square. (Each item
+    /// is masked by where it sits: a mask on the scroll view itself doesn't reach into AppKit's.)
+    func scrollEdgeFade(_ fade: CGFloat = 28) -> some View {
+        mask {
+            GeometryReader { g in
+                let frame = g.frame(in: .scrollView(axis: .horizontal))
+                let width = g.bounds(of: .scrollView(axis: .horizontal))?.width ?? .infinity
+                let w = max(g.size.width, 1)
+                // The container's edges in the item's own coordinates, as fractions of its width.
+                let right = (width - frame.minX) / w
+                let left = -frame.minX / w
+                let f = fade / w
+                LinearGradient(stops: [
+                    .init(color: frame.minX < 0 ? .clear : .black, location: 0),
+                    .init(color: frame.minX < 0 ? .clear : .black, location: min(1, max(0, left))),
+                    .init(color: .black, location: min(1, max(0, left + (frame.minX < 0 ? f : 0)))),
+                    .init(color: .black, location: min(1, max(0, right - (frame.maxX > width ? f : 0)))),
+                    .init(color: frame.maxX > width ? .clear : .black, location: min(1, max(0, right))),
+                    .init(color: frame.maxX > width ? .clear : .black, location: 1),
+                ], startPoint: .leading, endPoint: .trailing)
+            }
+        }
+    }
+}
+
+/// A right-click menu item with its symbol (macOS shows them beside each command).
+struct MenuItem: View {
+    let title: String
+    let icon: String
+    var role: ButtonRole? = nil
+    let action: () -> Void
+
+    init(_ title: String, _ icon: String, role: ButtonRole? = nil, action: @escaping () -> Void) {
+        self.title = title
+        self.icon = icon
+        self.role = role
+        self.action = action
+    }
+
+    var body: some View {
+        Button(role: role, action: action) { Label(title, systemImage: icon) }
+    }
+}
+
+/// "Open With" for files: each app with its own icon, the default first.
+struct OpenWithMenu: View {
+    let urls: [URL]
+
+    /// Asked of Launch Services once per kind of file: menus are rebuilt each time their card
+    /// redraws (a hover), and the lookup isn't quick.
+    @MainActor private static var appCache: [String: (apps: [URL], at: Date)] = [:]
+    @MainActor private static var iconCache: [URL: NSImage] = [:]
+
+    @MainActor static func apps(toOpen url: URL) -> [URL] {
+        let key = url.hasDirectoryPath ? "/" : url.pathExtension.lowercased()
+        if let hit = appCache[key], Date().timeIntervalSince(hit.at) < 300 { return hit.apps }
+        let apps = Array(NSWorkspace.shared.urlsForApplications(toOpen: url).prefix(14))
+        appCache[key] = (apps, Date())
+        return apps
+    }
+
+    @MainActor static func icon(_ app: URL) -> NSImage {
+        if let hit = iconCache[app] { return hit }
+        let icon = NSWorkspace.shared.icon(forFile: app.path)
+        icon.size = NSSize(width: 16, height: 16)
+        iconCache[app] = icon
+        return icon
+    }
+
+    var body: some View {
+        let apps = urls.first.map(Self.apps(toOpen:)) ?? []
+        if !apps.isEmpty {
+            Menu {
+                ForEach(Array(apps.prefix(14)), id: \.self) { app in
+                    Button {
+                        NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+                    } label: {
+                        Label {
+                            Text(FileManager.default.displayName(atPath: app.path).replacingOccurrences(of: ".app", with: ""))
+                        } icon: {
+                            Image(nsImage: Self.icon(app))
+                        }
+                    }
+                }
+                Divider()
+                MenuItem("Other…", "ellipsis.circle") {
+                    let panel = NSOpenPanel()
+                    panel.directoryURL = URL(fileURLWithPath: "/Applications")
+                    panel.allowedContentTypes = [.application]
+                    panel.prompt = "Open"
+                    NSApp.activate(ignoringOtherApps: true)
+                    if panel.runModal() == .OK, let app = panel.url {
+                        NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+                    }
+                }
+            } label: {
+                Label("Open With", systemImage: "arrow.up.forward.app")
+            }
+        }
+    }
+}
+
+extension View {
+    /// A tab's top row (its panes, a title, a field or a button on the right): one height on every
+    /// tab, so the titles sit on the same line as you swipe between them.
+    func notchHeaderRow() -> some View { frame(height: 26) }
+}
+
 struct PaneSwitcher<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [(value: Value, title: String)]

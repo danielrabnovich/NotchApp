@@ -9,6 +9,8 @@ struct OverlayView: View {
         case .brief(let brief): BriefView(brief: brief)
         case .nudge(let nudge): NudgeView(nudge: nudge)
         case .prompt(let prompt): PromptView(prompt: prompt)
+        case .message(let item): MessageReplyView(item: item)
+        case .teleprompter: TeleprompterView().onDisappear { Teleprompter.shared.ended() }
         }
     }
 }
@@ -181,5 +183,102 @@ private struct PromptView: View {
         }
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A notification opened from its Banner: the whole message, and a reply box ready to type into.
+private struct MessageReplyView: View {
+    let item: NotificationMirror.Item
+    @State private var reply = ""
+    @State private var sending = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Group {
+                if let id = item.bundleID, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+                    AppIcon(bundlePath: url.path, size: 40)
+                } else {
+                    Image(systemName: "bell.fill").font(.system(size: 20)).frame(width: 40, height: 40)
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(item.sender)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                    Text("\(item.app) · \(item.date.formatted(date: .omitted, time: .shortened))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.45))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                ScrollView(.vertical, showsIndicators: false) {
+                    Text(item.text)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineSpacing(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxHeight: 66)
+                .fixedSize(horizontal: false, vertical: true)
+                if item.replyable {
+                    HStack(spacing: 6) {
+                        TextField("", text: $reply, prompt: Text("Reply to \(item.sender)…").foregroundStyle(.white.opacity(0.35)), axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12))
+                            .lineLimit(1...3)
+                            .focused($focused)
+                            .onSubmit(send)
+                        Button(action: send) {
+                            Image(systemName: sending ? "ellipsis" : "arrow.up").font(.system(size: 10, weight: .bold))
+                        }
+                        .buttonStyle(NotchIconButtonStyle(size: 22))
+                        .disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending)
+                        .help("Send without leaving what you're doing")
+                    }
+                    .padding(.leading, 11)
+                    .padding(.trailing, 3)
+                    .padding(.vertical, 3)
+                    .frame(minHeight: 30)
+                    .notchSurface(RoundedRectangle(cornerRadius: 15, style: .continuous), active: focused)
+                }
+                HStack(spacing: 8) {
+                    Button("Open \(item.app)") {
+                        NotificationMirror.shared.open(item)
+                        NotchPresenter.shared.dismissOverlay(close: true)
+                    }
+                    .buttonStyle(NotchPillButtonStyle(primary: !item.replyable))
+                    Button("Dismiss") {
+                        NotificationMirror.shared.dismiss(item)
+                        NotchPresenter.shared.dismissOverlay(close: true)
+                    }
+                    .buttonStyle(NotchPillButtonStyle())
+                    Spacer(minLength: 0)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, 6)
+        .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { focused = true } }
+    }
+
+    private func send() {
+        let text = reply
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !sending else { return }
+        sending = true
+        Task {
+            let outcome = await NotificationMirror.shared.reply(item, text: text)
+            sending = false
+            NotchPresenter.shared.dismissOverlay(close: true)
+            switch outcome {
+            case .sent:
+                ActivityCenter.shared.show(.notice(title: "Sent to \(item.sender)", detail: text, icon: "arrowshape.turn.up.left.fill", tone: .success), for: 2.5)
+            case .opened:
+                ActivityCenter.shared.show(.notice(title: "Reply copied", detail: "Paste it into \(item.app)", icon: "doc.on.clipboard", tone: .info), for: 3)
+            }
+        }
     }
 }

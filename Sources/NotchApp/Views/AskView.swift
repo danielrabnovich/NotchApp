@@ -1167,9 +1167,16 @@ private struct FileRow: View {
         .onDrag { NSItemProvider(object: hit.url as NSURL) }
         .help(hit.reason ?? hit.url.path)
         .contextMenu {
-            Button("Open") { NSWorkspace.shared.open(hit.url) }
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([hit.url]) }
-            Button(ShelfStore.shared.items.contains { $0.url == hit.url } ? "On Shelf ✓" : "Add to Shelf") { ShelfStore.shared.add([hit.url]) }
+            MenuItem("Open", "arrow.up.forward.square") { NSWorkspace.shared.open(hit.url) }
+            OpenWithMenu(urls: [hit.url])
+            MenuItem("Quick Look", "eye") { QuickLookPreview.shared.show([hit.url]) }
+            MenuItem("Show in Finder", "folder") { NSWorkspace.shared.activateFileViewerSelecting([hit.url]) }
+            Divider()
+            MenuItem("Copy", "doc.on.doc") { ShelfStore.copy([hit.url]) }
+            MenuItem("Copy Path", "point.topleft.down.to.point.bottomright.curvepath") { ShelfStore.copyPaths([hit.url]) }
+            ShareLink(item: hit.url) { Label("Share…", systemImage: "square.and.arrow.up") }
+            let onShelf = ShelfStore.shared.items.contains { $0.url == hit.url }
+            MenuItem(onShelf ? "On Shelf" : "Add to Shelf", onShelf ? "checkmark" : "tray.and.arrow.down") { ShelfStore.shared.add([hit.url]) }
         }
     }
 }
@@ -2397,13 +2404,13 @@ private struct AppActionsRow: View {
                                                                 : "⌘\(i + 1) · right-click to keep it as a Glance"].compactMap { $0 }.joined(separator: "\n"))
                 .contextMenu {
                     if command.takesInstructions {
-                        Button("Add Instructions…") { instruct(command) }
+                        MenuItem("Add Instructions…", "text.badge.plus") { instruct(command) }
                         Divider()
                     }
                     if starred {
-                        Button("Remove from Glance") { actions.toggleStar(command) }
+                        MenuItem("Remove from Glance", "star.slash") { actions.toggleStar(command) }
                     } else if actions.canStar(command) {
-                        Button("Show as Glance in \(context.appName)") { actions.toggleStar(command) }
+                        MenuItem("Show as Glance in \(context.appName)", "star") { actions.toggleStar(command) }
                     } else if case .template = command.action {
                     } else {
                         Text("\(context.appName) has \(AppActions.starsPerApp) Glance actions already")

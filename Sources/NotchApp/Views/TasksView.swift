@@ -9,8 +9,10 @@ struct TasksTab: View {
     var body: some View {
         if settings.notesEnabled && pane == .notes {
             NotesView(viewModel: viewModel, pane: $pane)
+        } else if pane == .prompter {
+            PrompterSetupView(viewModel: viewModel, pane: $pane)
         } else {
-            TasksView(viewModel: viewModel, pane: settings.notesEnabled ? $pane : nil)
+            TasksView(viewModel: viewModel, pane: $pane)
         }
     }
 }
@@ -76,6 +78,7 @@ struct TasksView: View {
             addField
                 .frame(maxWidth: 260)
         }
+        .notchHeaderRow()
     }
 
     private var addField: some View {
@@ -259,21 +262,24 @@ private struct TaskRow: View {
                 }
         )
         .contextMenu {
-            Button(checked ? "Mark as Not Done" : "Mark as Done") { toggle() }
-            Button("Rename") { beginEdit() }
-            Menu("Due") {
-                Button("Today, 5 PM") { store.setDue(task.id, Self.at(17, daysFromNow: 0)) }
-                Button("Tomorrow, 9 AM") { store.setDue(task.id, Self.at(9, daysFromNow: 1)) }
-                Button("Tomorrow, 5 PM") { store.setDue(task.id, Self.at(17, daysFromNow: 1)) }
-                Button("Next Week") { store.setDue(task.id, Self.at(9, daysFromNow: 7)) }
+            MenuItem(checked ? "Mark as Not Done" : "Mark as Done", checked ? "circle" : "checkmark.circle") { toggle() }
+            MenuItem("Rename", "pencil") { beginEdit() }
+            Menu {
+                MenuItem("Today, 5 PM", "sun.max") { store.setDue(task.id, Self.at(17, daysFromNow: 0)) }
+                MenuItem("Tomorrow, 9 AM", "sunrise") { store.setDue(task.id, Self.at(9, daysFromNow: 1)) }
+                MenuItem("Tomorrow, 5 PM", "sunset") { store.setDue(task.id, Self.at(17, daysFromNow: 1)) }
+                MenuItem("Next Week", "calendar") { store.setDue(task.id, Self.at(9, daysFromNow: 7)) }
                 if task.due != nil {
                     Divider()
-                    Button("Remove Due Date") { store.setDue(task.id, nil) }
+                    MenuItem("Remove Due Date", "calendar.badge.minus") { store.setDue(task.id, nil) }
                 }
+            } label: {
+                Label("Due", systemImage: "clock")
             }
-            if task.link != nil { Button("Open Link") { store.openLink(of: task) } }
+            if task.link != nil { MenuItem("Open Link", "link") { store.openLink(of: task) } }
+            MenuItem("Copy", "doc.on.doc") { ShelfStore.copyText(task.title) }
             Divider()
-            Button("Delete") { store.delete(task.id) }
+            MenuItem("Delete", "trash", role: .destructive) { store.delete(task.id) }
         }
     }
 

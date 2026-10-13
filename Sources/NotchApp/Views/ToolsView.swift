@@ -19,6 +19,7 @@ struct ToolsView: View {
                 Spacer()
                 PaneAccessory(pane: pane)
             }
+            .notchHeaderRow()
             Group {
                 switch pane {
                 case .network: NetworkPane()
@@ -1085,7 +1086,7 @@ private struct VPNRow: View {
             .strokeBorder(c.isUp ? statusColor.opacity(0.3) : .white.opacity(0.07), lineWidth: 1))
         .contextMenu {
             if showsExit, let ip = vpn.exit?.ip {
-                Button("Copy Public IP") {
+                MenuItem("Copy Public IP", "doc.on.doc") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(ip, forType: .string)
                 }

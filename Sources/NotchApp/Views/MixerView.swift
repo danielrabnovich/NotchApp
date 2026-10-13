@@ -13,7 +13,7 @@ struct MixerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            header
+            header.notchHeaderRow()
             HStack(alignment: .top, spacing: 10) {
                 ChannelStrip(name: audio.current?.name ?? "Output", value: master, muted: AudioOutputManager.isMuted,
                              tint: .white) {
@@ -48,6 +48,7 @@ struct MixerView: View {
                             HStack(alignment: .top, spacing: 10) {
                                 ForEach(mixer.apps) { app in
                                     appStrip(app)
+                                        .scrollEdgeFade()
                                         .transition(.scale(scale: 0.8).combined(with: .opacity))
                                 }
                             }
@@ -59,6 +60,7 @@ struct MixerView: View {
                                     .onChange(of: inner.size.width > outer.size.width + 1) { _, o in overflows = o }
                             })
                         }
+
                     }
                     .horizontalScrollRegion("mixer", in: viewModel, active: overflows)
                 }
@@ -103,6 +105,7 @@ struct MixerView: View {
                     .foregroundStyle(.white.opacity(0.5))
             }
             OutputDeviceMenu()
+                .padding(.trailing, -5) // the glyph's edge on the line the other tabs' controls end on
         }
         .frame(height: 22)
     }

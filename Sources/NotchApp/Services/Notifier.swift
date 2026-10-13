@@ -26,6 +26,22 @@ enum Notifier {
         UNUserNotificationCenter.current().add(request)
     }
 
+    /// Debug: a notification with a text reply, as Messages and WhatsApp post them.
+    static func debugReplyBanner(from sender: String) {
+        configure()
+        let reply = UNTextInputNotificationAction(identifier: "reply", title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Message")
+        UNUserNotificationCenter.current().setNotificationCategories([UNNotificationCategory(identifier: "chat", actions: [reply], intentIdentifiers: [])])
+        let content = UNMutableNotificationContent()
+        content.title = sender.isEmpty ? "Sam" : sender
+        content.body = "Are you around later? Want to grab dinner"
+        content.categoryIdentifier = "chat"
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)) { error in
+            UNUserNotificationCenter.current().getNotificationSettings { s in
+                DebugHooks.log("REPLYTEST added error=\(String(describing: error)) auth=\(s.authorizationStatus.rawValue) alert=\(s.alertStyle.rawValue)")
+            }
+        }
+    }
+
     private final class Delegate: NSObject, UNUserNotificationCenterDelegate {
         func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
@@ -34,6 +50,11 @@ enum Notifier {
 
         func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                     withCompletionHandler completionHandler: @escaping () -> Void) {
+            if let text = (response as? UNTextInputNotificationResponse)?.userText {
+                DebugHooks.log("REPLYTEST got reply: \(text)")
+                completionHandler()
+                return
+            }
             DispatchQueue.main.async { NotchPresenter.shared.open(tab: .ask) }
             completionHandler()
         }

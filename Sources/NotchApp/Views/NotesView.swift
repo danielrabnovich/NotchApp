@@ -40,6 +40,7 @@ struct NotesView: View {
                 .help("Clear")
                 .disabled(store.text.isEmpty)
             }
+            .notchHeaderRow()
 
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $store.text)
@@ -73,6 +74,8 @@ struct NotesView: View {
 }
 
 enum TasksPane: String {
-    case tasks, notes
-    static let options: [(value: TasksPane, title: String)] = [(.tasks, "Tasks"), (.notes, "Notes")]
+    case tasks, notes, prompter
+    @MainActor static var options: [(value: TasksPane, title: String)] {
+        [(.tasks, "Tasks")] + (AppSettings.shared.notesEnabled ? [(.notes, "Notes")] : []) + [(.prompter, "Prompter")]
+    }
 }

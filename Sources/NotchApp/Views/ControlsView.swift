@@ -55,11 +55,22 @@ struct ControlsView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { SettingsWindowController.shared.show(pane: .controls) }
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: shown.count > 8 ? 6 : 4), spacing: 8) {
-                    ForEach(shown) { action in
-                        ActionTile(action: action, viewModel: viewModel)
+                // Rows spread over the column's height: the first level with the volume slider, the
+                // last with the bottom of the left column.
+                let columns = shown.count > 8 ? 6 : 4
+                let rows = stride(from: 0, to: shown.count, by: columns).map { Array(shown[$0..<min($0 + columns, shown.count)]) }
+                VStack(spacing: 0) {
+                    ForEach(rows.indices, id: \.self) { i in
+                        HStack(spacing: 6) {
+                            ForEach(rows[i]) { action in
+                                ActionTile(action: action, viewModel: viewModel).frame(maxWidth: .infinity)
+                            }
+                            ForEach(rows[i].count..<columns, id: \.self) { _ in Color.clear.frame(maxWidth: .infinity, maxHeight: 1) }
+                        }
+                        if i < rows.count - 1 { Spacer(minLength: 8) }
                     }
                 }
+                .frame(maxHeight: rows.count > 1 && settings.updateChecks ? .infinity : nil, alignment: .top)
             }
         }
         .onAppear {
@@ -554,6 +565,11 @@ enum PopUpMenu {
     }
 
     static func show(_ items: [(String, () -> Void)], title: String? = nil) {
+        show(sections: [items], title: title)
+    }
+
+    /// Groups of items with a separator between them.
+    static func show(sections: [[(String, () -> Void)]], title: String? = nil) {
         let menu = NSMenu()
         if let title {
             let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -561,12 +577,15 @@ enum PopUpMenu {
             menu.addItem(header)
         }
         var targets: [Target] = []
-        for (label, action) in items {
-            let target = Target(action)
-            targets.append(target)
-            let item = NSMenuItem(title: label, action: #selector(Target.run), keyEquivalent: "")
-            item.target = target
-            menu.addItem(item)
+        for (i, items) in sections.filter({ !$0.isEmpty }).enumerated() {
+            if i > 0 { menu.addItem(.separator()) }
+            for (label, action) in items {
+                let target = Target(action)
+                targets.append(target)
+                let item = NSMenuItem(title: label, action: #selector(Target.run), keyEquivalent: "")
+                item.target = target
+                menu.addItem(item)
+            }
         }
         // popUp blocks until the menu closes, so the targets stay alive long enough.
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
