@@ -57,6 +57,14 @@ final class AppSettings: ObservableObject {
         static var isAvailable: Bool { if #available(macOS 26, *) { true } else { false } }
     }
 
+    /// How much of the open notch is glass, as iOS lets you choose: never by frosting it, only by
+    /// how far the black reaches, how dark the shade over the glass is and how deep its rim bends.
+    enum GlassLevel: String, CaseIterable, Identifiable {
+        case tinted, balanced, clear
+        var id: String { rawValue }
+        var label: String { rawValue.capitalized }
+    }
+
     private let defaults = UserDefaults.standard
 
     // General
@@ -75,6 +83,7 @@ final class AppSettings: ObservableObject {
     @Published var animationStyle: AnimationStyle { didSet { defaults.set(animationStyle.rawValue, forKey: "animationStyle") } }
     @Published var showShadow: Bool { didSet { defaults.set(showShadow, forKey: "showShadow") } }
     @Published var notchMaterial: NotchMaterial { didSet { defaults.set(notchMaterial.rawValue, forKey: "notchMaterial") } }
+    @Published var glassLevel: GlassLevel { didSet { defaults.set(glassLevel.rawValue, forKey: "glassLevel") } }
     /// Glass only where the system can draw it.
     var usesGlass: Bool { notchMaterial == .glass && NotchMaterial.isAvailable }
     @Published var haptics: Bool { didSet { defaults.set(haptics, forKey: "haptics") } }
@@ -266,6 +275,7 @@ final class AppSettings: ObservableObject {
             "showShadow": true,
             "openTo": "ask",
             "notchMaterial": NotchMaterial.glass.rawValue,
+            "glassLevel": GlassLevel.balanced.rawValue,
             "haptics": true,
             "musicEnabled": false,
             "musicLiveActivity": false,
@@ -368,6 +378,7 @@ final class AppSettings: ObservableObject {
         showShadow = defaults.bool(forKey: "showShadow")
         openTo = defaults.string(forKey: "openTo") ?? "ask"
         notchMaterial = NotchMaterial(rawValue: defaults.string(forKey: "notchMaterial") ?? "") ?? .glass
+        glassLevel = GlassLevel(rawValue: defaults.string(forKey: "glassLevel") ?? "") ?? .balanced
         haptics = defaults.bool(forKey: "haptics")
         glanceDensity = GlanceDensity(rawValue: defaults.string(forKey: "glanceDensity") ?? "") ?? .regular
         alertLevel = AlertLevel(rawValue: defaults.string(forKey: "alertLevel") ?? "") ?? .all

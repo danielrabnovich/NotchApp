@@ -395,6 +395,15 @@ private struct AppearancePane: View {
                         }
                     }
                     .padding(.vertical, 4)
+                    if s.notchMaterial == .glass {
+                        Picker(selection: $s.glassLevel) {
+                            ForEach(AppSettings.GlassLevel.allCases) { Text($0.label).tag($0) }
+                        } label: {
+                            RowLabel(title: "Glass", subtitle: s.glassLevel == .tinted ? "More black, a gentler bend at the edge."
+                                     : s.glassLevel == .clear ? "Less black, a deeper bend at the edge." : "Black melting into glass, evenly.")
+                        }
+                        .pickerStyle(.segmented)
+                    }
                 } header: {
                     Text("Open notch")
                 }

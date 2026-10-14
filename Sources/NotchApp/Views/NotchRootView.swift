@@ -25,7 +25,8 @@ struct NotchRootView: View {
         let extended = !vm.isOpen && vm.shapeSize.height > vm.notchSize.height + 4
         let glass = settings.usesGlass && (vm.isOpen ? vm.overlay != .teleprompter : extended)
         // The black part, as a fraction of the height: two thirds open, the notch's own height closed.
-        let solid = vm.isOpen ? 0.62 : min(0.9, (vm.notchSize.height + 2) / max(vm.shapeSize.height, 1))
+        let look = DynamicGlass.Look(settings.glassLevel)
+        let solid = vm.isOpen ? look.solid : min(0.9, (vm.notchSize.height + 2) / max(vm.shapeSize.height, 1))
         // With glass, the bottom corners are true quarter circles: the glass is drawn with those.
         let shape = NotchShape(topRadius: vm.topRadius, bottomRadius: vm.bottomRadius,
                                roundness: vm.isOpen || glass ? NotchShape.circle : 1.0 / 3)
@@ -83,7 +84,7 @@ struct NotchRootView: View {
             // drift apart; it stays in place whenever glass is on (fading between black and glass)
             // so it takes the same spring as the content instead of appearing at its final size.
             if settings.usesGlass {
-                NotchSurface(shape: shape, size: vm.shapeSize, glass: glass ? 1 : 0, solid: solid, settled: vm.isSettled)
+                NotchSurface(shape: shape, size: vm.shapeSize, glass: glass ? 1 : 0, solid: solid, look: look, settled: vm.isSettled)
                     .allowsHitTesting(false)
             }
             notch
@@ -99,16 +100,55 @@ struct NotchRootView: View {
 /// Black at the notch, melting into glass: solid through the top two thirds, then the bottom
 /// third Liquid Glass (the desktop shows through, bent at the rim), with a light along its edge.
 enum DynamicGlass {
+    /// One level of glass. The blur stays the same for all of them: clear glass, never frosted.
+    struct Look: Equatable {
+        /// How far down the open notch stays black (a fraction of its height).
+        var solid: CGFloat
+        /// The shade over the glass, a third and two thirds of the way down it and at the rim.
+        var shade: (CGFloat, CGFloat, CGFloat)
+        /// How far the rim bends what's behind, and over how many points inside the edge.
+        var refraction: Double
+        var refractionHeight: Double
+        /// The light caught along the top of the rim, and the fine line along its edge.
+        var highlight: Double
+        var rim: CGFloat
+
+        init(_ level: AppSettings.GlassLevel) {
+            switch level {
+            case .tinted:
+                self.init(solid: 0.7, shade: (0.84, 0.77, 0.68), refraction: -45, refractionHeight: 16, highlight: 0.3, rim: 0.26)
+            case .balanced:
+                self.init(solid: 0.62, shade: (0.72, 0.6, 0.46), refraction: -60, refractionHeight: 20, highlight: 0.4, rim: 0.32)
+            case .clear:
+                self.init(solid: 0.54, shade: (0.56, 0.4, 0.26), refraction: -80, refractionHeight: 28, highlight: 0.5, rim: 0.42)
+            }
+        }
+
+        init(solid: CGFloat, shade: (CGFloat, CGFloat, CGFloat), refraction: Double, refractionHeight: Double, highlight: Double, rim: CGFloat) {
+            self.solid = solid
+            self.shade = shade
+            self.refraction = refraction
+            self.refractionHeight = refractionHeight
+            self.highlight = highlight
+            self.rim = rim
+        }
+
+        static func == (a: Look, b: Look) -> Bool {
+            a.solid == b.solid && a.shade == b.shade && a.refraction == b.refraction
+                && a.refractionHeight == b.refractionHeight && a.highlight == b.highlight && a.rim == b.rim
+        }
+    }
+
     /// Dark enough to read white text over anything, clearing toward the rim so the bend shows.
     /// `solid` is how far down (a fraction of the height) it stays black.
-    static func shade(solid: CGFloat) -> [(alpha: CGFloat, location: CGFloat)] {
+    static func shade(solid: CGFloat, look: Look) -> [(alpha: CGFloat, location: CGFloat)] {
         let rest = 1 - solid
-        return [(1, 0), (1, solid), (0.72, solid + rest * 0.32), (0.6, solid + rest * 0.68), (0.46, 1)]
+        return [(1, 0), (1, solid), (look.shade.0, solid + rest * 0.32), (look.shade.1, solid + rest * 0.68), (look.shade.2, 1)]
     }
 
     /// Nothing along the black (it's flush with the screen edge), a fine highlight on the glass.
-    static func rim(solid: CGFloat) -> [(alpha: CGFloat, location: CGFloat)] {
-        [(0, 0), (0, solid), (0.32, 1)]
+    static func rim(solid: CGFloat, look: Look) -> [(alpha: CGFloat, location: CGFloat)] {
+        [(0, 0), (0, solid), (look.rim, 1)]
     }
 }
 
@@ -122,6 +162,7 @@ private struct NotchSurface: View, Animatable {
     /// 0 black, 1 glass; fades with the shape's own spring.
     var glass: Double
     var solid: CGFloat
+    let look: DynamicGlass.Look
     /// Open and still: the one time the window may show past the shape (the black notch's shadow).
     let settled: Bool
 
@@ -137,7 +178,7 @@ private struct NotchSurface: View, Animatable {
     }
 
     var body: some View {
-        Layers(shape: shape, size: size, glass: glass, solid: solid, settled: settled)
+        Layers(shape: shape, size: size, glass: glass, solid: solid, look: look, settled: settled)
     }
 
     private struct Layers: NSViewRepresentable {
@@ -145,18 +186,19 @@ private struct NotchSurface: View, Animatable {
         let size: CGSize
         let glass: Double
         let solid: CGFloat
+        let look: DynamicGlass.Look
         let settled: Bool
 
         func makeNSView(context: Context) -> SurfaceView { SurfaceView() }
 
         func updateNSView(_ view: SurfaceView, context: Context) {
-            view.state = (shape, size, glass, solid, settled)
+            view.state = (shape, size, glass, solid, look, settled)
             view.relayout()
         }
     }
 
     final class SurfaceView: NSView {
-        var state: (shape: NotchShape, size: CGSize, glass: Double, solid: CGFloat, settled: Bool)?
+        var state: (shape: NotchShape, size: CGSize, glass: Double, solid: CGFloat, look: DynamicGlass.Look, settled: Bool)?
         private let root = CALayer()
         private let glassLayer = CALayer()
         private let clip = CALayer()
@@ -219,7 +261,7 @@ private struct NotchSurface: View, Animatable {
 
         /// Cuts every layer to the notch as it is now: centred, from the top of the window.
         func relayout() {
-            guard let (shape, size, glass, solid, settled) = state, bounds.width > 0, size.width > 0, size.height > 0 else { return }
+            guard let (shape, size, glass, solid, look, settled) = state, bounds.width > 0, size.width > 0, size.height > 0 else { return }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             defer { CATransaction.commit() }
@@ -253,8 +295,8 @@ private struct NotchSurface: View, Animatable {
             // The shade and rim gradients run down the shape: from the top of the window (1 in
             // unit space, y up) to the shape's bottom edge.
             let bottom = 1 - size.height / H
-            for (layer, mask, stops) in [(shade, shadeMask, DynamicGlass.shade(solid: solid)),
-                                         (rim, rimMask, DynamicGlass.rim(solid: solid))] {
+            for (layer, mask, stops) in [(shade, shadeMask, DynamicGlass.shade(solid: solid, look: look)),
+                                         (rim, rimMask, DynamicGlass.rim(solid: solid, look: look))] {
                 layer.frame = bounds
                 mask.frame = bounds
                 mask.path = path
@@ -277,6 +319,7 @@ private struct NotchSurface: View, Animatable {
             clip.cornerRadius = b
             clip.sublayers?.first?.frame = clip.bounds
             lens.layout(width: clip.bounds.width, height: clip.bounds.height, radius: b)
+            lens.tune(look)
         }
     }
 }
@@ -299,7 +342,25 @@ enum GlassLens {
 
     final class Lens {
         let element: CALayer
-        init(element: CALayer) { self.element = element }
+        private let backdrop: CALayer
+        private let glass: NSObject
+        private var look: DynamicGlass.Look?
+
+        init(element: CALayer, backdrop: CALayer, glass: NSObject) {
+            self.element = element
+            self.backdrop = backdrop
+            self.glass = glass
+        }
+
+        /// The level's bend and highlight; the filter is handed back for them to take effect.
+        func tune(_ look: DynamicGlass.Look) {
+            guard look != self.look else { return }
+            self.look = look
+            glass.setValue(look.refraction, forKey: "inputInnerRefractionAmount")
+            glass.setValue(look.refractionHeight, forKey: "inputInnerRefractionHeight")
+            glass.setValue(look.highlight, forKey: "inputKeyFillHighlightAmount")
+            backdrop.filters = [glass]
+        }
 
         /// The glass's shape: the clip's own rectangle with the same corners, carried well past the
         /// top so only the sides and bottom have a rim.
@@ -323,7 +384,7 @@ enum GlassLens {
         backdrop.addSublayer(field)
         let values: [String: Any] = [
             "inputSourceSublayerName": "@0",
-            // The system's own bend: −60 over the 20 points inside the rim.
+            // The system's own bend (−60 over the 20 points inside the rim) until the level tunes it.
             "inputInnerRefractionAmount": -60, "inputInnerRefractionHeight": 20,
             "inputRefractionDistance0": -1, "inputRefractionDistance1": 0,
             // A breath of blur: clear glass, not frosted, with the page behind just soft enough
@@ -344,6 +405,6 @@ enum GlassLens {
         ]
         for (key, value) in values { glass.setValue(value, forKey: key) }
         backdrop.filters = [glass]
-        return Lens(element: element)
+        return Lens(element: element, backdrop: backdrop, glass: glass)
     }
 }
