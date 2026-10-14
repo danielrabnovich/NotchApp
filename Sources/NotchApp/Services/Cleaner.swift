@@ -130,7 +130,7 @@ final class Cleaner: ObservableObject {
         self.disk = disk
         // A heads-up once a day when space runs low (under 10 GB or 5%).
         let low = disk.available < 10_000_000_000 || Double(disk.available) / Double(max(disk.total, 1)) < 0.05
-        if low, AppSettings.shared.lowDiskAlerts, lowSpaceAlerted.map({ Date().timeIntervalSince($0) > 86_400 }) ?? true {
+        if low, AppSettings.shared.lowDiskAlerts, AppSettings.shared.toolsEnabled, lowSpaceAlerted.map({ Date().timeIntervalSince($0) > 86_400 }) ?? true {
             lowSpaceAlerted = Date()
             ActivityCenter.shared.show(.notice(title: "\(formatBytes(disk.available)) free", detail: "Low disk space · Tools → Cleaner",
                                                icon: "externaldrive.fill.badge.exclamationmark", tone: .warning), for: 6)

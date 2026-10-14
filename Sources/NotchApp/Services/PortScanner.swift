@@ -151,6 +151,7 @@ final class DevServerWatcher {
             guard let server = byProcess.min(by: { $0.port < $1.port }) else { return }
             let folder = Self.workingDirectory(of: server.pid).map { ($0 as NSString).lastPathComponent }
             let url = "http://localhost:" + String(server.port)
+            DebugHooks.log("DevServerWatcher: localhost:\(server.port) is up")
             NotchPresenter.shared.offer(Prompt(icon: "server.rack", tint: .systemGreen,
                                                title: "localhost:" + String(server.port) + " is up",
                                                detail: [server.command, folder].compactMap { $0 }.joined(separator: " · "),

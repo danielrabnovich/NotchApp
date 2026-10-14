@@ -51,10 +51,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.$screenshotSearch.removeDuplicates().sink { on in
             DispatchQueue.main.async { ScreenshotText.shared.apply(on) }
         }.store(in: &cancellables)
-        settings.$devServerAlerts.removeDuplicates().sink { on in
+        // Tools' alerts belong to Tools: with it off, its page (and their switches) is hidden.
+        settings.$devServerAlerts.combineLatest(settings.$toolsEnabled).map { $0 && $1 }.removeDuplicates().sink { on in
             DispatchQueue.main.async { DevServerWatcher.shared.apply(on) }
         }.store(in: &cancellables)
-        settings.$connectionAlerts.removeDuplicates().sink { on in
+        settings.$connectionAlerts.combineLatest(settings.$toolsEnabled).map { $0 && $1 }.removeDuplicates().sink { on in
             DispatchQueue.main.async { ConnectionWatcher.shared.apply(on) }
         }.store(in: &cancellables)
         settings.$agentsEnabled.combineLatest(settings.$agentAlerts, settings.$agentsKeepAwake).sink { _ in
@@ -64,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings.$clipboardHistory.combineLatest(settings.$cleanLinks).sink { history, clean in
             DispatchQueue.main.async { ClipboardHistory.shared.apply(history || clean) }
         }.store(in: &cancellables)
-        settings.$privacyAlerts.removeDuplicates().sink { _ in
+        settings.$privacyAlerts.combineLatest(settings.$toolsEnabled).sink { _ in
             DispatchQueue.main.async { PrivacyMonitor.shared.update() }
         }.store(in: &cancellables)
         settings.$mixerEnabled.removeDuplicates().sink { enabled in

@@ -96,7 +96,7 @@ final class DeviceBatteries: ObservableObject {
         for device in devices {
             guard let level = device.level else { continue }
             if level > 25 { alerted.remove(device.id); continue }
-            guard level <= 20, AppSettings.shared.deviceBatteryAlerts, !alerted.contains(device.id) else { continue }
+            guard level <= 20, AppSettings.shared.deviceBatteryAlerts, AppSettings.shared.toolsEnabled, !alerted.contains(device.id) else { continue }
             alerted.insert(device.id)
             ActivityCenter.shared.show(.notice(title: "\(device.name) · \(level)%", detail: "Battery low", icon: device.icon, tone: .warning), for: 5)
         }
@@ -185,8 +185,11 @@ final class PrivacyMonitor: ObservableObject {
         update()
     }
 
+    /// Mic and camera alerts are one of Tools' switches.
+    private static var alerts: Bool { AppSettings.shared.privacyAlerts && AppSettings.shared.toolsEnabled }
+
     func update() {
-        let enabled = AppSettings.shared.privacyAlerts || liveDemand || meetingDemand
+        let enabled = Self.alerts || liveDemand || meetingDemand
         guard enabled != (timer != nil) else { return }
         timer?.invalidate()
         timer = nil
@@ -207,11 +210,11 @@ final class PrivacyMonitor: ObservableObject {
         let apps = Self.appsUsingMic()
         let mic = !apps.isEmpty
         let camera = Self.anyCameraRunning()
-        if mic && !micInUse, AppSettings.shared.privacyAlerts {
+        if mic && !micInUse, Self.alerts {
             ActivityCenter.shared.show(.notice(title: "Microphone on", detail: apps.first?.name ?? "In use",
                                                icon: "mic.fill", tone: .info), for: 3)
         }
-        if camera && !cameraInUse, AppSettings.shared.privacyAlerts {
+        if camera && !cameraInUse, Self.alerts {
             ActivityCenter.shared.show(.notice(title: "Camera on", detail: "In use", icon: "video.fill", tone: .info), for: 3)
         }
         if mic != micInUse || camera != cameraInUse || apps != micApps {

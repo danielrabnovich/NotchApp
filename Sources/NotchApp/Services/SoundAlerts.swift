@@ -38,6 +38,7 @@ final class SoundAlerts {
     private var cancellables: [Any] = []
 
     func start() {
+        cancellables.append(AppSettings.shared.$toolsEnabled.sink { _ in DispatchQueue.main.async { SoundAlerts.shared.reconcile() } })
         cancellables.append(AppSettings.shared.$soundAlerts.sink { _ in DispatchQueue.main.async { SoundAlerts.shared.reconcile() } })
         cancellables.append(AudioOutputManager.shared.$currentID.sink { _ in DispatchQueue.main.async { SoundAlerts.shared.reconcile() } })
     }
@@ -55,7 +56,7 @@ final class SoundAlerts {
     var debugAnyOutput = false
 
     func reconcile() {
-        let wanted = AppSettings.shared.soundAlerts && (wearingHeadphones || debugAnyOutput)
+        let wanted = AppSettings.shared.soundAlerts && AppSettings.shared.toolsEnabled && (wearingHeadphones || debugAnyOutput)
             && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         if wanted, engine == nil { listen() } else if !wanted, engine != nil { stop() }
     }

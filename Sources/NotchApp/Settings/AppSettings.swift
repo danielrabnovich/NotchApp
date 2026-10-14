@@ -313,7 +313,7 @@ final class AppSettings: ObservableObject {
             "deviceBatteryAlerts": true,
             "privacyAlerts": false,
             "lowDiskAlerts": true,
-            "devServerAlerts": true,
+            "devServerAlerts": false,
             "screenshotSearch": true,
             "speedTestLiveActivity": true,
             "downloadLiveActivity": true,
