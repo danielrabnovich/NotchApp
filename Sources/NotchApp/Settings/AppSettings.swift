@@ -258,9 +258,8 @@ final class AppSettings: ObservableObject {
     @Published var meetingAlerts: Bool { didSet { defaults.set(meetingAlerts, forKey: "meetingAlerts") } }
     @Published var meetingAlertMinutes: Int { didSet { defaults.set(meetingAlertMinutes, forKey: "meetingAlertMinutes") } }
 
-    static let addOnKeys = ["musicEnabled", "musicLiveActivity", "calendarEnabled", "timerEnabled", "mixerEnabled",
-                            "controlsEnabled", "statsEnabled", "cameraMirrorEnabled", "volumeHUD", "brightnessHUD",
-                            "chargingAnimation", "morningBrief"]
+    static let addOnKeys = ["calendarEnabled", "timerEnabled", "mixerEnabled", "controlsEnabled", "statsEnabled",
+                            "cameraMirrorEnabled", "morningBrief"]
 
     private init() {
         defaults.register(defaults: [
@@ -277,12 +276,12 @@ final class AppSettings: ObservableObject {
             "notchMaterial": NotchMaterial.glass.rawValue,
             "glassLevel": GlassLevel.balanced.rawValue,
             "haptics": true,
-            "musicEnabled": false,
-            "musicLiveActivity": false,
+            "musicEnabled": true,
+            "musicLiveActivity": true,
             "showVisualizer": true,
-            "volumeHUD": false,
-            "brightnessHUD": false,
-            "chargingAnimation": false,
+            "volumeHUD": true,
+            "brightnessHUD": true,
+            "chargingAnimation": true,
             "shelfEnabled": true,
             "screenshotCatcher": true,
             "airDropZone": true,
@@ -290,7 +289,7 @@ final class AppSettings: ObservableObject {
             "copyShelfAdds": true,
             "shelfRandomNames": false,
             "cleanLinks": true,
-            "screenshotCleanup": true,
+            "screenshotCleanup": false,
             "shelfExpiry": ShelfExpiry.hour.rawValue,
             "tasksEnabled": true,
             "showTaskCount": true,
@@ -360,8 +359,9 @@ final class AppSettings: ObservableObject {
             "meetingAlerts": true,
             "meetingAlertMinutes": 5,
         ])
-        // NotchApp is lean by default: Search, Shelf and Tasks. Everything else is an add-on in
-        // Settings → Add-ons. Applied once to existing installs too.
+        // NotchApp is lean by default: Search, Shelf and Tasks, with music, volume, brightness and
+        // charging where a notch app is expected to show them (none asks for a new permission).
+        // Everything else is an add-on in Settings → Add-ons. Applied once to existing installs too.
         if !defaults.bool(forKey: "leanDefaultsApplied") {
             for key in Self.addOnKeys { defaults.set(false, forKey: key) }
             defaults.set(true, forKey: "leanDefaultsApplied")

@@ -91,6 +91,8 @@ enum DebugHooks {
             let key = ["notes", "tasks"].contains(p) ? "tasks.pane" : ["network", "vpn", "cleaner", "devices"].contains(p) ? "tools.pane" : "shelf.pane"
             UserDefaults.standard.set(p, forKey: key)
         case "sim": DebugSimulator.run(parts[safe: 1] ?? "", Array(parts.dropFirst(2)))
+        case "appearance": // appearance light|dark|system: this app only, the Mac stays as it is
+            NSApp.appearance = ["light": NSAppearance(named: .aqua), "dark": NSAppearance(named: .darkAqua)][parts[safe: 1] ?? ""] ?? nil
         case "spane": // spane <pane raw value…>: opens Settings on a pane at 900×1100
             SettingsWindowController.shared.show(pane: SettingsPane(rawValue: parts.dropFirst().joined(separator: " ")))
             SettingsWindowController.shared.debugResize(width: 900, height: 1100)

@@ -2189,7 +2189,7 @@ private struct KeyRecorder: View {
                     } else if let combo {
                         Text(combo.display)
                     } else {
-                        Text("None").foregroundStyle(.tertiary)
+                        Text("None").foregroundStyle(.secondary)
                     }
                 }
                 .font(.system(size: 12, weight: .medium, design: .rounded))
