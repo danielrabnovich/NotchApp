@@ -85,6 +85,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# The linker leaves a map back to this Mac's build folders (for debuggers here); copies elsewhere
+# would carry its paths, user name included.
+strip -S "$APP/Contents/MacOS/$APP_NAME"
+
 echo "▸ Signing…"
 # A stable identity keeps macOS privacy grants (Accessibility, Calendar…) across rebuilds;
 # ad-hoc signatures change every build, so macOS asks again each time.

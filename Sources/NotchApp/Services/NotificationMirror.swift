@@ -129,13 +129,18 @@ final class NotificationMirror: ObservableObject {
         let windows: [AXUIElement] = AXReader.value(app, kAXWindowsAttribute) ?? []
         var live: [String: AXUIElement] = [:]
         var fresh: [(AXUIElement, Item)] = []
+        var paneOpen = false
         for window in windows {
+            // The pane from the right edge lists notifications in the same window, looking just
+            // like banners: they aren't new, and the pane must stay where it is.
+            let pane = Self.isPane(window)
+            paneOpen = paneOpen || pane
             for banner in Self.banners(in: window) {
                 guard let id: String = AXReader.value(banner, kAXIdentifierAttribute) else { continue }
                 live[id] = banner
                 guard !seen.contains(id) else { continue }
                 seen.insert(id)
-                guard let item = Self.read(banner, id: id) else { continue }
+                guard !pane, let item = Self.read(banner, id: id) else { continue }
                 if accepts(item) { fresh.append((banner, item)) } else { foreignIDs.insert(id) }
             }
         }
@@ -153,7 +158,7 @@ final class NotificationMirror: ObservableObject {
         }
         // Out of sight (again, each look: a new banner can bring the window back), unless one up
         // isn't ours to show: then the system shows them all.
-        if !live.isEmpty, foreignIDs.isEmpty { windows.forEach(Self.hide) }
+        if !live.isEmpty, foreignIDs.isEmpty, !paneOpen { windows.forEach(Self.hide) }
         for (_, item) in fresh { show(item) }
     }
 
@@ -184,6 +189,14 @@ final class NotificationMirror: ObservableObject {
         if sub == "AXNotificationCenterBanner" || sub == "AXNotificationCenterAlert" { return [element] }
         let children: [AXUIElement] = AXReader.value(element, kAXChildrenAttribute) ?? []
         return children.flatMap { banners(in: $0, depth: depth + 1) }
+    }
+
+    /// Notification Center's pane is open: its notifications sit in a list (banners don't).
+    private static func isPane(_ element: AXUIElement, depth: Int = 0) -> Bool {
+        guard depth < 6 else { return false }
+        if (AXReader.value(element, kAXIdentifierAttribute) as String?) == "AXNotificationListItems" { return true }
+        let children: [AXUIElement] = AXReader.value(element, kAXChildrenAttribute) ?? []
+        return children.contains { isPane($0, depth: depth + 1) }
     }
 
     /// "Messages, Sam, Are you around later?" with title, subtitle and body as its own texts.
