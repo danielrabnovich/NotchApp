@@ -16,6 +16,8 @@ final class AppIndex: @unchecked Sendable {
     private let lock = NSLock()
     private var apps: [App] = []
     private var loadedAt: Date?
+    private var watchers: [DispatchSourceFileSystemObject] = []
+    private var rescanPending = false
 
     /// Words that mean "launch this app" rather than "find a file about it".
     static let launchPrefixes = ["open ", "launch ", "start ", "run "]
@@ -36,6 +38,44 @@ final class AppIndex: @unchecked Sendable {
         DispatchQueue.global(qos: .utility).async { [self] in
             let found = Self.scan()
             lock.lock(); apps = found; lock.unlock()
+        }
+    }
+
+    /// Rescans whenever an app folder changes (an app installed, moved or removed), and when an
+    /// app starts that isn't in the list yet (one installed somewhere else).
+    func watch() {
+        guard watchers.isEmpty else { return }
+        for root in Self.roots {
+            let fd = open(root, O_EVTONLY)
+            guard fd >= 0 else { continue }
+            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete],
+                                                                   queue: .global(qos: .utility))
+            source.setEventHandler { [weak self] in self?.rescanSoon() }
+            source.setCancelHandler { close(fd) }
+            source.resume()
+            watchers.append(source)
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil,
+                                                          queue: nil) { [weak self] note in
+            guard let self, let url = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleURL,
+                  url.path.hasPrefix("/Applications") || url.path.hasPrefix(FileManager.default.homeDirectoryForCurrentUser.path) else { return }
+            lock.lock(); let known = apps.contains { $0.url.standardizedFileURL == url.standardizedFileURL }; lock.unlock()
+            if !known { rescanSoon() }
+        }
+    }
+
+    /// A moment after the folder changes: an app being copied in lands as its folder first.
+    private func rescanSoon() {
+        lock.lock()
+        let already = rescanPending
+        rescanPending = true
+        lock.unlock()
+        guard !already else { return }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [self] in
+            lock.lock(); rescanPending = false; loadedAt = Date(); lock.unlock()
+            let found = Self.scan()
+            lock.lock(); apps = found; lock.unlock()
+            DebugHooks.log("AppIndex: rescanned, \(found.count) apps")
         }
     }
 
@@ -69,17 +109,35 @@ final class AppIndex: @unchecked Sendable {
         return 0
     }
 
+    private static var roots: [String] {
+        ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities",
+         "/System/Library/CoreServices/Applications", FileManager.default.homeDirectoryForCurrentUser.path + "/Applications"]
+    }
+
+    /// The apps in a folder, and in the folders inside it (suites like Adobe's, Setapp, Chrome's web apps).
+    private static func bundles(in root: String) -> [URL] {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(atPath: root) else { return [] }
+        let base = URL(fileURLWithPath: root)
+        var found: [URL] = []
+        for item in items where !item.hasPrefix(".") {
+            let url = base.appendingPathComponent(item)
+            if item.hasSuffix(".app") { found.append(url); continue }
+            // Utilities is a root of its own; anything else that's a folder gets one look inside.
+            guard url.path != "/Applications/Utilities", url.path != "/System/Applications/Utilities",
+                  (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true,
+                  let inner = try? fm.contentsOfDirectory(atPath: url.path) else { continue }
+            found += inner.filter { $0.hasSuffix(".app") }.map { url.appendingPathComponent($0) }
+        }
+        return found
+    }
+
     private static func scan() -> [App] {
         let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser.path
-        let roots = ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities",
-                     "/System/Library/CoreServices/Applications", "\(home)/Applications"]
         var seen = Set<String>()
         var result: [App] = []
         for root in roots {
-            guard let items = try? fm.contentsOfDirectory(atPath: root) else { continue }
-            for item in items where item.hasSuffix(".app") {
-                let url = URL(fileURLWithPath: root).appendingPathComponent(item)
+            for url in bundles(in: root) {
                 let bundle = Bundle(url: url)
                 let name = url.deletingPathExtension().lastPathComponent
                 let aliases = [bundle?.localizedInfoDictionary?["CFBundleDisplayName"], bundle?.infoDictionary?["CFBundleDisplayName"],

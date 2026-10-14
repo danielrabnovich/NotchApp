@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LiveActivities.shared.start()
         AudioSpectrum.shared.start()
         AppIndex.shared.refreshIfNeeded()
+        AppIndex.shared.watch()
         ScratchpadStore.shared.load()
         DownloadsStore.shared.start()
         TaildropService.shared.start()
