@@ -1145,10 +1145,25 @@ private struct ClipCard: View {
     @ViewBuilder private var content: some View {
         switch clip.kind {
         case .text:
-            Text(clip.title)
-                .font(.system(size: 10.5))
-                .foregroundStyle(.white.opacity(0.85))
-                .lineLimit(5)
+            if let rgba = clip.hexColor {
+                // The color itself, with its code on it in black or white, whichever reads.
+                let light = 0.299 * rgba.r + 0.587 * rgba.g + 0.114 * rgba.b > 0.6 && rgba.a > 0.5
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color(.sRGB, red: rgba.r, green: rgba.g, blue: rgba.b, opacity: rgba.a))
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+                    .overlay(alignment: .bottomLeading) {
+                        Text(clip.title.uppercased())
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(light ? Color.black.opacity(0.75) : Color.white.opacity(0.9))
+                            .lineLimit(1)
+                            .padding(6)
+                    }
+            } else {
+                Text(clip.title)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(5)
+            }
         case .link:
             VStack(alignment: .leading, spacing: 2) {
                 Image(systemName: "link").font(.system(size: 10, weight: .semibold)).foregroundStyle(.blue)

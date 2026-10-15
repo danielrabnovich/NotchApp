@@ -45,6 +45,21 @@ final class ClipboardHistory: ObservableObject {
             }
         }
 
+        /// A copied hex color ("#FF5733", "#f53", "#FF573380", or "FF5733" as Figma copies it):
+        /// its components, so the card can show the color itself.
+        var hexColor: (r: Double, g: Double, b: Double, a: Double)? {
+            guard kind == .text, var hex = text?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+            let hashed = hex.hasPrefix("#")
+            if hashed { hex.removeFirst() }
+            // Bare digits need a letter and the full six or eight, so "123456" stays a number.
+            guard hex.allSatisfy(\.isHexDigit), hashed ? [3, 4, 6, 8].contains(hex.count)
+                    : [6, 8].contains(hex.count) && hex.contains(where: \.isLetter) else { return nil }
+            if hex.count <= 4 { hex = hex.map { "\($0)\($0)" }.joined() }
+            guard let v = UInt64(hex, radix: 16) else { return nil }
+            let c = { (shift: UInt64) in Double((v >> shift) & 0xFF) / 255 }
+            return hex.count == 8 ? (c(24), c(16), c(8), c(0)) : (c(16), c(8), c(0), 1)
+        }
+
         var icon: String {
             switch kind {
             case .text: "text.alignleft"
