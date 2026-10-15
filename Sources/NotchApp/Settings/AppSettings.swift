@@ -155,6 +155,7 @@ final class AppSettings: ObservableObject {
     @Published var updateChecksApps: Bool { didSet { defaults.set(updateChecksApps, forKey: "updateChecksApps") } }
     @Published var updateAlerts: Bool { didSet { defaults.set(updateAlerts, forKey: "updateAlerts") } }
     @Published var keepAwakeDisplay: Bool { didSet { defaults.set(keepAwakeDisplay, forKey: "keepAwakeDisplay") } }
+    @Published var keepAwakeLidClosed: Bool { didSet { defaults.set(keepAwakeLidClosed, forKey: "keepAwakeLidClosed") } }
     @Published var keepAwakeBatteryFloor: Int { didSet { defaults.set(keepAwakeBatteryFloor, forKey: "keepAwakeBatteryFloor") } }
     @Published var reverseMouseScroll: Bool { didSet { defaults.set(reverseMouseScroll, forKey: "reverseMouseScroll") } }
     @Published var threeFingerMiddleClick: Bool { didSet { defaults.set(threeFingerMiddleClick, forKey: "threeFingerMiddleClick") } }
@@ -309,6 +310,7 @@ final class AppSettings: ObservableObject {
             "updateChecksApps": true,
             "updateAlerts": true,
             "keepAwakeDisplay": true,
+            "keepAwakeLidClosed": false,
             "keepAwakeBatteryFloor": 20,
             "reverseMouseScroll": false,
             "threeFingerMiddleClick": false,
@@ -415,6 +417,7 @@ final class AppSettings: ObservableObject {
         updateChecksApps = defaults.bool(forKey: "updateChecksApps")
         updateAlerts = defaults.bool(forKey: "updateAlerts")
         keepAwakeDisplay = defaults.bool(forKey: "keepAwakeDisplay")
+        keepAwakeLidClosed = defaults.bool(forKey: "keepAwakeLidClosed")
         keepAwakeBatteryFloor = defaults.integer(forKey: "keepAwakeBatteryFloor")
         reverseMouseScroll = defaults.bool(forKey: "reverseMouseScroll")
         threeFingerMiddleClick = defaults.bool(forKey: "threeFingerMiddleClick")

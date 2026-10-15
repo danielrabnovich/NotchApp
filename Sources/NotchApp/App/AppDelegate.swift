@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DeviceBatteries.shared.start()
         PrivacyMonitor.shared.start()
         AgentMonitor.shared.start()
+        LidSleep.set(disabled: false)   // puts lid sleep back if NotchApp was force quit mid-session
         FrontmostTracker.shared.start()
         AppActions.shared.start()
         ShortcutsApp.shared.refreshIfStale()
@@ -117,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MediaController.shared.stop()
         AudioMixer.shared.stop()
         KeepAwake.shared.stop(announce: false)
+        LidSleep.restoreNow()
     }
 
     // MARK: - Windows

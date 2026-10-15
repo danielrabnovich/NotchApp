@@ -37,9 +37,10 @@ enum Shell {
     }
 
     /// Runs a shell command as root after the standard macOS password prompt.
-    static func runAsAdmin(_ command: String) async -> Bool {
-        let escaped = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        return await run("/usr/bin/osascript", ["-e", "do shell script \"\(escaped)\" with administrator privileges"], timeout: 300).ok
+    static func runAsAdmin(_ command: String, prompt: String? = nil) async -> Bool {
+        func quoted(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\"" }
+        let script = "do shell script \(quoted(command)) with administrator privileges" + (prompt.map { " with prompt \(quoted($0))" } ?? "")
+        return await run("/usr/bin/osascript", ["-e", script], timeout: 300).ok
     }
 }
 

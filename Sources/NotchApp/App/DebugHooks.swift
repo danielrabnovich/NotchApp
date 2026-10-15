@@ -373,6 +373,7 @@ enum DebugHooks {
             if parts[safe: 1] == "list" { UpdateChecker.shared.listOpen = true } else { UpdateChecker.shared.check() }
         case "awake":
             if let m = Int(parts[safe: 1] ?? "") { KeepAwake.shared.start(.minutes(m)) } else { KeepAwake.shared.stop() }
+        case "awakedisplay": AppSettings.shared.keepAwakeDisplay = parts[safe: 1] != "0"   // live, mid-session
         case "appactions": // what the row under the empty bar offers for the app in front
             let a = AppActions.shared
             log("APPACTIONS \(a.context.map { "\($0.appName) \($0.kind) url=\($0.url?.absoluteString ?? "-") file=\($0.filePath ?? "-") sel=\($0.selection?.prefix(40) ?? "-") editable=\($0.selectionEditable)" } ?? "none") → \(a.items.map(\.title))")

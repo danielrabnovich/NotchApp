@@ -408,10 +408,15 @@ private struct KeepAwakeTile: View {
             .help("Click to let your Mac sleep again")
         } else {
             ControlTile(icon: "cup.and.saucer.fill", title: "Keep Awake", on: false) {
-                PopUpMenu.show(KeepAwake.Length.presets.map { length in
-                    (length.label, length == .indefinitely ? "infinity" : "timer", { keepAwake.start(length) })
-                },
-                               title: "Keep awake for")
+                let s = AppSettings.shared
+                PopUpMenu.show(sections: [
+                    KeepAwake.Length.presets.map { length in
+                        (length.label, length == .indefinitely ? "infinity" : "timer", { keepAwake.start(length) })
+                    },
+                    [("Let the display sleep", "display", { s.keepAwakeDisplay.toggle() }),
+                     ("Stay awake with the lid closed", "laptopcomputer", { keepAwake.setLidClosed(!s.keepAwakeLidClosed) })],
+                ], title: "Keep awake for",
+                   checked: ["Let the display sleep": !s.keepAwakeDisplay, "Stay awake with the lid closed": s.keepAwakeLidClosed])
             }
             .help("Keep your Mac awake for…")
         }
@@ -574,7 +579,8 @@ enum PopUpMenu {
     }
 
     /// Groups of items with a separator between them.
-    static func show(sections: [[Item]], title: String? = nil) {
+    /// `checked` puts a checkmark beside the items it names, for options that toggle.
+    static func show(sections: [[Item]], title: String? = nil, checked: [String: Bool] = [:]) {
         let menu = NSMenu()
         if let title {
             let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -590,6 +596,7 @@ enum PopUpMenu {
                 let item = NSMenuItem(title: label, action: #selector(Target.run), keyEquivalent: "")
                 item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
                 item.target = target
+                if checked[label] == true { item.state = .on }
                 menu.addItem(item)
             }
         }

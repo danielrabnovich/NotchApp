@@ -1776,8 +1776,10 @@ private struct ControlsPane: View {
             }
             QuickActionsSection(editor: editor)
             Section("Keep Awake") {
-                ToggleRow("Keep the display on", subtitle: "Off lets the screen sleep while the Mac itself stays awake (downloads, renders).",
-                          isOn: $s.keepAwakeDisplay)
+                ToggleRow("Let the display sleep", subtitle: "The screen turns off as usual while the Mac itself stays awake (agents, downloads, renders).",
+                          isOn: Binding(get: { !s.keepAwakeDisplay }, set: { s.keepAwakeDisplay = !$0 }))
+                ToggleRow("Stay awake with the lid closed", subtitle: "Closing the lid normally sleeps your Mac whatever is running. Asks for your password once.",
+                          isOn: Binding(get: { s.keepAwakeLidClosed }, set: { KeepAwake.shared.setLidClosed($0) }))
                 Picker(selection: $s.keepAwakeBatteryFloor) {
                     Text("Never").tag(0)
                     Text("10%").tag(10)
