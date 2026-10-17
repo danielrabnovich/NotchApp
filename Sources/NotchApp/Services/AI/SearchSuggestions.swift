@@ -171,9 +171,11 @@ final class SearchSuggestions: ObservableObject {
         selected = min(keep, max(items.count - 1, 0))
     }
 
+    /// Stops at the first and last row, as results do (and Spotlight): wrapping round made ↓ at
+    /// the bottom jump back to the top, away from where you were looking.
     func move(_ delta: Int) {
         guard !items.isEmpty else { return }
-        selected = (selected + delta + items.count) % items.count
+        selected = min(max(selected + delta, 0), items.count - 1)
     }
 
     var current: Suggestion? { items.indices.contains(selected) ? items[selected] : nil }

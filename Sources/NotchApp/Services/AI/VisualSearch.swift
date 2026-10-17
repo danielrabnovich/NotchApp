@@ -38,8 +38,14 @@ final class VisualSearch: ObservableObject {
     nonisolated static var isUsable: Bool { lock.withLock { usable } }
 
     /// Loads the model ahead of a search that may need it, off the main thread.
+    /// Never waits: it's called as you type, and the lock is held for the whole load, so waiting
+    /// on it stalled a keystroke by most of a frame's worth of loading (80 ms and more). A busy lock
+    /// means the model is being loaded or used already.
     nonisolated static func prewarm() {
-        guard isUsable, lock.withLock({ loaded == nil }) else { return }
+        guard lock.try() else { return }
+        let needed = usable && loaded == nil
+        lock.unlock()
+        guard needed else { return }
         DispatchQueue.global(qos: .userInitiated).async { _ = model }
     }
 

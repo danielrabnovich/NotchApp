@@ -494,6 +494,13 @@ struct PagerHost: NSViewRepresentable {
         return view
     }
 
+    /// Takes the space it's offered. Left to itself, SwiftUI asked AppKit for the pager's fitting
+    /// size on every layout pass, and AppKit worked it out from every view of every built page:
+    /// about a tenth of the main thread's time while typing in Search.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: PagerContainerView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
     func updateNSView(_ view: PagerContainerView, context: Context) {
         let pager = viewModel.pager
         pager.tabCount = tabs.count
@@ -647,6 +654,11 @@ struct TabPill: NSViewRepresentable {
         pager.pill = view
         view.place(progress: CGFloat(index))
         return view
+    }
+
+    /// The frame SwiftUI gives it (never measured by AppKit).
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: TabPillView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
     }
 
     func updateNSView(_ view: TabPillView, context: Context) {
