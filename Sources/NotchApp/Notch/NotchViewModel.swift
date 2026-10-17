@@ -491,17 +491,18 @@ final class NotchViewModel: ObservableObject {
             withTransaction(instant) { self.tab = tab }
         }, completion: { [weak self] in
             FrameProbe.mark("settled")
-            self?.prepareNeighbors()
+            // Soon after a slide: swiping on through the pages needs the next one built by then.
+            self?.prepareNeighbors(after: 0.15)
         })
     }
 
     /// Builds the pages either side of the current one once nothing is moving. The previous
     /// neighbours stay up until then: tearing them down as a slide settled and building the next
     /// ones as the following slide began were the two hitches in every swipe.
-    private func prepareNeighbors() {
-        // Late enough to stay clear of the first thing done after opening (typing, a click); a
+    private func prepareNeighbors(after delay: Double = 0.5) {
+        // After opening, late enough to stay clear of the first thing done (typing, a click); a
         // swipe before then builds them at once (`ensureNeighbors`).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.isOpen, !self.pager.isMoving else { return }
             guard self.pager.builtCenter != self.tabIndex || self.pager.fromIndex != nil else { return }
             FrameProbe.mark("neighbors")

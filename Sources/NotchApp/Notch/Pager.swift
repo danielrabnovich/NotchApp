@@ -36,6 +36,8 @@ final class PagerState: ObservableObject {
 
     /// The page the layout rests on (the committed tab).
     private(set) var index = 0
+    /// Which way the last slide went (1 right, -1 left), so the page that way is built first.
+    private(set) var lastStep = 1
     var tabCount = 1
     /// One page's width, from the container's layout.
     var width: CGFloat = 600
@@ -101,6 +103,7 @@ final class PagerState: ObservableObject {
         // rather than past every page between (they aren't built: it was a run of blank pages).
         // The pill still travels the whole way, so it's clear where you went.
         let jump = newIndex - old
+        if jump != 0 { lastStep = jump.signum() }
         let span = abs(jump) > 1 ? jump.signum() : jump
         let start = visualOffset + CGFloat(span) * width
         let pillStart = CGFloat(old) - visualOffset / max(width, 1)
@@ -247,8 +250,14 @@ final class PagerContainerView: NSView {
         // Missing pages, nearest first and the next one before the previous one. At rest they're
         // built one per pass, a moment apart: building both neighbours in one go was the last
         // dropped frame left after a slide. A swipe needs them now, so it builds them all.
+        // The way the last slide went is the way the next one most likely goes.
+        let ahead = pager.lastStep
         let missing = wanted.filter { slots[$0.key] == nil }
-            .sorted { (abs($0.value - pager.index), $0.value < pager.index ? 1 : 0) < (abs($1.value - pager.index), $1.value < pager.index ? 1 : 0) }
+            .sorted { a, b in
+                let da = abs(a.value - pager.index), db = abs(b.value - pager.index)
+                if da != db { return da < db }
+                return (a.value - pager.index).signum() == ahead
+            }
             .map(\.key)
         let now = pager.isMoving ? missing : Array(missing.prefix(1))
         var added = false
