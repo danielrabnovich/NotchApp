@@ -64,7 +64,7 @@ struct TasksView: View {
                             }
                         }
                     }
-                    .animation(.spring(response: 0.4, dampingFraction: 0.82), value: store.tasks)
+                    .animation(Motion.pane.animation, value: store.tasks)
                 }
             }
         }
@@ -82,7 +82,7 @@ struct TasksView: View {
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                 .foregroundStyle(.white.opacity(0.45))
                 .contentTransition(.numericText())
-                .animation(.spring(response: 0.3), value: store.openCount)
+                .animation(Motion.small.animation, value: store.openCount)
             Spacer(minLength: 12)
             addField
                 .frame(maxWidth: 260)
@@ -265,7 +265,7 @@ private struct TaskRow: View {
                 }
                 .onEnded { _ in
                     let x = dragX
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { dragX = 0 }
+                    withAnimation(Motion.small.animation) { dragX = 0 }
                     if x >= threshold { toggle() }
                     else if x <= -threshold { store.delete(task.id) }
                 }
@@ -323,15 +323,15 @@ private struct TaskRow: View {
 
     private func toggle() {
         let done = !checked
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { checked = done }
+        withAnimation(Motion.small.animation) { checked = done }
         if done {
             Haptics.level()
             // Let the check animation play before the row slides into "Done".
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { store.setDone(task.id, true) }
+                withAnimation(Motion.pane.animation) { store.setDone(task.id, true) }
             }
         } else {
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { store.setDone(task.id, false) }
+            withAnimation(Motion.pane.animation) { store.setDone(task.id, false) }
         }
     }
 

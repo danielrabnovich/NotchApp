@@ -157,7 +157,7 @@ struct LevelBar: View {
                 Capsule()
                     .fill(color)
                     .frame(width: max(0, min(1, value)) * geo.size.width)
-                    .animation(.spring(response: 0.25, dampingFraction: 0.85), value: value)
+                    .animation(Motion.small.animation, value: value)
             }
         }
         .frame(height: 5)
@@ -306,7 +306,7 @@ struct BatteryGlyph: View {
         }
         .animation(.easeOut(duration: 0.4), value: level)
         .animation(.easeOut(duration: 0.25), value: fillColor)
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: onPower)
+        .animation(Motion.small.animation, value: onPower)
         .accessibilityElement()
         .accessibilityLabel("Battery \(level)%\(charging ? ", charging" : pluggedIn ? ", plugged in" : "")\(lowPower ? ", Low Power Mode" : "")")
     }
@@ -330,7 +330,7 @@ struct NotchIconButtonStyle: ButtonStyle {
                 .frame(width: size, height: size)
                 .background(Circle().fill(.white.opacity(configuration.isPressed ? 0.22 : hovering ? 0.12 : 0)))
                 .scaleEffect(configuration.isPressed ? 0.9 : 1)
-                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+                .animation(Motion.small.animation, value: configuration.isPressed)
                 .animation(.easeOut(duration: 0.15), value: hovering)
                 .contentShape(Circle())
                 .onHover { hovering = $0 }
@@ -619,7 +619,7 @@ struct NotchPillButtonStyle: ButtonStyle {
                 .frame(height: height)
                 .background(Capsule().fill(primary ? .white.opacity(hovering ? 1 : 0.92) : .white.opacity(hovering ? 0.16 : 0.1)))
                 .scaleEffect(configuration.isPressed ? 0.96 : 1)
-                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+                .animation(Motion.small.animation, value: configuration.isPressed)
                 .animation(.easeOut(duration: 0.12), value: hovering)
                 .contentShape(Capsule())
                 .onHover { hovering = $0 }

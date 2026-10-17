@@ -53,7 +53,7 @@ struct MixerView: View {
                                 }
                             }
                             .frame(height: outer.size.height)
-                            .animation(.spring(response: 0.35, dampingFraction: 0.82), value: mixer.apps.map(\.id))
+                            .animation(Motion.small.animation, value: mixer.apps.map(\.id))
                             .background(GeometryReader { inner in
                                 Color.clear
                                     .onAppear { overflows = inner.size.width > outer.size.width + 1 }

@@ -51,7 +51,7 @@ struct StatsView: View {
     private func toggle(_ kind: StatKind?) {
         let next = kind == expanded ? nil : kind
         let wasListing = expanded?.listsApps == true
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) { expanded = next }
+        withAnimation(Motion.pane.animation) { expanded = next }
         let isListing = next?.listsApps == true
         if isListing && !wasListing { monitor.detailAppeared() }
         if wasListing && !isListing { monitor.detailDisappeared() }

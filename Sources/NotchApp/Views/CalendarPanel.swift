@@ -214,7 +214,7 @@ private struct TodayTaskRow: View {
     var body: some View {
         HStack(spacing: 7) {
             Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { tasks.setDone(task.id, true) }
+                withAnimation(Motion.small.animation) { tasks.setDone(task.id, true) }
             } label: {
                 Image(systemName: "circle")
                     .font(.system(size: 12))

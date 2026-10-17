@@ -50,6 +50,7 @@ final class NotchWindowController {
         }
         panel.onCancel = { [weak vm] in vm?.backOut() }
         panel.onTypeAhead = { [weak vm] event in vm?.keepTypeAhead(event) ?? false }
+        panel.onStepTab = { [weak vm] step in vm?.step(step) ?? false }
 
         // A right-click menu holds the notch still: it mustn't close (or change) while the pointer
         // is out over the menu, and when the menu goes, it's as if the pointer had just moved.

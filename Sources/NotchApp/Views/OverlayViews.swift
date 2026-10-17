@@ -86,7 +86,7 @@ private struct BriefView: View {
                             .frame(height: 24)
                             .opacity(appeared ? 1 : 0)
                             .offset(y: appeared ? 0 : 6)
-                            .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(0.08 * Double(i) + 0.15), value: appeared)
+                            .animation(Motion.pane.animation.delay(0.08 * Double(i) + 0.15), value: appeared)
                         }
                     }
                 }

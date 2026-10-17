@@ -104,7 +104,7 @@ struct ShelfView: View {
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showingClipboard && !drag.active)
+        .animation(Motion.small.animation, value: showingClipboard && !drag.active)
     }
 
     private var header: some View {
@@ -155,7 +155,7 @@ struct ShelfView: View {
                 // Like the clipboard: Clear keeps pinned files; with only pinned ones left it clears those.
                 let quick = shelf.stack
                 Button(quick.isEmpty ? "Clear All" : "Clear") {
-                    withAnimation(.spring(response: 0.3)) { quick.isEmpty ? shelf.clear() : shelf.remove(quick) }
+                    withAnimation(Motion.small.animation) { quick.isEmpty ? shelf.clear() : shelf.remove(quick) }
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 11, weight: .medium))
@@ -224,7 +224,7 @@ struct ShelfView: View {
             }
             headerButton("Zip") { shelf.compress(picked) }
             headerButton("AirDrop") { ShelfStore.airDrop(urls) }
-            headerButton("Remove") { withAnimation(.spring(response: 0.3)) { shelf.remove(picked) } }
+            headerButton("Remove") { withAnimation(Motion.small.animation) { shelf.remove(picked) } }
             headerButton("Done") { withAnimation(.easeOut(duration: 0.12)) { shelf.selection = [] } }
         }
         .font(.system(size: 11, weight: .medium))
@@ -299,7 +299,7 @@ private struct TileStrip<Tile: View>: View {
                                 .transition(.scale(scale: 0.6).combined(with: .opacity))
                         }
                     }
-                    .animation(.spring(response: 0.35, dampingFraction: 0.75), value: items.map(\.id))
+                    .animation(Motion.small.animation, value: items.map(\.id))
                     .background(GeometryReader { inner in
                         Color.clear
                             .onAppear { overflows = inner.size.width > outer.size.width + 1 }
@@ -400,13 +400,13 @@ private struct TileStrip<Tile: View>: View {
             let ids = Set(group.map(\.id))
             let last = live.lastIndex { ids.contains($0.id) } ?? 0
             let after = live[(last + 1)...].first { !ids.contains($0.id) } ?? live[..<last].last { !ids.contains($0.id) }
-            withAnimation(.spring(response: 0.3)) { shelf.remove(group) }
+            withAnimation(Motion.small.animation) { shelf.remove(group) }
             if let after { shelf.pick(after, extending: false) }
             highlight = after?.id
         case .pin:
             guard kind == .shelf else { NSSound.beep(); return }
             let pin = !group.allSatisfy(\.pinned)
-            withAnimation(.spring(response: 0.3)) { group.forEach { shelf.setPinned($0, pin) } }
+            withAnimation(Motion.small.animation) { group.forEach { shelf.setPinned($0, pin) } }
         case .quickPaste:
             break
         }
@@ -509,7 +509,7 @@ private struct ShelfTile: View {
         }
         .overlay(alignment: .topTrailing) {
             if hovering && kind == .shelf && shelf.selection.count < 2 {
-                Button { withAnimation(.spring(response: 0.3)) { ShelfStore.shared.remove(item) } } label: {
+                Button { withAnimation(Motion.small.animation) { ShelfStore.shared.remove(item) } } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 14))
                         .symbolRenderingMode(.palette)
@@ -612,7 +612,7 @@ private struct ShelfFileMenu: View {
         Divider()
         if kind == .shelf {
             MenuItem(many ? "Remove \(targets.count) from Shelf" : "Remove from Shelf", "xmark.circle") {
-                withAnimation(.spring(response: 0.3)) { ShelfStore.shared.remove(targets) }
+                withAnimation(Motion.small.animation) { ShelfStore.shared.remove(targets) }
             }
             MenuItem("Move to Trash", "trash", role: .destructive) { ShelfStore.shared.trash(targets) }
         } else {
@@ -727,7 +727,7 @@ private struct SendZone<Icon: View>: View {
                                     style: StrokeStyle(lineWidth: targeted ? 1.5 : 1, dash: targeted ? [] : [4, 3])))
         .shadow(color: accent.opacity(targeted ? 0.4 : 0), radius: 12)
         .scaleEffect(targeted ? 1.04 : 1)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: targeted)
+        .animation(Motion.small.animation, value: targeted)
         .animation(.easeOut(duration: 0.15), value: hovering)
         .animation(.easeOut(duration: 0.2), value: drag.active)
         .contentShape(shape)
@@ -1054,7 +1054,7 @@ private struct ClipCard: View {
 
     private func run(_ suggestion: ClipAction) {
         guard let message = suggestion.run() else { return }
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { flash = message }
+        withAnimation(Motion.small.animation) { flash = message }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
             withAnimation(.easeOut(duration: 0.25)) { if flash == message { flash = nil } }
         }
@@ -1590,7 +1590,7 @@ private struct FileFan: View {
                     .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 16)
                     .background(Capsule().fill(.white.opacity(0.9)))
             }
-            .animation(.spring(response: 0.32, dampingFraction: 0.72), value: spread)
+            .animation(Motion.small.animation, value: spread)
         }
     }
 }

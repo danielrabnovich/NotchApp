@@ -411,6 +411,7 @@ final class NotchViewModel: ObservableObject {
         pager.builtCenter = nil
         pager.fromIndex = nil
         pager.reset(to: tabIndex)
+        tabFlash = nil
         withAnimation(AppSettings.shared.closeAnimation) {
             isOpen = false
             isDragActive = false
@@ -435,6 +436,26 @@ final class NotchViewModel: ObservableObject {
             close()
         }
     }
+
+    /// The tab before (-1) or after (1), from the keyboard. At either end it stays put, as a swipe
+    /// does. Returns whether the key was for this (the tabs are showing).
+    func step(_ step: Int) -> Bool {
+        guard isOpen, overlay == nil, !mirror, !isDragActive else { return false }
+        let i = tabIndex + step
+        guard tabs.indices.contains(i) else { return true }
+        select(tabs[i])
+        // Its name, briefly, where the battery is: the icons alone are small to go by.
+        tabFlash = tabs[i]
+        tabFlashWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.tabFlash = nil }
+        tabFlashWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1, execute: work)
+        return true
+    }
+
+    /// The tab just picked from the keyboard, named in the header for a moment.
+    @Published var tabFlash: NotchTab?
+    private var tabFlashWork: DispatchWorkItem?
 
     func select(_ tab: NotchTab) {
         wantsKeyboard = true

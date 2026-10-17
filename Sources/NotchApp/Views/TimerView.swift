@@ -22,7 +22,7 @@ struct TimerView: View {
                 setup
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: store.isActive)
+        .animation(Motion.pane.animation, value: store.isActive)
         .modifier(TabKeyboard(viewModel: viewModel, tab: .timer, handle: handle))
     }
 
@@ -275,7 +275,7 @@ private struct ModeTabs: View {
             ForEach(TimerStore.Mode.allCases) { mode in
                 let selected = mode == selection
                 Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { selection = mode }
+                    withAnimation(Motion.small.animation) { selection = mode }
                 } label: {
                     VStack(spacing: 4) {
                         Text(mode.label)

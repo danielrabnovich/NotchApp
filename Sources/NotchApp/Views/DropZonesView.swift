@@ -119,7 +119,7 @@ struct DropZonesView: View {
     }
 
     private func finish(on tab: NotchTab) {
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
+        withAnimation(Motion.pane.animation) {
             viewModel.isDragActive = false
             viewModel.tab = tab
         }
@@ -181,7 +181,7 @@ private struct DropBin: View {
                 }
             }
             .scaleEffect(targeted ? 1.03 : 1)
-            .animation(.spring(response: 0.28, dampingFraction: 0.7), value: targeted)
+            .animation(Motion.small.animation, value: targeted)
             .onDrop(of: [UTType.item], isTargeted: Binding(get: { targeted }, set: { targeted = $0 && enabled })) { _ in
                 enabled ? onDrop() : false
             }
@@ -218,7 +218,7 @@ private struct DropChip: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
             .strokeBorder(targeted ? tint : .white.opacity(0.16), style: StrokeStyle(lineWidth: targeted ? 1.5 : 1, dash: targeted ? [] : [5, 4])))
         .scaleEffect(targeted ? 1.04 : 1)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: targeted)
+        .animation(Motion.small.animation, value: targeted)
         .onDrop(of: [UTType.item], isTargeted: $targeted) { _ in onDrop() }
         .onChange(of: targeted) { _, over in if over { Haptics.level() } }
     }

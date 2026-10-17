@@ -599,7 +599,7 @@ private struct TaskCheckRow: View {
         let done = tasks.tasks.first { $0.id == task.id }?.isDone ?? false
         HStack(spacing: 10) {
             Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { tasks.setDone(task.id, !done) }
+                withAnimation(Motion.small.animation) { tasks.setDone(task.id, !done) }
             } label: {
                 Image(systemName: done ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 14))
@@ -1115,7 +1115,7 @@ private struct ShelfButton: View {
         let added = shelf.items.contains { $0.url.standardizedFileURL == url.standardizedFileURL }
         Button {
             guard !added else { return }
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { ShelfStore.shared.add([url]) }
+            withAnimation(Motion.small.animation) { ShelfStore.shared.add([url]) }
         } label: {
             HStack(spacing: 4) {
                 if added {
@@ -1384,7 +1384,7 @@ private struct ShelfIconButton: View {
         if visible || added {
             Button {
                 guard !added else { return }
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { add() }
+                withAnimation(Motion.small.animation) { add() }
             } label: {
                 Image(systemName: added ? "checkmark" : "tray.and.arrow.down")
                     .font(.system(size: 10, weight: added ? .bold : .regular))

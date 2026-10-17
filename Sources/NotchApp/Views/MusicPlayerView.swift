@@ -54,7 +54,7 @@ struct MusicPlayerView: View {
             AlbumArtView(image: media.artwork, size: artSize, cornerRadius: 16)
                 .shadow(color: accent.opacity(media.isPlaying ? 0.45 : 0), radius: 14, y: 2)
                 .scaleEffect(media.isPlaying || !media.hasTrack ? 1 : 0.92)
-                .animation(.spring(response: 0.4, dampingFraction: 0.7), value: media.isPlaying)
+                .animation(Motion.pane.animation, value: media.isPlaying)
 
             if let icon = media.appIcon {
                 Image(nsImage: icon)
@@ -191,7 +191,7 @@ struct ScrubBar: View {
                             dragProgress = nil
                         })
                     .onHover { hovering = $0 }
-                    .animation(.spring(response: 0.25, dampingFraction: 0.8), value: active)
+                    .animation(Motion.small.animation, value: active)
                 }
                 .frame(height: 10)
 

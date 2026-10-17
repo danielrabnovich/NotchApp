@@ -49,18 +49,32 @@ struct OpenNotchView: View {
             // where they'd usually appear, are covered), in place of the battery and buttons.
             // The status items stay in place underneath (faded), rather than being taken out and
             // put back, so they come back exactly as they were.
+            // A tab picked from the keyboard shows its name here the same way, briefly.
             let flash = activity.peek.flatMap { $0.kind == .volume || $0.kind == .brightness ? $0 : nil }
+            let tabName = flash == nil ? viewModel.tabFlash : nil
+            let covered = flash != nil || tabName != nil
             ZStack(alignment: .trailing) {
                 statusItems
-                    .opacity(flash == nil ? 1 : 0)
-                    .blur(radius: flash == nil ? 0 : 6)
-                    .allowsHitTesting(flash == nil)
+                    .opacity(covered ? 0 : 1)
+                    .blur(radius: covered ? 6 : 0)
+                    .allowsHitTesting(!covered)
                 if let flash {
                     HeaderFlash(peek: flash)
                         .transition(.blurReplace)
+                } else if let tabName {
+                    HStack(spacing: 6) {
+                        Image(systemName: tabName.icon).font(.system(size: 11, weight: .semibold))
+                        Text(tabName.title).font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(height: 24)
+                    .padding(.trailing, 4)
+                    .id(tabName)
+                    .transition(.blurReplace)
                 }
             }
             .animation(.snappy(duration: 0.25), value: flash == nil)
+            .animation(.snappy(duration: 0.25), value: tabName)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 14)
@@ -138,7 +152,7 @@ private struct HeaderFlash: View {
                     .shadow(color: color.opacity(muted ? 0 : 0.5), radius: 4)
             }
             .frame(width: 110, height: 5)
-            .animation(.spring(response: 0.28, dampingFraction: 0.86), value: fill)
+            .animation(Motion.small.animation, value: fill)
             Text(muted ? "Muted" : "\(Int((level * 100).rounded()))")
                 .font(.system(size: 11, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.white.opacity(muted ? 0.5 : 0.85))
@@ -186,6 +200,7 @@ private struct TabIndicator: View {
                                 .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
+                        .help("\(tab.title)  ·  ⌃Tab or ⌘⇧] for the next tab")
                     }
                 }
             }
@@ -211,7 +226,7 @@ private struct TabIndicator: View {
                 .background(Capsule().fill(.white.opacity(0.9)))
                 .offset(x: 1, y: -3)
                 .contentTransition(.numericText())
-                .animation(.spring(response: 0.3), value: count)
+                .animation(Motion.small.animation, value: count)
         }
     }
 }
@@ -254,7 +269,7 @@ struct HomeView: View {
             if settings.meetingMode, meetings.call != nil { CallBar() }
             content
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: meetings.call != nil)
+        .animation(Motion.pane.animation, value: meetings.call != nil)
     }
 
     private var content: some View {
@@ -289,7 +304,7 @@ struct HomeView: View {
         }
         .onAppear { musicLarge = media.isPlaying }
         .onChange(of: media.isPlaying) { _, playing in
-            if playing, !musicLarge { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { musicLarge = true } }
+            if playing, !musicLarge { withAnimation(Motion.pane.animation) { musicLarge = true } }
         }
     }
 

@@ -49,10 +49,24 @@ final class NotchPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
+    /// Moves to the tab before (-1) or after (1); returns whether the key was taken.
+    var onStepTab: ((Int) -> Bool)?
+
     /// ⌘, opens Settings. The app's menu only handles key equivalents while the app is active, and
     /// this panel deliberately never activates it, so the panel catches it itself.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // The next or previous tab, as in a browser: ⌃Tab and ⌃⇧Tab, or ⌘⇧] and ⌘⇧[. (⌘1–9
+        // are the Shelf's quick paste and Search's actions.)
+        let mods = flags.intersection([.command, .option, .control, .shift])
+        let step: Int? = switch (event.keyCode, mods) {
+        case (48, .control): 1
+        case (48, [.control, .shift]): -1
+        case (30, [.command, .shift]): 1
+        case (33, [.command, .shift]): -1
+        default: nil
+        }
+        if let step, MainActor.assumeIsolated({ onStepTab?(step) }) == true { return true }
         if flags == .command, event.charactersIgnoringModifiers == "," {
             MainActor.assumeIsolated {
                 NotchPresenter.shared.primary?.close()
