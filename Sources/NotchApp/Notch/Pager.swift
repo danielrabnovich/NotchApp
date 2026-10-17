@@ -148,6 +148,8 @@ final class PagerState: ObservableObject {
             pill?.animate(fromProgress: pillStart, motion: motion, velocity: normalized)
         }
         container?.beginMotion()
+        // The edge fade clears over the second half of the slide, gone before the page stops.
+        if !fade { container?.fadeEdgesOut(after: motion.duration * 0.45, duration: motion.duration * 0.4) }
         CATransaction.commit()
     }
 
@@ -365,7 +367,8 @@ final class PagerContainerView: NSView {
     @MainActor func endMotion(animated: Bool = true) {
         updateHidden()
         guard let mask = edgeMask else { return }
-        guard animated else {
+        // Already faded out as the page arrived (`fadeEdgesOut`): nothing left to animate.
+        guard animated, mask.locations != Self.restingStops else {
             layer?.mask = nil
             edgeMask = nil
             return
@@ -380,6 +383,23 @@ final class PagerContainerView: NSView {
         }
         animateStops(to: Self.restingStops)
         CATransaction.commit()
+    }
+
+    /// Clears the edges while a settling page is still arriving, so they're gone as it lands
+    /// rather than a moment after.
+    func fadeEdgesOut(after delay: Double, duration: Double) {
+        guard let mask = edgeMask else { return }
+        // In (if a click started it, from nothing), held, then out: one animation, so the fade-in
+        // isn't cut short.
+        let total = delay + duration
+        let fadeIn = min(0.12, delay)
+        let a = CAKeyframeAnimation(keyPath: "locations")
+        a.values = [(mask.presentation() ?? mask).locations ?? Self.restingStops, Self.movingStops, Self.movingStops, Self.restingStops]
+        a.keyTimes = [0, fadeIn / total, delay / total, 1].map { NSNumber(value: $0) }
+        a.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .linear), CAMediaTimingFunction(name: .easeOut)]
+        a.duration = total
+        mask.locations = Self.restingStops
+        mask.add(a, forKey: "locations")
     }
 
     private func animateStops(to stops: [NSNumber]) {
