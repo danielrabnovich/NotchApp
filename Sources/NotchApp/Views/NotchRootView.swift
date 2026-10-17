@@ -72,10 +72,8 @@ struct NotchRootView: View {
             if !vm.isOpen { vm.open() }
         }
         .contextMenu {
-            MenuItem("Edit Glances…", "capsule.on.rectangle") { SettingsWindowController.shared.show(pane: .live) }
-            MenuItem("Settings…", "gearshape") { SettingsWindowController.shared.show() }
-            Divider()
-            MenuItem("Quit NotchApp", "power") { NSApp.terminate(nil) }
+            // Open on a page (the tab row, the edges): that page's settings first.
+            NotchMenu(page: vm.isOpen && vm.overlay == nil && !vm.mirror ? vm.tab : nil)
         }
 
         ZStack(alignment: .top) {
@@ -94,6 +92,22 @@ struct NotchRootView: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.84), value: vm.openSize)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .environment(\.colorScheme, .dark)
+    }
+}
+
+/// The notch's right-click menu: the page's own settings when one is showing, then Glances,
+/// Settings and Quit.
+struct NotchMenu: View {
+    let page: NotchTab?
+
+    var body: some View {
+        if let page {
+            MenuItem("Edit \(page.title)…", page.icon) { SettingsWindowController.shared.show(pane: page.settingsPane) }
+        }
+        MenuItem("Edit Glances…", "capsule.on.rectangle") { SettingsWindowController.shared.show(pane: .live) }
+        MenuItem("Settings…", "gearshape") { SettingsWindowController.shared.show() }
+        Divider()
+        MenuItem("Quit NotchApp", "power") { NSApp.terminate(nil) }
     }
 }
 

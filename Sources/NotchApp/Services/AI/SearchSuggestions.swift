@@ -115,7 +115,8 @@ final class SearchSuggestions: ObservableObject {
         head += AppActions.shared.matches(q, limit: 2).map { .command($0) }
         // With a model, "plan a trip to Lisbon" or "remind me to … and …" can become a set of actions.
         if AssistantStore.shared.aiAvailable, CommandPlanner.looksLikeRequest(q) { head.append(.plan(q)) }
-        if let answer = QuickAnswers.answer(q) { head.append(.answer(answer)) }
+        let answer = QuickAnswers.answer(q)
+        if let answer { head.append(.answer(answer)) }
         let (appQuery, explicit) = AppIndex.stripLaunchPrefix(q)
         let apps = AppIndex.shared.search(appQuery, limit: explicit ? 3 : 2)
         // A Shortcut whose name starts with what's typed leads, like a strong app match.
@@ -134,7 +135,7 @@ final class SearchSuggestions: ObservableObject {
         set(Array(head.prefix(6)))
 
         // File names, after a short pause so every keystroke doesn't hit Spotlight.
-        guard q.count >= 3, !acts, QuickAnswers.answer(q) == nil else { return }
+        guard q.count >= 3, !acts, answer == nil else { return }
         loadingFiles = true
         publishRows()
         fileTask = Task { [weak self] in
@@ -146,8 +147,20 @@ final class SearchSuggestions: ObservableObject {
             // Screenshots whose text matches, read on this Mac.
             let shots = AppSettings.shared.screenshotSearch ? ScreenshotText.shared.search(q, limit: 2).filter { !files.contains($0) } : []
             self.loadingFiles = false
-            self.set(Array((head + files.map { .file($0) } + shots.map { .file($0) }).prefix(6)))
+            self.set(Self.withFiles(head, files.map { .file($0) } + shots.map { .file($0) }))
         }
+    }
+
+    /// The list with the files that matched. Up to two files always get in: the end of the list
+    /// (menu items, settings, apps that matched less well) gives way for them, but never "Search
+    /// for …". On a common word the rows above used to fill the list, and no file showed at all.
+    static func withFiles(_ head: [Suggestion], _ files: [Suggestion], rows: Int = 6) -> [Suggestion] {
+        guard !files.isEmpty else { return Array(head.prefix(rows)) }
+        var kept = Array(head.prefix(max(0, rows - min(files.count, 2))))
+        if let search = head.first(where: { if case .search = $0 { true } else { false } }), !kept.contains(search), !kept.isEmpty {
+            kept[kept.count - 1] = search
+        }
+        return Array((kept + files).prefix(rows))
     }
 
     /// Re-runs the current query, for results that arrive later (a port lookup).

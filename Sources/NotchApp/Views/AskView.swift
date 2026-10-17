@@ -166,6 +166,7 @@ struct AskView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if copied == a.title { copied = nil } }
         case .app(let app):
             NSWorkspace.shared.openApplication(at: app.url, configuration: .init())
+            AppIndex.shared.noteOpened(app.url)
             finish()
         case .file(let url):
             NSWorkspace.shared.open(url)

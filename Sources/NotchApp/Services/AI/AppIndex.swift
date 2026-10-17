@@ -84,13 +84,51 @@ final class AppIndex: @unchecked Sendable {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard q.count >= 2 else { return [] }
         lock.lock(); let all = apps; lock.unlock()
+        let usage = usageBoosts()
         return all.compactMap { app -> (App, Int)? in
             let score = ([app.name] + app.aliases).map { Self.score($0.lowercased(), q) }.max() ?? 0
-            return score > 0 ? (app, score) : nil
+            // What's opened from here often and lately ranks higher among its matches.
+            return score > 0 ? (app, min(100, score + (usage[app.id] ?? 0))) : nil
         }
         .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.name.count < $1.0.name.count }
         .prefix(limit)
         .map { (app: $0.0, score: $0.1) }
+    }
+
+    // MARK: - What gets opened
+
+    /// Per app (by path): how often it's been opened from search and when last, kept in defaults.
+    private static let usageKey = "appIndex.usage"
+    private var usage: [String: [Double]]?
+
+    /// An app was opened from search: it'll rank a little higher next time.
+    func noteOpened(_ url: URL) {
+        lock.lock(); defer { lock.unlock() }
+        var all = usage ?? (UserDefaults.standard.dictionary(forKey: Self.usageKey) as? [String: [Double]] ?? [:])
+        let old = all[url.path] ?? [0, 0]
+        all[url.path] = [old[0] + 1, Date().timeIntervalSince1970]
+        // Only the 200 most recent are kept.
+        if all.count > 200 {
+            for key in all.sorted(by: { $0.value[1] < $1.value[1] }).prefix(all.count - 200).map(\.key) { all[key] = nil }
+        }
+        usage = all
+        UserDefaults.standard.set(all, forKey: Self.usageKey)
+    }
+
+    /// Up to 15 points per app: more for apps opened often, fading over a month or so unused. Only
+    /// enough to order similar matches and lift a word match ("code") above a weak one, never to
+    /// put a stray letter match over a name that starts with what's typed.
+    private func usageBoosts() -> [String: Int] {
+        lock.lock()
+        if usage == nil { usage = UserDefaults.standard.dictionary(forKey: Self.usageKey) as? [String: [Double]] ?? [:] }
+        let all = usage ?? [:]
+        lock.unlock()
+        let now = Date().timeIntervalSince1970
+        return all.mapValues { entry in
+            let days = max(0, now - (entry.count > 1 ? entry[1] : 0)) / 86_400
+            let fade = pow(0.5, days / 30)
+            return Int((min(15, 5 * log2(1 + (entry.first ?? 0))) * fade).rounded())
+        }
     }
 
     private static func score(_ name: String, _ q: String) -> Int {

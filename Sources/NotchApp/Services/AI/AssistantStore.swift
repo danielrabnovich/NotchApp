@@ -405,6 +405,7 @@ final class AssistantStore: ObservableObject {
         let (appName, explicit) = AppIndex.stripLaunchPrefix(trimmed)
         if explicit, let app = AppIndex.shared.search(appName, limit: 1).first, app.score >= 45 {
             NSWorkspace.shared.openApplication(at: app.app.url, configuration: .init())
+            AppIndex.shared.noteOpened(app.app.url)
             return
         }
         // Exact commands ("timer 10m", "volume 40", "event lunch friday 1pm") run instantly, no model needed.

@@ -35,6 +35,23 @@ enum NotchTab: String, CaseIterable, Identifiable {
     }
 }
 
+extension NotchTab {
+    /// Where this page is set up in Settings.
+    var settingsPane: SettingsPane {
+        switch self {
+        case .ask: .assistant
+        case .home, .mixer: .media
+        case .shelf: .shelf
+        case .tasks: .tasks
+        case .timer: .timer
+        case .controls: .controls
+        case .stats: .stats
+        case .tools: .tools
+        case .agents: .agents
+        }
+    }
+}
+
 /// What the collapsed notch is currently showing beside the hardware notch.
 enum CollapsedActivity: Equatable {
     case none

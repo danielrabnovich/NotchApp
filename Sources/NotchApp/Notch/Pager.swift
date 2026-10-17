@@ -478,6 +478,9 @@ struct PagerHost: NSViewRepresentable {
         let page = self.page
         let view = PagerContainerView(pager: pager) { tab in
             AnyView(page(tab)
+                // Pages have their own hosting views, so the notch's menu is added to each, with
+                // the page's settings on top. Things with a menu of their own (a file, a clip) keep it.
+                .contextMenu { NotchMenu(page: tab) }
                 .environment(\.notchPage, tab)
                 .notchEnvironment()
                 .foregroundStyle(.white)
