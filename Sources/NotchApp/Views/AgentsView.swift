@@ -34,13 +34,13 @@ struct AgentsView: View {
             }
             // One height on both panes (and every tab), so the cards below don't shift when switching.
             .notchHeaderRow()
-            Group {
+            PaneSlide(selection: pane, order: AgentsPane.options.map(\.value)) {
                 switch pane {
                 case .sessions:
                     HStack(spacing: 10) {
                         SessionsList()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        TodayCard { pane = .usage }
+                        TodayCard { withAnimation(Motion.pane.animation) { pane = .usage } }
                             .frame(width: AgentsView.cardWidth)
                     }
                 case .usage:

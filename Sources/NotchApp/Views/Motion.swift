@@ -76,6 +76,14 @@ struct Motion {
         }
     }
 
+    /// One pane giving way to another in the same place: the new one eases in from a little way
+    /// toward the side it lies on (`forward`: to the right), the old one fades.
+    static func paneSwap(forward: Bool) -> AnyTransition {
+        if reduced { return .opacity }
+        return .asymmetric(insertion: .offset(x: forward ? 18 : -18).combined(with: .opacity),
+                           removal: .opacity.animation(.easeOut(duration: 0.12)))
+    }
+
     /// A pane or list coming in: from the side it lies on, or only a fade with Reduce Motion.
     static func paneTransition(edge: Edge) -> AnyTransition {
         reduced ? .opacity : .opacity.combined(with: .move(edge: edge))

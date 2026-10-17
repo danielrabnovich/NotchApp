@@ -7,12 +7,21 @@ struct TasksTab: View {
     @AppStorage("tasks.pane") private var pane: TasksPane = .tasks
 
     var body: some View {
-        if settings.notesEnabled && pane == .notes {
-            NotesView(viewModel: viewModel, pane: $pane)
-        } else if pane == .prompter {
-            PrompterSetupView(viewModel: viewModel, pane: $pane)
-        } else {
-            TasksView(viewModel: viewModel, pane: $pane)
+        // Each pane draws its own header (the switcher and what goes with it), so they cross-fade
+        // rather than slide, which would carry the switcher along.
+        ZStack(alignment: .topLeading) {
+            Group {
+                if settings.notesEnabled && pane == .notes {
+                    NotesView(viewModel: viewModel, pane: $pane)
+                } else if pane == .prompter {
+                    PrompterSetupView(viewModel: viewModel, pane: $pane)
+                } else {
+                    TasksView(viewModel: viewModel, pane: $pane)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .id(pane)
+            .transition(.opacity)
         }
     }
 }

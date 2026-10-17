@@ -86,6 +86,8 @@ final class PagerState: ObservableObject {
 
     func beginSwipe() {
         isSwiping = true
+        // A neighbour still waiting its turn to be built is needed now.
+        container?.syncPages()
         container?.beginMotion()
     }
 
@@ -242,13 +244,25 @@ final class PagerContainerView: NSView {
             slot.removeFromSuperview()
             slots[tab] = nil
         }
+        // Missing pages, nearest first and the next one before the previous one. At rest they're
+        // built one per pass, a moment apart: building both neighbours in one go was the last
+        // dropped frame left after a slide. A swipe needs them now, so it builds them all.
+        let missing = wanted.filter { slots[$0.key] == nil }
+            .sorted { (abs($0.value - pager.index), $0.value < pager.index ? 1 : 0) < (abs($1.value - pager.index), $1.value < pager.index ? 1 : 0) }
+            .map(\.key)
+        let now = pager.isMoving ? missing : Array(missing.prefix(1))
         var added = false
-        for tab in wanted.keys where slots[tab] == nil {
+        for tab in now {
             let slot = PageSlotView(host: PagesHostingView(rootView: makePage(tab)))
             slot.frame = bounds
             addSubview(slot)
             slots[tab] = slot
             added = true
+        }
+        if now.count < missing.count {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                MainActor.assumeIsolated { self?.syncPages() }
+            }
         }
         applyLayout()
         // A new page is left showing (off to the side, clipped away) long enough to be drawn

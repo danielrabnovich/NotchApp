@@ -48,40 +48,43 @@ struct ShelfView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
                         header.notchHeaderRow()
-                        if showingClipboard {
-                            ClipboardStrip(viewModel: viewModel, query: $clipQuery, kind: $clipKind)
-                        } else if showingDownloads {
-                            if !videos.jobs.isEmpty {
-                                HStack(spacing: 6) {
-                                    ForEach(videos.jobs.prefix(3)) { VideoJobTile(job: $0) }
-                                    if !downloads.items.isEmpty {
-                                        TileStrip(items: downloads.items, regionID: "downloads", kind: .download, viewModel: viewModel) {
-                                            ShelfTile(item: $0, kind: .download, marks: $1)
+                        // The panes trade places with a little direction (see `PaneSlide`).
+                        PaneSlide(selection: pane, order: ShelfPane.options.map(\.value)) {
+                            if showingClipboard {
+                                ClipboardStrip(viewModel: viewModel, query: $clipQuery, kind: $clipKind)
+                            } else if showingDownloads {
+                                if !videos.jobs.isEmpty {
+                                    HStack(spacing: 6) {
+                                        ForEach(videos.jobs.prefix(3)) { VideoJobTile(job: $0) }
+                                        if !downloads.items.isEmpty {
+                                            TileStrip(items: downloads.items, regionID: "downloads", kind: .download, viewModel: viewModel) {
+                                                ShelfTile(item: $0, kind: .download, marks: $1)
+                                            }
+                                        } else {
+                                            Spacer(minLength: 0)
                                         }
-                                    } else {
-                                        Spacer(minLength: 0)
+                                    }
+                                } else if downloads.items.isEmpty {
+                                    placeholder(icon: "arrow.down.circle", text: "No downloads yet")
+                                } else {
+                                    TileStrip(items: downloads.items, regionID: "downloads", kind: .download, viewModel: viewModel) {
+                                        ShelfTile(item: $0, kind: .download, marks: $1)
                                     }
                                 }
-                            } else if downloads.items.isEmpty {
-                                placeholder(icon: "arrow.down.circle", text: "No downloads yet")
+                            } else if shelf.items.isEmpty && converter.jobs.isEmpty {
+                                emptyState
                             } else {
-                                TileStrip(items: downloads.items, regionID: "downloads", kind: .download, viewModel: viewModel) {
-                                    ShelfTile(item: $0, kind: .download, marks: $1)
+                                HStack(spacing: 6) {
+                                    ForEach(converter.activeBatches.prefix(2)) { ConvertJobTile(batch: $0) }
+                                    // Quick drops first (newest first), then what's pinned to stay.
+                                    TileStrip(items: shelf.shown, regionID: "shelf", kind: .shelf, viewModel: viewModel) {
+                                        ShelfTile(item: $0, kind: .shelf, marks: $1)
+                                    }
+                                    // A click between the files lets go of the picked ones.
+                                    .background(Color.clear.contentShape(Rectangle()).onTapGesture {
+                                        withAnimation(.easeOut(duration: 0.12)) { shelf.selection = [] }
+                                    })
                                 }
-                            }
-                        } else if shelf.items.isEmpty && converter.jobs.isEmpty {
-                            emptyState
-                        } else {
-                            HStack(spacing: 6) {
-                                ForEach(converter.activeBatches.prefix(2)) { ConvertJobTile(batch: $0) }
-                                // Quick drops first (newest first), then what's pinned to stay.
-                                TileStrip(items: shelf.shown, regionID: "shelf", kind: .shelf, viewModel: viewModel) {
-                                    ShelfTile(item: $0, kind: .shelf, marks: $1)
-                                }
-                                // A click between the files lets go of the picked ones.
-                                .background(Color.clear.contentShape(Rectangle()).onTapGesture {
-                                    withAnimation(.easeOut(duration: 0.12)) { shelf.selection = [] }
-                                })
                             }
                         }
                     }

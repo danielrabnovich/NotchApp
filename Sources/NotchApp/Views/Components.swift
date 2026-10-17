@@ -480,23 +480,58 @@ extension View {
 struct PaneSwitcher<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [(value: Value, title: String)]
+    /// A short line under the chosen pane, gliding to the next as it's picked.
+    @Namespace private var underline
 
     var body: some View {
         HStack(spacing: 10) {
             ForEach(options, id: \.value) { option in
                 let selected = option.value == selection
                 Button {
-                    withAnimation(Motion.small.animation) { selection = option.value }
+                    withAnimation(Motion.pane.animation) { selection = option.value }
                 } label: {
                     Text(option.title)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white.opacity(selected ? 0.95 : 0.35))
+                        .overlay(alignment: .bottom) {
+                            if selected {
+                                Capsule()
+                                    .fill(.white.opacity(0.8))
+                                    .frame(width: 12, height: 2)
+                                    .matchedGeometryEffect(id: "underline", in: underline)
+                                    .offset(y: 5)
+                            }
+                        }
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
         .fixedSize()
+    }
+}
+
+/// A page's panes, switched with a little direction: the new one eases in from the side its
+/// title lies on in the switcher while the old one fades (just a fade with Reduce Motion). The
+/// switcher's own animation (`Motion.pane`) carries it.
+struct PaneSlide<Value: Hashable, Content: View>: View {
+    let selection: Value
+    let order: [Value]
+    @ViewBuilder let content: () -> Content
+    /// The pane shown before this change, for the direction (updated once the change is drawn).
+    @State private var last: Value?
+
+    var body: some View {
+        let from = last.flatMap { order.firstIndex(of: $0) } ?? 0
+        let to = order.firstIndex(of: selection) ?? 0
+        ZStack(alignment: .topLeading) {
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .id(selection)
+                .transition(Motion.paneSwap(forward: to >= from))
+        }
+        .onAppear { last = selection }
+        .onChange(of: selection) { _, value in last = value }
     }
 }
 

@@ -23,11 +23,13 @@ struct ToolsView: View {
             // Exactly the room under the switcher, whatever the pane: a pane a few points too tall
             // used to push the whole page up, so the switcher jumped between panes.
             PaneArea {
-                switch pane {
-                case .network: NetworkPane()
-                case .vpn: VPNPane()
-                case .cleaner: CleanerPane()
-                case .devices: DevicesPane()
+                PaneSlide(selection: pane, order: ToolsPane.options.map(\.value)) {
+                    switch pane {
+                    case .network: NetworkPane()
+                    case .vpn: VPNPane()
+                    case .cleaner: CleanerPane()
+                    case .devices: DevicesPane()
+                    }
                 }
             }
         }
