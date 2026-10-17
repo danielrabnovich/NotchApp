@@ -27,9 +27,9 @@ struct OpenNotchView: View {
                 }
                 }
             }
-            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: viewModel.overlay)
-            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: viewModel.mirror)
-            .animation(.spring(response: 0.35, dampingFraction: 0.82), value: viewModel.isDragActive)
+            .animation(Motion.pane.animation, value: viewModel.overlay)
+            .animation(Motion.pane.animation, value: viewModel.mirror)
+            .animation(Motion.pane.animation, value: viewModel.isDragActive)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(.horizontal, 18)
             .padding(.top, 8)
@@ -81,7 +81,7 @@ struct OpenNotchView: View {
                 }
                 if settings.cameraMirrorEnabled {
                     Button {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { viewModel.mirror.toggle() }
+                        withAnimation(Motion.pane.animation) { viewModel.mirror.toggle() }
                     } label: {
                         Image(systemName: viewModel.mirror ? "web.camera.fill" : "web.camera")
                             .font(.system(size: 12))
@@ -169,14 +169,18 @@ private struct TabIndicator: View {
         let buttonWidth = min(40, (available - spacing * CGFloat(max(tabs.count - 1, 0))) / CGFloat(max(tabs.count, 1)))
         if tabs.count > 1 {
             ZStack(alignment: .leading) {
-                TabHighlight(pager: viewModel.pager, index: viewModel.tabIndex, buttonWidth: buttonWidth, spacing: spacing)
+                // The pill and the lit icon inside it, moved by the pager with the pages (Core
+                // Animation, one transaction); the buttons above stay dim, and white over white is white.
+                TabPill(pager: viewModel.pager, icons: tabs.map(\.icon), buttonWidth: buttonWidth, spacing: spacing,
+                        index: viewModel.tabIndex)
+                    .frame(width: buttonWidth * CGFloat(tabs.count) + spacing * CGFloat(tabs.count - 1), height: 22)
 
                 HStack(spacing: spacing) {
-                    ForEach(Array(tabs.enumerated()), id: \.element) { i, tab in
+                    ForEach(tabs) { tab in
                         Button { viewModel.select(tab) } label: {
                             Image(systemName: tab.icon)
                                 .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.white.opacity(i == viewModel.tabIndex ? 1 : 0.45))
+                                .foregroundStyle(.white.opacity(0.45))
                                 .frame(width: buttonWidth, height: 22)
                                 .overlay(alignment: .topTrailing) { badge(for: tab, compact: buttonWidth < 28) }
                                 .contentShape(Capsule())
@@ -212,79 +216,24 @@ private struct TabIndicator: View {
     }
 }
 
-/// The pill behind the selected tab button; slides with the swipe.
-private struct TabHighlight: View {
-    @ObservedObject var pager: PagerState
-    let index: Int
-    let buttonWidth: CGFloat
-    let spacing: CGFloat
-
-    var body: some View {
-        let progress = CGFloat(index) - pager.offset / max(pager.width, 1)
-        Color.clear
-            .notchSurface(Capsule(), active: true)
-            .frame(width: buttonWidth, height: 22)
-            .offset(x: progress * (buttonWidth + spacing))
-    }
-}
-
-/// All tabs laid side by side; the row slides to follow the trackpad.
+/// All tabs laid side by side, moved by the pager (see `PagerState`).
 private struct PagedTabsView: View {
     @ObservedObject var viewModel: NotchViewModel
-    @ObservedObject private var pager: PagerState
-    @EnvironmentObject private var settings: AppSettings
-
-    init(viewModel: NotchViewModel) {
-        self.viewModel = viewModel
-        _pager = ObservedObject(wrappedValue: viewModel.pager)
-    }
 
     var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width
-            let tabs = viewModel.tabs
-            let current = viewModel.tabIndex
-            let index = CGFloat(current)
-            let from = pager.isSettling ? pager.fromIndex : nil
-
-            HStack(spacing: 0) {
-                ForEach(Array(tabs.enumerated()), id: \.element) { i, tab in
-                    // The current tab, its neighbours (built once things are still), and the tab a slide started from.
-                    let near = pager.builtCenter.map { abs(i - $0) <= 1 } ?? false
-                    let visible = i == current || near || i == from
-                    // 0 when centred, 1 when a full page away.
-                    let distance: CGFloat = min(1, abs((CGFloat(i) - index) * w + pager.offset) / max(w, 1))
-                    PageSlot(visible: visible, distance: distance) { page(tab) }
-                        .frame(width: w, height: geo.size.height)
-                }
+        PagerHost(viewModel: viewModel, tabs: viewModel.tabs, index: viewModel.tabIndex) { [viewModel] tab in
+            switch tab {
+            case .home: AnyView(HomeView())
+            case .shelf: AnyView(ShelfView(viewModel: viewModel))
+            case .tasks: AnyView(TasksTab(viewModel: viewModel))
+            case .timer: AnyView(TimerView(viewModel: viewModel))
+            case .mixer: AnyView(MixerView(viewModel: viewModel))
+            case .controls: AnyView(ControlsView(viewModel: viewModel))
+            case .stats: AnyView(StatsView())
+            case .tools: AnyView(ToolsView(viewModel: viewModel))
+            case .agents: AnyView(AgentsView())
+            case .ask: AnyView(AskView(viewModel: viewModel))
             }
-            // The resting position is real layout (so clicks land where things are drawn); the swipe
-            // itself is a render-only transform. Moving the row through layout re-framed every AppKit
-            // control inside on each frame, which dropped about one frame in five.
-            .offset(x: -index * w)
-            .transformEffect(CGAffineTransform(translationX: pager.offset, y: 0))
-            .frame(width: w, height: geo.size.height, alignment: .leading)
-            .clipped()
-            // While pages slide, AppKit would otherwise re-register every hover region and cursor
-            // rect on each frame and sync them with the window server: the bulk of swipe lag.
-            .allowsHitTesting(!pager.isSwiping && !pager.isSettling)
-            .onAppear { pager.width = w }
-            .onChange(of: w) { _, new in pager.width = new }
-        }
-    }
-
-    @ViewBuilder private func page(_ tab: NotchTab) -> some View {
-        switch tab {
-        case .home: HomeView()
-        case .shelf: ShelfView(viewModel: viewModel)
-        case .tasks: TasksTab(viewModel: viewModel)
-        case .timer: TimerView(viewModel: viewModel)
-        case .mixer: MixerView(viewModel: viewModel)
-        case .controls: ControlsView(viewModel: viewModel)
-        case .stats: StatsView()
-        case .tools: ToolsView(viewModel: viewModel)
-        case .agents: AgentsView()
-        case .ask: AskView(viewModel: viewModel)
         }
     }
 }
@@ -351,21 +300,3 @@ struct HomeView: View {
             .padding(.vertical, 6)
     }
 }
-
-/// Hosts one page. The page's own body only re-runs when it's shown or hidden, not when the
-/// pager moves it (the distance only drives cheap scale/opacity effects).
-private struct PageSlot<Content: View>: View {
-    let visible: Bool
-    let distance: CGFloat
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        // Fade only: scaling a page makes SwiftUI resize every scroll view, text field and slider
-        // inside it on each frame (they're AppKit views), which was most of the swipe cost.
-        Group {
-            if visible { content() } else { Color.clear }
-        }
-        .opacity(Double(1 - 0.65 * distance))
-    }
-}
-

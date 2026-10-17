@@ -196,7 +196,7 @@ struct AskView: View {
     /// Holds an AI action in the bar for the user's instructions (right-click "Add Instructions…",
     /// ⌥-click or ⌥⌘1…5).
     private func askInstructions(_ command: Command) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pendingAction = command }
+        withAnimation(Motion.small.animation) { pendingAction = command }
         query = ""
         suggestions.clear()
         viewModel.wantsKeyboard = true
@@ -207,7 +207,7 @@ struct AskView: View {
     private func runPending() {
         guard let command = pendingAction else { return }
         let extra = query
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pendingAction = nil }
+        withAnimation(Motion.small.animation) { pendingAction = nil }
         query = ""
         runAppAction(command.withInstructions(extra))
     }
@@ -376,7 +376,7 @@ struct AskView: View {
                     .transition(.scale(scale: 0.8).combined(with: .opacity))
             } else if let pending = pendingAction {
                 ActionChip(title: pending.title, icon: pending.icon) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pendingAction = nil }
+                    withAnimation(Motion.small.animation) { pendingAction = nil }
                 }
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
             } else if let job = assistant.current, let title = job.actionTitle, query.isEmpty {
@@ -424,7 +424,7 @@ struct AskView: View {
                 }
                 .onExitCommand {
                     if pendingAction != nil {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { pendingAction = nil }
+                        withAnimation(Motion.small.animation) { pendingAction = nil }
                         query = ""
                     } else if QuickLook.shared.isVisible {
                         QuickLook.shared.close()
@@ -476,7 +476,7 @@ struct AskView: View {
         .padding(.horizontal, compact ? 8 : 0)
         .padding(.top, compact ? 7 : 0)
         .animation(.easeOut(duration: 0.18), value: looksFocused)
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: compact)
+        .animation(Motion.pane.animation, value: compact)
         .animation(.easeOut(duration: 0.15), value: query.isEmpty)
         // Only hold the notch open once something's typed, so an auto-focused empty bar
         // doesn't stop it closing when the pointer leaves.

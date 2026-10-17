@@ -96,18 +96,20 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case addOns = "Add-ons"
     case appearance = "Appearance"
     case live = "Glances"
+    // Features in the order of the notch's pages (Search, Home's music and calendar, Shelf, Tasks,
+    // Timer, Controls, Stats, Tools, Agents), then the ones that aren't pages.
     case assistant = "Assistant"
     case media = "Media"
-    case hud = "HUD"
-    case battery = "Battery"
+    case calendar = "Calendar"
     case shelf = "Shelf"
     case tasks = "Tasks"
     case timer = "Timer"
+    case controls = "Controls"
     case stats = "Stats"
     case tools = "Tools"
     case agents = "Agents"
-    case calendar = "Calendar"
-    case controls = "Controls"
+    case hud = "HUD"
+    case battery = "Battery"
     case mouse = "Mouse"
     case updates = "Updates"
     case shortcuts = "Shortcuts"
@@ -412,7 +414,9 @@ private struct AppearancePane: View {
                 Picker(selection: $s.animationStyle) {
                     ForEach(AppSettings.AnimationStyle.allCases) { Text($0.label).tag($0) }
                 } label: {
-                    RowLabel(title: "Animation", subtitle: "How the notch springs open.")
+                    RowLabel(title: "Animation", subtitle: s.animationStyle == .snappy ? "Quick and firm, with hardly any overshoot."
+                             : s.animationStyle == .bouncy ? "A playful spring as the notch opens and pages slide."
+                             : "Gentle springs as the notch opens and pages slide. Reduce Motion in System Settings turns slides into fades.")
                 }
                 .pickerStyle(.segmented)
                 ToggleRow("Shadow when open", subtitle: "A soft shadow under the open notch.", isOn: $s.showShadow)

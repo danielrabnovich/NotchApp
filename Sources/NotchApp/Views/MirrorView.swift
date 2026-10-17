@@ -29,7 +29,7 @@ struct MirrorView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Button {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { viewModel.mirror = false }
+                withAnimation(Motion.pane.animation) { viewModel.mirror = false }
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))

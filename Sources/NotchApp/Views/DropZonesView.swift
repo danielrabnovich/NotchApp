@@ -122,8 +122,9 @@ struct DropZonesView: View {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
             viewModel.isDragActive = false
             viewModel.tab = tab
-            viewModel.pageOffset = 0
         }
+        // The pages are hidden under the bins: they jump to the tab rather than slide.
+        viewModel.pager.reset(to: viewModel.tabIndex)
         Haptics.level()
     }
 }

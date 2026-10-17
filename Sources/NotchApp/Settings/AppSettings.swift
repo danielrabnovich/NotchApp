@@ -43,8 +43,10 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    /// How everything moves: the notch opening, pages sliding, panes and lists. One choice for
+    /// all of it (see `Motion`).
     enum AnimationStyle: String, CaseIterable, Identifiable {
-        case smooth, bouncy
+        case smooth, snappy, bouncy
         var id: String { rawValue }
         var label: String { rawValue.capitalized }
     }
@@ -494,13 +496,8 @@ final class AppSettings: ObservableObject {
         "\(Int((useFahrenheit ? celsius * 9 / 5 + 32 : celsius).rounded()))°"
     }
 
-    var openAnimation: Animation {
-        animationStyle == .bouncy
-            ? .spring(response: 0.42, dampingFraction: 0.68)
-            : .spring(response: 0.42, dampingFraction: 0.82)
-    }
-
-    var closeAnimation: Animation { .spring(response: 0.38, dampingFraction: 0.95) }
+    var openAnimation: Animation { Motion.open.animation }
+    var closeAnimation: Animation { Motion.close.animation }
 }
 
 extension NSColor {

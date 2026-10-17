@@ -236,7 +236,7 @@ struct GlancePeekCard: View {
                     .frame(height: 6)
                     .padding(.horizontal, 10)
                     .offset(y: -2)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: anchorX)
+                    .animation(Motion.small.animation, value: anchorX)
             }
         }
     }

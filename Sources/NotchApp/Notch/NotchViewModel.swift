@@ -85,27 +85,15 @@ final class NotchViewModel: ObservableObject {
     @Published var isDragActive = false
     @Published var dragPreview: DragPreview?
 
-    /// Live horizontal offset while two-finger swiping between tabs.
-    /// Swipe state lives in its own object: it changes every frame of a swipe, and only the
-    /// pager and tab indicator should re-render for it (not every page that observes this model).
+    /// The pages and the tab pill, moved by Core Animation (see `PagerState`). Kept out of the
+    /// published state: a swipe changes it every frame, and nothing in SwiftUI should re-render for it.
     let pager = PagerState()
-    var pageOffset: CGFloat {
-        get { pager.offset }
-        set { pager.offset = newValue }
-    }
-    var isSwiping: Bool {
-        get { pager.isSwiping }
-        set { pager.isSwiping = newValue }
-    }
-    /// A tab change is still animating into place; keep the neighbouring pages rendered.
-    var isSettling: Bool {
-        get { pager.isSettling }
-        set { pager.isSettling = newValue }
-    }
-    var pageWidth: CGFloat {
-        get { pager.width }
-        set { pager.width = newValue }
-    }
+    var isSwiping: Bool { pager.isSwiping }
+    /// A tab change is still animating into place.
+    var isSettling: Bool { pager.isSettling }
+    var pageWidth: CGFloat { pager.width }
+    /// The hosting view the pages are drawn in (their own coordinate space, for scroll regions).
+    weak var pagesHost: NSView?
 
     /// A text field inside the notch has keyboard focus – don't auto-close.
     @Published var isEditing = false
@@ -421,11 +409,12 @@ final class NotchViewModel: ObservableObject {
         AssistantStore.shared.clearContext()
         wantsKeyboard = false
         pager.builtCenter = nil
+        pager.fromIndex = nil
+        pager.reset(to: tabIndex)
         withAnimation(AppSettings.shared.closeAnimation) {
             isOpen = false
             isDragActive = false
             isEditing = false
-            pageOffset = 0
             overlay = nil
             mirror = false
         }
@@ -436,7 +425,7 @@ final class NotchViewModel: ObservableObject {
     func backOut() {
         guard isOpen else { return }
         if overlay != nil || mirror {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            withAnimation(Motion.pane.animation) {
                 overlay = nil
                 mirror = false
             }
@@ -451,31 +440,21 @@ final class NotchViewModel: ObservableObject {
         wantsKeyboard = true
         guard tab != self.tab else { return }
         Haptics.tap()
-        slide(to: tab, animation: .spring(response: 0.42, dampingFraction: 0.84))
+        slide(to: tab, velocity: 0)
     }
 
-    /// Moves to a tab. The page row's resting position switches instantly (it's real layout, and
-    /// animating it would re-frame every AppKit control inside on each frame); the visible slide is
-    /// the render-only swipe offset, set so nothing jumps and then animated back to zero.
-    func slide(to tab: NotchTab, animation: Animation) {
-        let old = tabIndex
-        let new = tabs.firstIndex(of: tab) ?? old
-        pager.fromIndex = old
-        isSettling = true
-        var instant = Transaction()
-        instant.disablesAnimations = true
-        withTransaction(instant) {
-            self.tab = tab
-            pageOffset += CGFloat(new - old) * pageWidth
-            isSwiping = false
-        }
-        withAnimation(animation, completionCriteria: .logicallyComplete) {
-            pageOffset = 0
-        } completion: { [weak self] in
-            self?.isSettling = false
+    /// Moves to a tab. The tab changes at once, with the pages drawn where they were; the pager
+    /// then springs them into place (`velocity` is the finger's, carried into the spring).
+    func slide(to tab: NotchTab, velocity: CGFloat) {
+        let new = tabs.firstIndex(of: tab) ?? tabIndex
+        pager.slide(to: new, velocity: velocity, motion: .page, commit: {
+            var instant = Transaction()
+            instant.disablesAnimations = true
+            withTransaction(instant) { self.tab = tab }
+        }, completion: { [weak self] in
             FrameProbe.mark("settled")
             self?.prepareNeighbors()
-        }
+        })
     }
 
     /// Builds the pages either side of the current one once nothing is moving. The previous
@@ -485,28 +464,19 @@ final class NotchViewModel: ObservableObject {
         // Late enough to stay clear of the first thing done after opening (typing, a click); a
         // swipe before then builds them at once (`ensureNeighbors`).
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            guard let self, self.isOpen, !self.isSettling, !self.isSwiping else { return }
-            guard self.pager.builtCenter != self.tabIndex else { return }
+            guard let self, self.isOpen, !self.pager.isMoving else { return }
+            guard self.pager.builtCenter != self.tabIndex || self.pager.fromIndex != nil else { return }
             FrameProbe.mark("neighbors")
             self.pager.builtCenter = self.tabIndex
+            self.pager.fromIndex = nil
         }
     }
 
-    /// A swipe needs the next page drawn; if the neighbours aren't up yet, build them now.
+    /// A swipe needs the next page drawn. If the neighbours built are another page's (a swipe
+    /// straight after arriving), build this one's now: otherwise the page coming in would be blank
+    /// and pop in once it settled. The page left behind stays up (`fromIndex`) until then.
     func ensureNeighbors() {
-        if pager.builtCenter == nil { pager.builtCenter = tabIndex }
+        if pager.builtCenter != tabIndex { pager.builtCenter = tabIndex }
     }
 }
 
-@MainActor
-final class PagerState: ObservableObject {
-    @Published var offset: CGFloat = 0
-    @Published var isSwiping = false
-    @Published var isSettling = false
-    /// The tab a change started from, kept rendered until the slide settles.
-    var fromIndex: Int?
-    /// The page whose neighbours are built. It only moves while nothing is sliding, so a swipe
-    /// never builds or tears down a page mid-motion (a visible hitch); nil until the notch settles.
-    @Published var builtCenter: Int?
-    var width: CGFloat = 600
-}

@@ -117,7 +117,7 @@ struct TasksView: View {
 
     private var doneHeader: some View {
         Button {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { showDone.toggle() }
+            withAnimation(Motion.pane.animation) { showDone.toggle() }
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "chevron.right")

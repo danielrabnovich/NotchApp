@@ -12,11 +12,11 @@ struct ControlsView: View {
 
     var body: some View {
         if updates.listOpen {
-            UpdatesList(onBack: { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { updates.listOpen = false } })
-                .transition(.opacity.combined(with: .move(edge: .trailing)))
+            UpdatesList(onBack: { withAnimation(Motion.pane.animation) { updates.listOpen = false } })
+                .transition(Motion.paneTransition(edge: .trailing))
         } else if ports.listOpen {
-            PortsList(onBack: { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { ports.listOpen = false } })
-                .transition(.opacity.combined(with: .move(edge: .trailing)))
+            PortsList(onBack: { withAnimation(Motion.pane.animation) { ports.listOpen = false } })
+                .transition(Motion.paneTransition(edge: .trailing))
         } else {
             controlsBody
                 .transition(.opacity)
@@ -33,7 +33,7 @@ struct ControlsView: View {
                 }
                 Spacer(minLength: 0)
                 if settings.updateChecks {
-                    UpdatesCard { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { updates.listOpen = true } }
+                    UpdatesCard { withAnimation(Motion.pane.animation) { updates.listOpen = true } }
                 }
                 if let error = controls.lastError {
                     Text(error)
@@ -181,7 +181,7 @@ private struct ActionTile: View {
         case .ports:
             ControlTile(icon: action.icon, title: "Ports", on: false) {
                 ports.refresh()
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { ports.listOpen = true }
+                withAnimation(Motion.pane.animation) { ports.listOpen = true }
             }
             .help("What's listening on which port")
         case .speedTest:

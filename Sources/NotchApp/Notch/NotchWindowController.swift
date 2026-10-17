@@ -31,39 +31,7 @@ final class NotchWindowController {
                            height: height)
         panel = NotchPanel(contentRect: frame)
 
-        let root = NotchRootView(viewModel: vm)
-            .environmentObject(AppSettings.shared)
-            .environmentObject(MediaController.shared)
-            .environmentObject(ActivityCenter.shared)
-            .environmentObject(BatteryMonitor.shared)
-            .environmentObject(CalendarManager.shared)
-            .environmentObject(ShelfStore.shared)
-            .environmentObject(TaskStore.shared)
-            .environmentObject(AssistantStore.shared)
-            .environmentObject(AudioOutputManager.shared)
-            .environmentObject(SystemMonitor.shared)
-            .environmentObject(TimerStore.shared)
-            .environmentObject(ScratchpadStore.shared)
-            .environmentObject(DownloadsStore.shared)
-            .environmentObject(TaildropService.shared)
-            .environmentObject(ControlsService.shared)
-            .environmentObject(KeepAwake.shared)
-            .environmentObject(UpdateChecker.shared)
-            .environmentObject(AudioMixer.shared)
-            .environmentObject(NetworkMonitor.shared)
-            .environmentObject(SpeedTest.shared)
-            .environmentObject(Cleaner.shared)
-            .environmentObject(AppUninstaller.shared)
-            .environmentObject(DeviceBatteries.shared)
-            .environmentObject(PrivacyMonitor.shared)
-            .environmentObject(ClipboardHistory.shared)
-            .environmentObject(SystemTweaks.shared)
-            .environmentObject(ControlTiles.shared)
-            .environmentObject(PortScanner.shared)
-            .environmentObject(AgentMonitor.shared)
-            .environmentObject(VideoDownloader.shared)
-            .environmentObject(VPNMonitor.shared)
-            .environmentObject(MediaConverter.shared)
+        let root = NotchRootView(viewModel: vm).notchEnvironment()
         let host = FirstMouseHostingView(rootView: AnyView(root))
         host.sizingOptions = []
         host.frame = NSRect(origin: .zero, size: frame.size)
@@ -345,7 +313,9 @@ final class NotchWindowController {
                 if horizontal, !isInHorizontalScrollRegion(e) {
                     swipe.axis = .horizontal
                     viewModel.ensureNeighbors()
-                    viewModel.isSwiping = true
+                    // Caught mid-slide: carry on from where the pages are on screen.
+                    rawOffset = viewModel.isSettling ? viewModel.pager.grab() : 0
+                    viewModel.pager.beginSwipe()
                 } else {
                     swipe.axis = .vertical
                 }
@@ -356,7 +326,7 @@ final class NotchWindowController {
             swipe.velocity = swipe.velocity * 0.6 + (fingerDX / dt) * 0.4
             swipe.lastTime = e.timestamp
             rawOffset += fingerDX
-            viewModel.pageOffset = rubberBanded(rawOffset)
+            viewModel.pager.drag(to: rubberBanded(rawOffset))
             return nil
         }
 
@@ -378,8 +348,8 @@ final class NotchWindowController {
         swipe = SwipeState()
         swipe.axis = .horizontal
         viewModel.ensureNeighbors()
-        viewModel.isSwiping = true
-        rawOffset = 0
+        rawOffset = viewModel.isSettling ? viewModel.pager.grab() : 0
+        viewModel.pager.beginSwipe()
         var step = 0
         Timer.scheduledTimer(withTimeInterval: 1.0 / 120, repeats: true) { [weak self] t in
             MainActor.assumeIsolated {
@@ -388,16 +358,19 @@ final class NotchWindowController {
                 let dx: CGFloat = left ? -9 : 9
                 self.swipe.velocity = dx * 120
                 self.rawOffset += dx
-                self.viewModel.pageOffset = self.rubberBanded(self.rawOffset)
+                self.viewModel.pager.drag(to: self.rubberBanded(self.rawOffset))
                 if step == 30 { t.invalidate(); self.finishSwipe() }
             }
         }
     }
 
     private func isInHorizontalScrollRegion(_ e: NSEvent) -> Bool {
-        guard let host = panel.contentView else { return false }
-        let p = CGPoint(x: e.locationInWindow.x, y: host.bounds.height - e.locationInWindow.y)
-        return viewModel.horizontalScrollRegions.values.contains { $0.contains(p) }
+        // The regions are measured in the page's own hosting view, which covers the pager exactly.
+        guard let host = viewModel.pagesHost else { return false }
+        var p = host.convert(e.locationInWindow, from: nil)
+        if !host.isFlipped { p.y = host.bounds.height - p.y }
+        let prefix = viewModel.tab.rawValue + ":"
+        return viewModel.horizontalScrollRegions.contains { $0.key.hasPrefix(prefix) && $0.value.contains(p) }
     }
 
     /// Resists dragging past the first/last tab, like iOS scroll views.
@@ -418,24 +391,62 @@ final class NotchWindowController {
         let tabs = viewModel.tabs
         var index = viewModel.tabIndex
         let w = viewModel.pageWidth
-        let offset = viewModel.pageOffset
+        let offset = viewModel.pager.offset
+        let velocity = swipe.velocity
         let flick: CGFloat = 450
 
-        if (offset < -w * 0.22 || swipe.velocity < -flick), index < tabs.count - 1 {
+        // Past a fifth of the page, or flicked that way; a flick back the other way keeps the page.
+        if (offset < -w * 0.22 && velocity < flick) || velocity < -flick, index < tabs.count - 1 {
             index += 1
-        } else if (offset > w * 0.22 || swipe.velocity > flick), index > 0 {
+        } else if (offset > w * 0.22 && velocity > -flick) || velocity > flick, index > 0 {
             index -= 1
         }
         let changed = tabs[index] != viewModel.tab
         rawOffset = 0
-
-        // Carry the finger's speed into the snap so it feels continuous.
-        let remaining = changed ? (w - abs(offset)) : abs(offset)
-        let initialVelocity = remaining > 1 ? min(abs(swipe.velocity) / remaining, 12) : 0
-        viewModel.slide(to: tabs[index],
-                        animation: .interpolatingSpring(stiffness: 260, damping: 28, initialVelocity: initialVelocity))
+        // The finger's speed, with its direction, carries into the spring.
+        viewModel.slide(to: tabs[index], velocity: velocity)
         if changed {
             Haptics.align()
         }
+    }
+}
+
+extension View {
+    /// The shared stores every notch view reads. The open notch's pages live in a hosting view of
+    /// their own (the pager), which doesn't inherit them, so both roots take them from here.
+    @MainActor func notchEnvironment() -> some View {
+        self
+            .environmentObject(AppSettings.shared)
+            .environmentObject(MediaController.shared)
+            .environmentObject(ActivityCenter.shared)
+            .environmentObject(BatteryMonitor.shared)
+            .environmentObject(CalendarManager.shared)
+            .environmentObject(ShelfStore.shared)
+            .environmentObject(TaskStore.shared)
+            .environmentObject(AssistantStore.shared)
+            .environmentObject(AudioOutputManager.shared)
+            .environmentObject(SystemMonitor.shared)
+            .environmentObject(TimerStore.shared)
+            .environmentObject(ScratchpadStore.shared)
+            .environmentObject(DownloadsStore.shared)
+            .environmentObject(TaildropService.shared)
+            .environmentObject(ControlsService.shared)
+            .environmentObject(KeepAwake.shared)
+            .environmentObject(UpdateChecker.shared)
+            .environmentObject(AudioMixer.shared)
+            .environmentObject(NetworkMonitor.shared)
+            .environmentObject(SpeedTest.shared)
+            .environmentObject(Cleaner.shared)
+            .environmentObject(AppUninstaller.shared)
+            .environmentObject(DeviceBatteries.shared)
+            .environmentObject(PrivacyMonitor.shared)
+            .environmentObject(ClipboardHistory.shared)
+            .environmentObject(SystemTweaks.shared)
+            .environmentObject(ControlTiles.shared)
+            .environmentObject(PortScanner.shared)
+            .environmentObject(AgentMonitor.shared)
+            .environmentObject(VideoDownloader.shared)
+            .environmentObject(VPNMonitor.shared)
+            .environmentObject(MediaConverter.shared)
     }
 }

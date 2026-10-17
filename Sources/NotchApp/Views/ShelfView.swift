@@ -88,8 +88,8 @@ struct ShelfView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: taildrop.pending.isEmpty)
-            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: shelf.convertPicker)
+            .animation(Motion.pane.animation, value: taildrop.pending.isEmpty)
+            .animation(Motion.pane.animation, value: shelf.convertPicker)
 
             // Beside the clipboard they're only drop targets, so they wait for something to be dragged.
             if (settings.airDropZone || showsTaildrop) && (!showingClipboard || drag.active) {

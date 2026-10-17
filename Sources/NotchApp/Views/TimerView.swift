@@ -422,7 +422,7 @@ private struct MinuteRuler: View {
                             .frame(width: pitch)
                             .id(m)
                             .contentShape(Rectangle())
-                            .onTapGesture { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { scrolled = m } }
+                            .onTapGesture { withAnimation(Motion.pane.animation) { scrolled = m } }
                     }
                 }
                 .scrollTargetLayout()
@@ -457,7 +457,7 @@ private struct MinuteRuler: View {
             if let new, new != value { value = new }
         }
         .onChange(of: value) { _, new in
-            if scrolled != new { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { scrolled = new } }
+            if scrolled != new { withAnimation(Motion.pane.animation) { scrolled = new } }
         }
     }
 

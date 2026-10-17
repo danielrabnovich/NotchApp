@@ -341,13 +341,27 @@ struct NotchIconButtonStyle: ButtonStyle {
 extension View {
     /// Lets two-finger horizontal scrolls over this view scroll it instead of switching tabs.
     func horizontalScrollRegion(_ id: String, in viewModel: NotchViewModel, active: Bool = true) -> some View {
-        background(GeometryReader { geo in
+        modifier(HorizontalScrollRegion(id: id, viewModel: viewModel, active: active))
+    }
+}
+
+/// Every page is laid out in the same place (the pager moves them), so a region is kept under
+/// its page's name and only counts while that page is the one showing.
+private struct HorizontalScrollRegion: ViewModifier {
+    let id: String
+    let viewModel: NotchViewModel
+    let active: Bool
+    @Environment(\.notchPage) private var page
+
+    func body(content: Content) -> some View {
+        let key = "\(page?.rawValue ?? "-"):\(id)"
+        return content.background(GeometryReader { geo in
             let frame = geo.frame(in: .global)
             Color.clear
-                .onAppear { viewModel.horizontalScrollRegions[id] = active ? frame : nil }
-                .onChange(of: frame) { _, f in viewModel.horizontalScrollRegions[id] = active ? f : nil }
-                .onChange(of: active) { _, a in viewModel.horizontalScrollRegions[id] = a ? frame : nil }
-                .onDisappear { viewModel.horizontalScrollRegions[id] = nil }
+                .onAppear { viewModel.horizontalScrollRegions[key] = active ? frame : nil }
+                .onChange(of: frame) { _, f in viewModel.horizontalScrollRegions[key] = active ? f : nil }
+                .onChange(of: active) { _, a in viewModel.horizontalScrollRegions[key] = a ? frame : nil }
+                .onDisappear { viewModel.horizontalScrollRegions[key] = nil }
         })
     }
 }
@@ -472,7 +486,7 @@ struct PaneSwitcher<Value: Hashable>: View {
             ForEach(options, id: \.value) { option in
                 let selected = option.value == selection
                 Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { selection = option.value }
+                    withAnimation(Motion.small.animation) { selection = option.value }
                 } label: {
                     Text(option.title)
                         .font(.system(size: 13, weight: .semibold))

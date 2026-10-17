@@ -20,7 +20,9 @@ struct ToolsView: View {
                 PaneAccessory(pane: pane)
             }
             .notchHeaderRow()
-            Group {
+            // Exactly the room under the switcher, whatever the pane: a pane a few points too tall
+            // used to push the whole page up, so the switcher jumped between panes.
+            PaneArea {
                 switch pane {
                 case .network: NetworkPane()
                 case .vpn: VPNPane()
@@ -28,9 +30,22 @@ struct ToolsView: View {
                 case .devices: DevicesPane()
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// Takes the size it's offered and puts its content at the top, so content that runs taller is cut
+/// off at the bottom rather than growing the page (which centres it, moving everything up).
+private struct PaneArea: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for view in subviews {
+            view.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
+        }
     }
 }
 
@@ -339,7 +354,7 @@ private struct ConnectionCard: View {
     var body: some View {
         let info = network.info
         Card {
-            VStack(alignment: .leading, spacing: 3.5) {
+            VStack(alignment: .leading, spacing: 2.5) {
                 HStack(spacing: 4) {
                     CardTitle(title: title(info), icon: icon(info), tint: .white.opacity(0.8))
                     Spacer(minLength: 0)
@@ -475,7 +490,7 @@ private struct CleanerPane: View {
             Group {
                 if uninstaller.target != nil {
                     UninstallView()
-                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                        .transition(Motion.paneTransition(edge: .trailing))
                 } else {
                     CategoryList()
                         .transition(.opacity)
@@ -504,7 +519,7 @@ private struct DiskCard: View {
 
     var body: some View {
         Card(tint: .pink) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     CardTitle(title: "Disk", icon: "internaldrive.fill", tint: .pink)
                     Spacer(minLength: 2)
@@ -629,7 +644,7 @@ private struct CategoryList: View {
                     ForEach(Cleaner.CategoryID.allCases) { id in
                         if let category = cleaner.categories[id], !category.items.isEmpty {
                             CategoryRow(category: category, expanded: expanded == id) {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expanded = expanded == id ? nil : id }
+                                withAnimation(Motion.small.animation) { expanded = expanded == id ? nil : id }
                             }
                             if expanded == id, id != .trash {
                                 ForEach(category.items.prefix(30)) { item in

@@ -36,7 +36,12 @@ enum DebugHooks {
         case "openkey": c.viewModel.open(tab: parts.count > 1 ? NotchTab(rawValue: parts[1]) : nil, reason: .keyboard)
         case "addtask": TaskStore.shared.add(title: parts.dropFirst().joined(separator: " "))
         case "done": if let t = TaskStore.shared.open.first { TaskStore.shared.setDone(t.id, true) }
-        case "page": c.viewModel.pageOffset = CGFloat(Double(parts[safe: 1] ?? "0") ?? 0)
+        case "page": // page <offset>: holds the pages there, as a finger would; "page release" lets go
+            if parts[safe: 1] == "release" { c.viewModel.slide(to: c.viewModel.tab, velocity: 0) } else {
+                c.viewModel.ensureNeighbors()
+                c.viewModel.pager.drag(to: CGFloat(Double(parts[safe: 1] ?? "0") ?? 0))
+            }
+        case "pager": log(c.viewModel.pager.debugState)
         case "drag":
             // drag files <path…>: the drop bins as for those files (one-drop conversions included)
             c.viewModel.dragPreview = DragPreview(taskTitle: "Reply to Sarah about the Q3 budget", hasFiles: parts[safe: 1] == "files", icon: "envelope.fill",
