@@ -334,6 +334,15 @@ final class MediaConverter: ObservableObject {
         process.terminate()
     }
 
+    /// Quitting: everything running stops, and what it was writing is deleted.
+    func stopAll() {
+        let running = Array(processes.values)
+        running.forEach { $0.terminate() }
+        let deadline = Date().addingTimeInterval(2)
+        while running.contains(where: \.isRunning), Date() < deadline { usleep(20_000) }
+        for path in reserved { try? FileManager.default.removeItem(atPath: path) }
+    }
+
     /// Stops a batch: what's waiting is dropped, what's running is stopped.
     func cancel(batch: UUID) {
         for job in jobs where job.batch == batch && job.isActive { cancel(job) }
@@ -516,7 +525,7 @@ final class MediaConverter: ObservableObject {
         // A replaced file on the shelf becomes the new one, where it was.
         if replaced != nil, ShelfStore.shared.replace(job.source, with: result) {
         } else if AppSettings.shared.shelfEnabled, AppSettings.shared.convertToShelf {
-            ShelfStore.shared.add([result])
+            ShelfStore.shared.add([result], copy: job.batch == nil)
         }
         if job.batch != nil {
             batchFinished(job)
@@ -524,10 +533,21 @@ final class MediaConverter: ObservableObject {
             let sizes = Self.sizeChange(job.sourceSize, Cleaner.allocatedSize(result)) ?? result.lastPathComponent
             ActivityCenter.shared.show(.notice(title: job.operation.title.replacingOccurrences(of: "Convert to ", with: "Now "),
                                                detail: sizes, icon: "wand.and.stars"), for: 4)
+            clearLater([id])
         }
-        // Finished conversions clear themselves after a while; the file is on the shelf.
+    }
+
+    /// Finished conversions clear themselves after a while; the files are on the shelf. A batch's
+    /// go together once it's all done, so its count doesn't shrink while it runs.
+    private func clearLater(_ ids: [UUID]) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
-            if let job = self?.jobs.first(where: { $0.id == id }), !job.isActive { self?.dismiss(job) }
+            guard let self else { return }
+            let done = self.jobs.filter { job in
+                guard ids.contains(job.id), case .done = job.state else { return false }
+                return true
+            }
+            guard !done.isEmpty else { return }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { self.jobs.removeAll { job in done.contains { $0.id == job.id } } }
         }
     }
 
@@ -552,6 +572,7 @@ final class MediaConverter: ObservableObject {
         if failed > 0 { detail = (detail.isEmpty ? "" : detail + " · ") + "\(failed) failed" }
         ActivityCenter.shared.show(.notice(title: "\(job.operation.shortTitle): \(outputs.count) of \(group.count) files", detail: detail,
                                            icon: "wand.and.stars", tone: failed > 0 ? .warning : .success), for: 4)
+        clearLater(group.map(\.id))
     }
 
     private func update(_ id: UUID, _ change: (inout Job) -> Void) {

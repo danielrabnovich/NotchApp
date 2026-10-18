@@ -20,7 +20,9 @@ struct LiveSide: View {
                         .pixelSnapped()
                 }
                 .frame(width: entry.item.width(notchHeight: h, compact: entry.compact), height: h)
-                .transition(.scale(scale: 0.5).combined(with: .opacity))
+                // Fades in once its neighbours have made room, not on top of them.
+                .transition(.asymmetric(insertion: .scale(scale: 0.5).combined(with: .opacity.animation(.easeOut(duration: 0.18).delay(0.16))),
+                                        removal: .scale(scale: 0.5).combined(with: .opacity)))
             }
             if side == .right, row.overflow > 0 { overflow }
         }
@@ -901,7 +903,8 @@ private struct ExtraReading: View {
 }
 
 /// What's furthest along of everything in progress: a ring (its app's icon inside, when it's an
-/// app exporting) and the percent; a "+1" when more is running.
+/// app exporting) and the percent, or how many files of a batch are done. Anything else running
+/// is on the hover card: there's no room for it here.
 private struct ProgressReading: View {
     var compact = false
     @ObservedObject private var progress = ProgressCenter.shared
@@ -925,13 +928,20 @@ private struct ProgressReading: View {
             }
             .frame(width: 17, height: 17)
             if !compact {
-                Text(lead?.fraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "…")
-                    .font(LiveItemView.valueFont)
-                    .rollingDigits(lead?.fraction)
-                    .foregroundStyle(.white.opacity(0.92))
-                    .fixedSize()
-                if progress.items.count > 1 {
-                    Text("+\(progress.items.count - 1)").font(.system(size: 9.5, weight: .bold, design: .rounded)).foregroundStyle(.white.opacity(0.5))
+                if let label = lead?.label {
+                    Text(label)
+                        .font(LiveItemView.valueFont)
+                        .contentTransition(.numericText())
+                        .animation(.snappy(duration: 0.25), value: label)
+                        .foregroundStyle(.white.opacity(0.92))
+                        .minimumScaleFactor(0.75)
+                        .lineLimit(1)
+                } else {
+                    Text(lead?.fraction.map { "\(Int(($0 * 100).rounded()))%" } ?? "…")
+                        .font(LiveItemView.valueFont)
+                        .rollingDigits(lead?.fraction)
+                        .foregroundStyle(.white.opacity(0.92))
+                        .fixedSize()
                 }
             }
         }

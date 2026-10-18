@@ -88,7 +88,9 @@ final class ShelfStore: ObservableObject {
     }
 
     /// Parks files. Dropping one that's already here makes it fresh again (so it doesn't expire).
-    func add(_ urls: [URL], pinned: Bool = false, screenshot: Bool? = nil) {
+    /// `copy: false` keeps it off the clipboard whatever "Copy what you add" says (a batch's
+    /// conversions, which would otherwise each replace the last).
+    func add(_ urls: [URL], pinned: Bool = false, screenshot: Bool? = nil, copy: Bool = true) {
         var changed = false
         let originals = urls.filter(\.isFileURL)
         let files = originals.map(Self.keepIfTemporary)
@@ -105,7 +107,7 @@ final class ShelfStore: ObservableObject {
         guard changed else { return }
         objectWillChange.send()
         save()
-        if AppSettings.shared.copyShelfAdds { copyLater(files) }
+        if copy, AppSettings.shared.copyShelfAdds { copyLater(files) }
     }
 
     // MARK: - Temporary files
@@ -178,6 +180,8 @@ final class ShelfStore: ObservableObject {
                 let store = ShelfStore.shared
                 Self.copy(store.pendingCopy)
                 store.pendingCopy = []
+                // Copied for you, not by you: Clipboard history has it on the shelf already.
+                ClipboardHistory.shared.ignoreCurrent()
             }
         }
         copyWork = work
@@ -224,6 +228,9 @@ final class ShelfStore: ObservableObject {
             }
             pb.writeObjects(entries)
         }
+        // Marked as NotchApp's, so Clipboard history credits it and not whichever app is in front.
+        pb.addTypes([ClipboardHistory.ownType], owner: nil)
+        pb.setData(Data(), forType: ClipboardHistory.ownType)
         DebugHooks.log("Shelf: copied \(urls.map(\.lastPathComponent)) types=\(pb.types?.map(\.rawValue) ?? [])")
     }
 

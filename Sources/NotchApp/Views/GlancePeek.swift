@@ -97,7 +97,11 @@ enum GlancePeek {
             let n = NetworkMonitor.shared, info = n.info
             c.title = "↓ \(formatRate(n.downRate).value) \(formatRate(n.downRate).unit)   ↑ \(formatRate(n.upRate).value) \(formatRate(n.upRate).unit)"
             c.detail = [info.ssid.map { "Wi-Fi “\($0)”" } ?? info.interfaceName.nilIfEmpty, info.localIP].compactMap { $0 }.joined(separator: " · ")
-        case .worldClock, .goldenHour, .countdown, .progress, .agents, .vpn, .timer, .keepAwake, .disk, .meeting:
+        case .progress:
+            let peek = ProgressCenter.shared.peek
+            c.title = peek.title
+            c.detail = peek.detail
+        case .worldClock, .goldenHour, .countdown, .agents, .vpn, .timer, .keepAwake, .disk, .meeting:
             c.detail = GlanceActions.hint(for: item)
         case .focus:
             let f = FocusMonitor.shared

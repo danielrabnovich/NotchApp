@@ -114,6 +114,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// Quitting mid-conversion or mid-download asks first: either would be lost.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let converting = MediaConverter.shared.jobs.filter(\.isActive).count
+        let downloading = VideoDownloader.shared.jobs.filter(\.isActive).count
+        guard converting + downloading > 0 else { return .terminateNow }
+        let what = [converting > 0 ? (converting == 1 ? "a conversion" : "\(converting) conversions") : nil,
+                    downloading > 0 ? (downloading == 1 ? "a download" : "\(downloading) downloads") : nil].compactMap { $0 }
+        let alert = NSAlert()
+        alert.messageText = "Quit NotchApp?"
+        alert.informativeText = "It's still working on \(what.joined(separator: " and ")). Quitting stops \(converting + downloading == 1 ? "it" : "them")"
+            + (converting > 0 ? ", and unfinished conversions are deleted." : ".")
+        alert.addButton(withTitle: "Keep Working")
+        alert.addButton(withTitle: "Quit Anyway").hasDestructiveAction = true
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        MediaConverter.shared.stopAll()
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         MediaController.shared.stop()
         AudioMixer.shared.stop()

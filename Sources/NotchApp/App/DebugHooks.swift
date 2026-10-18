@@ -326,8 +326,9 @@ enum DebugHooks {
             ClipboardHistory.shared.selection = Set(ClipboardHistory.shared.clips.prefix(Int(parts[safe: 1] ?? "") ?? 0).map(\.id))
         case "ql": QuickLookPreview.shared.show(parts.dropFirst().map { URL(fileURLWithPath: $0) })
         case "call": MeetingMonitor.shared.debugSimulate(parts[safe: 1] != "0")
-        case "convertall": // convertall <operation>: every file on the shelf, as one batch
-            if let op = MediaConverter.Operation(rawValue: parts[safe: 1] ?? "") { MediaConverter.shared.convert(ShelfStore.shared.items.map(\.url), op) }
+        case "convertall": // convertall <operation> [path…]: those files (else every file on the shelf), as one batch
+            let files = parts.count > 2 ? parts.dropFirst(2).map { URL(fileURLWithPath: $0) } : ShelfStore.shared.items.map(\.url)
+            if let op = MediaConverter.Operation(rawValue: parts[safe: 1] ?? "") { MediaConverter.shared.convert(files, op) }
         case "stackhover": c.viewModel.stackHovered = parts[safe: 1] != "0"
         case "glancepeek": // glancepeek <item> (none: ends it): what resting the pointer on a Glance shows
             if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { c.viewModel.hoverGlance(item, true) } else { c.viewModel.endGlancePeek() }

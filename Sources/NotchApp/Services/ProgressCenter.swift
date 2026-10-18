@@ -19,6 +19,10 @@ final class ProgressCenter: ObservableObject {
         let bundlePath: String?
         /// Where a click goes: the file, or the app.
         let target: URL?
+        /// What the Glance says in place of the percent ("3/12" for a batch).
+        var label: String? = nil
+        /// More for the card that drops on hover.
+        var detail: String? = nil
     }
 
     @Published private(set) var items: [Item] = []
@@ -154,14 +158,41 @@ final class ProgressCenter: ObservableObject {
                 all.append(Item(id: "video:\(job.id)", title: "Downloading \(job.displayTitle)", fraction: job.progress > 0 ? job.progress : nil,
                                 bundlePath: nil, target: nil))
             }
-            for job in MediaConverter.shared.jobs where job.isActive {
-                all.append(Item(id: "convert:\(job.id)", title: "\(job.operation.title): \(job.source.lastPathComponent)",
-                                fraction: job.progress, bundlePath: nil, target: job.source))
-            }
+            if let conversions = conversionItem() { all.append(conversions) }
             all += files.values.sorted { $0.id < $1.id }
             all += exporting
         }
         if all != items { items = all }
+    }
+
+    /// Every conversion as one: a single file by name and percent, more as how many are done, the
+    /// ring filling across all of them (the ones running count part-way).
+    private func conversionItem() -> Item? {
+        let batches = MediaConverter.shared.activeBatches
+        guard !batches.isEmpty else { return nil }
+        let jobs = batches.flatMap(\.jobs)
+        let running = jobs.filter { $0.state == .running }
+        let ops = Set(batches.map(\.operation))
+        let verb = ops.count == 1 ? ops.first!.title : "Converting"
+        if jobs.count == 1, let job = jobs.first {
+            return Item(id: "convert", title: "\(verb): \(job.source.lastPathComponent)", fraction: job.progress, bundlePath: nil, target: job.source)
+        }
+        let done = jobs.filter { !$0.isActive }.count, waiting = jobs.filter { $0.state == .queued }.count
+        let fraction = jobs.reduce(0.0) { $0 + ($1.isActive ? ($1.progress ?? 0) : 1) } / Double(jobs.count)
+        let now = running.map { job in job.source.lastPathComponent + (job.progress.map { " \(Int(($0 * 100).rounded()))%" } ?? "") }
+        let detail = ((now.isEmpty ? [] : ["Now " + now.joined(separator: ", ")]) + (waiting > 0 ? ["\(waiting) waiting"] : [])).joined(separator: " · ")
+        return Item(id: "convert", title: "\(verb) · \(done) of \(jobs.count) done", fraction: fraction, bundlePath: nil,
+                    target: running.first?.source ?? jobs.first?.source, label: jobs.count < 100 ? "\(done)/\(jobs.count)" : nil, detail: detail)
+    }
+
+    /// What the hover card says: the lead (with its percent, unless its label says more) and its
+    /// detail, then whatever else is running.
+    var peek: (title: String, detail: String) {
+        guard let lead else { return ("Nothing in progress", "") }
+        let percent = lead.fraction.map { " · \(Int(($0 * 100).rounded()))%" } ?? ""
+        let others = items.filter { $0.id != lead.id }.map(\.title)
+        let detail = [lead.detail, others.isEmpty ? nil : "Also " + others.joined(separator: ", ")].compactMap { $0?.nilIfEmpty }
+        return (lead.title + percent, detail.joined(separator: " · "))
     }
 
     /// Clicking the Glance: the file or app it's for, else the Downloads list.
