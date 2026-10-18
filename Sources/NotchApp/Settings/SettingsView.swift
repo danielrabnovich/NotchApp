@@ -2288,8 +2288,6 @@ private struct KeyRecorder: View {
 
 private struct AboutPane: View {
     @ObservedObject private var updater = AppUpdater.shared
-    @State private var token = ""
-    @State private var hasToken = KeychainItem.get("github-token") != nil
     @State private var crashes = CrashReports.all().prefix(5).map { $0 }
 
     private var version: String {
@@ -2320,7 +2318,6 @@ private struct AboutPane: View {
                 updateStatus.padding(.top, 18)
 
                 VStack(alignment: .leading, spacing: 18) {
-                    if !AppUpdater.hasGitHubCLI { tokenRow }
                     if !crashes.isEmpty { crashList }
                 }
                 .frame(maxWidth: 520)
@@ -2365,26 +2362,6 @@ private struct AboutPane: View {
             }
         case .installing(let stage):
             HStack(spacing: 6) { ProgressView().controlSize(.small); Text(stage).foregroundStyle(.secondary) }
-        }
-    }
-
-    /// The repo's private: without the GitHub CLI, a token lets update checks in.
-    private var tokenRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("GitHub access").font(.headline)
-            Text("Updates come from \(AppUpdater.repo), which is private. Sign in with the GitHub CLI (gh auth login), or paste a token that can read it.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                if hasToken {
-                    Label("Token saved", systemImage: "key.fill").foregroundStyle(.green)
-                    Spacer()
-                    Button("Remove") { KeychainItem.set(nil, for: "github-token"); hasToken = false }
-                } else {
-                    SecureField("", text: $token, prompt: Text("github_pat_…")).textFieldStyle(.roundedBorder)
-                    Button("Save") { KeychainItem.set(token, for: "github-token"); token = ""; hasToken = true; updater.check() }
-                        .disabled(token.isEmpty)
-                }
-            }
         }
     }
 

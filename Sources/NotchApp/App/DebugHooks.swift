@@ -379,6 +379,9 @@ enum DebugHooks {
             }
         case "taildrop": TaildropService.shared.offer([URL(fileURLWithPath: parts.dropFirst().joined(separator: " "))])
         case "mirror": c.viewModel.mirror = parts[safe: 1] != "0"
+        case "selfupdate": // checks NotchApp's own releases, then logs what it found
+            AppUpdater.shared.check()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { log("SELFUPDATE \(AppUpdater.currentVersion) → \(AppUpdater.shared.state)") }
         case "updates":
             if parts[safe: 1] == "list" { UpdateChecker.shared.listOpen = true } else { UpdateChecker.shared.check() }
         case "awake":
