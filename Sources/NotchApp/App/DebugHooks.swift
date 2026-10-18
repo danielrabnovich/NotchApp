@@ -529,7 +529,7 @@ enum DebugSimulator {
         case "speed":
             ActivityCenter.shared.show(.notice(title: "↓ 748  ↑ 118 Mbps", detail: "Speed test", icon: "speedometer"), for: 5)
         case "converted":
-            ActivityCenter.shared.show(.notice(title: "Compress Video", detail: "48.2 MB → 9.6 MB", icon: "wand.and.stars"), for: 5)
+            ActivityCenter.shared.show(.notice(title: "Compress Video", detail: "48.2 MB → 9.6 MB (−80%)", icon: "wand.and.stars"), for: 5)
         case "convertfail":
             ActivityCenter.shared.show(.notice(title: "Conversion failed", detail: "Clip.mov", icon: "wand.and.stars", tone: .warning), for: 5)
         default:

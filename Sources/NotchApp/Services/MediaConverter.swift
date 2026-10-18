@@ -11,7 +11,7 @@ final class MediaConverter: ObservableObject {
     static let shared = MediaConverter()
 
     enum Operation: String, CaseIterable, Identifiable {
-        case compressVideo, toMP4, toWebM, toWebMAV1, toGIF, makeVertical, audioM4A, audioMP3, audioWAV
+        case compressVideo, toMP4, toMP4HEVC, toMP4AV1, toWebM, toWebMAV1, toProRes, toMKV, toGIF, makeVertical, audioM4A, audioMP3, audioWAV
         case to1080p, to720p, muteVideo, speedUp
         case toMP3, toM4A, toWAV, toFLAC, toAIFF, normalizeLoudness, trimSilence
         case toJPEG, toPNG, toHEIC, toWebP, toTIFF, halfSize, quarterSize, forWeb, youtubeThumbnail
@@ -21,8 +21,12 @@ final class MediaConverter: ObservableObject {
         var title: String {
             switch self {
             case .compressVideo: "Compress Video"
-            case .toMP4: "Convert to MP4"
-            case .toWebM: "Convert to WebM"
+            case .toMP4: "Convert to MP4 (H.264)"
+            case .toMP4HEVC: "Convert to MP4 (HEVC)"
+            case .toMP4AV1: "Convert to MP4 (AV1)"
+            case .toWebM: "Convert to WebM (VP9)"
+            case .toProRes: "Convert to ProRes (MOV)"
+            case .toMKV: "Convert to MKV"
             case .toWebMAV1: "Convert to WebM (AV1)"
             case .toGIF: "Make a GIF"
             case .makeVertical: "Make Vertical (9:16)"
@@ -57,7 +61,12 @@ final class MediaConverter: ObservableObject {
             switch self {
             case .compressVideo: "Compress"
             case .toGIF: "GIF"
+            case .toMP4: "MP4 · H.264"
+            case .toMP4HEVC: "MP4 · HEVC"
+            case .toMP4AV1: "MP4 · AV1"
+            case .toWebM: "WebM · VP9"
             case .toWebMAV1: "WebM · AV1"
+            case .toProRes: "ProRes"
             case .makeVertical: "Vertical"
             case .audioM4A, .audioMP3, .audioWAV: "Audio · \(outputExtension?.uppercased() ?? "")"
             case .normalizeLoudness: "Normalize"
@@ -84,7 +93,7 @@ final class MediaConverter: ObservableObject {
             case .halfSize, .quarterSize, .to1080p, .to720p: "arrow.down.left.and.arrow.up.right"
             case .forWeb: "globe"
             case .youtubeThumbnail: "play.rectangle"
-            case .toMP4, .toWebM, .toWebMAV1: "film"
+            case .toMP4, .toMP4HEVC, .toMP4AV1, .toWebM, .toWebMAV1, .toProRes, .toMKV: "film"
             case .muteVideo: "speaker.slash"
             case .speedUp: "hare"
             case .trimSilence: "scissors"
@@ -109,14 +118,20 @@ final class MediaConverter: ObservableObject {
             case .muteVideo: " (no audio)"
             case .speedUp: " (2x)"
             case .trimSilence: " (trimmed)"
+            // Codec choices that can land in the source's own container say which they are.
+            case .toMP4HEVC: " (HEVC)"
+            case .toMP4AV1: " (AV1)"
+            case .toProRes: " (ProRes)"
             default: ""
             }
         }
 
         var outputExtension: String? {
             switch self {
-            case .compressVideo, .toMP4, .makeVertical, .to1080p, .to720p, .muteVideo, .speedUp: "mp4"
+            case .compressVideo, .toMP4, .toMP4HEVC, .toMP4AV1, .makeVertical, .to1080p, .to720p, .muteVideo, .speedUp: "mp4"
             case .toWebM, .toWebMAV1: "webm"
+            case .toProRes: "mov"
+            case .toMKV: "mkv"
             case .toGIF: "gif"
             case .audioM4A, .toM4A: "m4a"
             case .audioMP3, .toMP3: "mp3"
@@ -132,19 +147,28 @@ final class MediaConverter: ObservableObject {
             }
         }
 
-        /// A change of format, pointless on a file already in it.
-        var isFormatChange: Bool { !isEdit && outputExtension != nil }
+        /// A change of format, pointless on a file already in it. A codec choice isn't: an MP4 can
+        /// become an HEVC MP4.
+        var isFormatChange: Bool { !isEdit && outputExtension != nil && ![.toMP4HEVC, .toMP4AV1, .toProRes].contains(self) }
+
+        /// Streams already in the codec this asks for are copied into the new container, not
+        /// encoded again: seconds instead of minutes, and nothing lost.
+        var copiesMatchingStreams: Bool { [.toMP4, .toMP4HEVC, .toMP4AV1].contains(self) }
 
         var usesFFmpeg: Bool { ![.toJPEG, .toPNG, .toHEIC, .toTIFF, .halfSize, .quarterSize, .forWeb, .toWebP].contains(self) }
 
         /// Encoded on the Mac's media engine. It turns some files down (H.264 above 4K), and those
         /// go again with libx264.
-        var usesHardwareEncoder: Bool { [.compressVideo, .toMP4, .makeVertical, .to1080p, .to720p, .speedUp].contains(self) }
+        var usesHardwareEncoder: Bool { [.compressVideo, .toMP4, .toMP4HEVC, .toProRes, .makeVertical, .to1080p, .to720p, .speedUp].contains(self) }
 
         /// A word under the menu item, for the choice that trades something away.
         var note: String? {
             switch self {
-            case .toWebMAV1: "Much faster · a few older players can't open it"
+            case .toMP4HEVC: "Keeps 10-bit and HDR · some Windows PCs need a codec"
+            case .toMP4AV1: "Smallest · plays on M3, A17 Pro and newer, and browsers"
+            case .toWebMAV1: "Faster than VP9 · browsers only, not iPhone or iPad apps"
+            case .toProRes: "Very large · for editing"
+            case .toMKV: "Nothing re-encoded · Apple's apps can't open it"
             default: nil
             }
         }
@@ -200,7 +224,7 @@ final class MediaConverter: ObservableObject {
         let exts = Set(urls.map { $0.pathExtension.lowercased() }.map { $0 == "jpeg" ? "jpg" : $0 == "aif" ? "aiff" : $0 == "tif" ? "tiff" : $0 })
         let all: [Operation]
         switch kind {
-        case .video: all = [.compressVideo, .toGIF, .makeVertical, .toMP4, .toWebM, .toWebMAV1, .audioM4A, .audioMP3, .audioWAV,
+        case .video: all = [.compressVideo, .toGIF, .makeVertical, .toMP4, .toMP4HEVC, .toMP4AV1, .toWebM, .toWebMAV1, .toProRes, .toMKV, .audioM4A, .audioMP3, .audioWAV,
                             .to1080p, .to720p, .muteVideo, .speedUp]
         case .audio: all = [.toMP3, .toM4A, .normalizeLoudness, .toWAV, .toFLAC, .toAIFF, .trimSilence]
         case .image: all = [.toJPEG, .toPNG, .toHEIC, .toWebP, .toTIFF, .halfSize, .forWeb, .quarterSize, .youtubeThumbnail]
@@ -297,8 +321,9 @@ final class MediaConverter: ObservableObject {
     }
 
     func cancel(_ job: Job) {
-        if job.state == .queued { dismiss(job); return }
-        processes[job.id]?.terminate()
+        // Queued, or still looking at its streams before ffmpeg starts.
+        guard let process = processes[job.id] else { dismiss(job); return }
+        process.terminate()
     }
 
     /// Stops a batch: what's waiting is dropped, what's running is stopped.
@@ -355,31 +380,48 @@ final class MediaConverter: ObservableObject {
         reserved.insert(output.path)
         update(id) { $0.state = .running; $0.progress = op.usesFFmpeg ? 0 : nil }
 
-        let p = Process()
-        let tracksProgress: Bool
         if Self.kind(of: source) == .image {
             guard let (tool, args) = Self.imageCommand(op, source: source, output: output) else {
                 update(id) { $0.state = .failed(op.usesFFmpeg ? "Needs ffmpeg" : "Can't do this one") }
                 reserved.remove(output.path)
                 return
             }
-            p.executableURL = tool
-            p.arguments = args
-            tracksProgress = false
-        } else {
-            guard let ffmpeg = VideoDownloader.ffmpeg else {
-                update(id) { $0.state = .failed("Needs ffmpeg") }
-                reserved.remove(output.path)
-                return
+            run(id, source: source, op: op, output: output, tool: tool, args: args, tracksProgress: false)
+        } else if op.copiesMatchingStreams {
+            // What's inside decides between copying and encoding; ffprobe takes a moment, off the main thread.
+            Task.detached {
+                let streams = Self.streams(of: source)
+                await MediaConverter.shared.startFFmpeg(id, source: source, op: op, output: output, software: software, streams: streams)
             }
-            p.executableURL = ffmpeg
-            // Decoded on the media engine too, where it can (ffmpeg falls back to the CPU by itself).
-            let decode = Self.kind(of: source) == .video ? ["-hwaccel", "videotoolbox"] : []
-            p.arguments = ["-hide_banner", "-nostdin", "-y", "-loglevel", "error"] + decode + ["-i", source.path]
-                + Self.ffmpegArgs(op, source: source, software: software)
-                + ["-progress", "pipe:1", "-nostats", output.path]
-            tracksProgress = true
+        } else {
+            startFFmpeg(id, source: source, op: op, output: output, software: software, streams: nil)
         }
+    }
+
+    private func startFFmpeg(_ id: UUID, source: URL, op: Operation, output: URL, software: Bool, streams: Streams?) {
+        guard jobs.contains(where: { $0.id == id && $0.state == .running }) else {
+            // Cancelled while its streams were being read.
+            reserved.remove(output.path)
+            pump()
+            return
+        }
+        guard let ffmpeg = VideoDownloader.ffmpeg else {
+            update(id) { $0.state = .failed("Needs ffmpeg") }
+            reserved.remove(output.path)
+            return
+        }
+        // Decoded on the media engine too, where it can (ffmpeg falls back to the CPU by itself).
+        let decode = Self.kind(of: source) == .video ? ["-hwaccel", "videotoolbox"] : []
+        let args = ["-hide_banner", "-nostdin", "-y", "-loglevel", "error"] + decode + ["-i", source.path]
+            + Self.ffmpegArgs(op, source: source, software: software, streams: streams)
+            + ["-progress", "pipe:1", "-nostats", output.path]
+        run(id, source: source, op: op, output: output, tool: ffmpeg, args: args, tracksProgress: true)
+    }
+
+    private func run(_ id: UUID, source: URL, op: Operation, output: URL, tool: URL, args: [String], tracksProgress: Bool) {
+        let p = Process()
+        p.executableURL = tool
+        p.arguments = args
         let out = Pipe()
         p.standardOutput = out
         // What went wrong, if it does (the last few lines are plenty).
@@ -465,7 +507,7 @@ final class MediaConverter: ObservableObject {
             batchFinished(job)
         } else {
             let before = Cleaner.allocatedSize(job.source), after = Cleaner.allocatedSize(output)
-            let sizes = before > 0 && after > 0 ? "\(formatBytes(before)) → \(formatBytes(after))" : output.lastPathComponent
+            let sizes = Self.sizeChange(before, after) ?? output.lastPathComponent
             ActivityCenter.shared.show(.notice(title: job.operation.title.replacingOccurrences(of: "Convert to ", with: "Now "),
                                                detail: sizes, icon: "wand.and.stars"), for: 4)
         }
@@ -473,6 +515,14 @@ final class MediaConverter: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
             if let job = self?.jobs.first(where: { $0.id == id }), !job.isActive { self?.dismiss(job) }
         }
+    }
+
+    /// "120 MB → 40 MB (−67%)", or nil when either size is unknown.
+    private static func sizeChange(_ before: Int64, _ after: Int64) -> String? {
+        guard before > 0, after > 0 else { return nil }
+        let percent = Int((Double(after - before) / Double(before) * 100).rounded())
+        let change = percent == 0 ? "same size" : percent < 0 ? "−\(-percent)%" : "+\(percent)%"
+        return "\(formatBytes(before)) → \(formatBytes(after)) (\(change))"
     }
 
     /// The last file of a batch is done: one notice for all of them, with the space saved or spent.
@@ -484,7 +534,7 @@ final class MediaConverter: ObservableObject {
         let failed = group.count - outputs.count
         let before = group.filter { if case .done = $0.state { true } else { false } }.reduce(Int64(0)) { $0 + Int64(Cleaner.allocatedSize($1.source)) }
         let after = outputs.reduce(Int64(0)) { $0 + Int64(Cleaner.allocatedSize($1)) }
-        var detail = before > 0 && after > 0 ? "\(formatBytes(before)) → \(formatBytes(after))" : ""
+        var detail = Self.sizeChange(before, after) ?? ""
         if failed > 0 { detail = (detail.isEmpty ? "" : detail + " · ") + "\(failed) failed" }
         ActivityCenter.shared.show(.notice(title: "\(job.operation.shortTitle): \(outputs.count) of \(group.count) files", detail: detail,
                                            icon: "wand.and.stars", tone: failed > 0 ? .warning : .success), for: 4)
@@ -499,12 +549,36 @@ final class MediaConverter: ObservableObject {
 
     // MARK: - Commands
 
-    /// `software` is the second go at a job the media engine turned down.
-    nonisolated private static func ffmpegArgs(_ op: Operation, source: URL, software: Bool = false) -> [String] {
+    /// The first video and audio stream's codecs, as ffprobe names them ("h264", "aac").
+    struct Streams: Sendable {
+        var video: String?
+        var pixelFormat: String?
+        var audio: String?
+    }
+
+    nonisolated private static func streams(of url: URL) -> Streams? {
+        guard let probe = VideoDownloader.ffmpeg?.deletingLastPathComponent().appendingPathComponent("ffprobe").path else { return nil }
+        let result = Shell.runSync(probe, ["-v", "error", "-show_entries", "stream=codec_type,codec_name,pix_fmt:stream_disposition=attached_pic",
+                                           "-of", "json", url.path], timeout: 10)
+        guard let json = try? JSONSerialization.jsonObject(with: Data(result.out.utf8)) as? [String: Any],
+              let list = json["streams"] as? [[String: Any]] else { return nil }
+        // Cover art counts as a video stream; it isn't the video.
+        let video = list.first { $0["codec_type"] as? String == "video" && ($0["disposition"] as? [String: Any])?["attached_pic"] as? Int != 1 }
+        let audio = list.first { $0["codec_type"] as? String == "audio" }
+        return Streams(video: video?["codec_name"] as? String, pixelFormat: video?["pix_fmt"] as? String, audio: audio?["codec_name"] as? String)
+    }
+
+    /// `software` is the second go at a job the media engine turned down. `streams` (for the
+    /// conversions that copy what already fits) says what's inside.
+    nonisolated private static func ffmpegArgs(_ op: Operation, source: URL, software: Bool = false, streams: Streams? = nil) -> [String] {
         // On the media engine: a few times faster than libx264 for a fraction of the CPU, about
         // the same quality (VMAF ~90 against x264 CRF 20's ~92), a little smaller.
         let h264Video = software ? ["-c:v", "libx264", "-crf", "20", "-preset", "medium"] : ["-c:v", "h264_videotoolbox", "-q:v", "65"]
-        let h264 = h264Video + ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
+        // Subtitles stay behind: picture ones (Blu-ray's) can't become MP4 text and would fail the lot.
+        let mp4 = ["-sn", "-movflags", "+faststart"]
+        let h264 = h264Video + ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k"] + mp4
+        // Sound an MP4 holds as it is goes in untouched; anything else becomes AAC.
+        let mp4Audio = ["aac", "mp3", "alac", "ac3", "eac3"].contains(streams?.audio ?? "") ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "192k"]
         switch op {
         case .compressVideo:
             // About a third of the size of a phone or screen recording, still sharp. HEVC on the
@@ -512,7 +586,27 @@ final class MediaConverter: ObservableObject {
             let video = software ? ["-c:v", "libx264", "-crf", "26", "-preset", "medium"] : ["-c:v", "hevc_videotoolbox", "-q:v", "52", "-tag:v", "hvc1"]
             return video + ["-pix_fmt", "yuv420p", "-vf", "scale='min(1920,iw)':-2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"]
         case .toMP4:
+            // Already 8-bit H.264 (an MKV, a MOV): only the container changes.
+            if streams?.video == "h264", streams?.pixelFormat == "yuv420p" { return ["-c:v", "copy"] + mp4Audio + mp4 }
             return h264
+        case .toMP4HEVC:
+            // VideoToolbox HEVC is about as efficient as its H.264 here; what it adds is 10-bit, so HDR survives.
+            if streams?.video == "hevc" { return ["-c:v", "copy", "-tag:v", "hvc1"] + mp4Audio + mp4 }
+            let tenBit = streams?.pixelFormat.map { $0.contains("10") || $0.contains("12") } ?? false
+            let video = software ? ["-c:v", "libx265", "-crf", "22", "-preset", "fast", "-x265-params", "log-level=error"]
+                : ["-c:v", "hevc_videotoolbox", "-q:v", "62"] + (tenBit ? ["-profile:v", "main10"] : [])
+            return video + ["-tag:v", "hvc1", "-pix_fmt", tenBit ? (software ? "yuv420p10le" : "p010le") : "yuv420p"] + mp4Audio + mp4
+        case .toMP4AV1:
+            // Apple plays AV1 in MP4 (never in WebM or MKV) on chips that decode it: M3, A17 Pro and later.
+            if streams?.video == "av1" { return ["-c:v", "copy"] + mp4Audio + mp4 }
+            return ["-c:v", "libsvtav1", "-crf", "30", "-preset", "8", "-pix_fmt", "yuv420p"] + mp4Audio + mp4
+        case .toProRes:
+            // ProRes 422, on the media engine: big, but every editor opens it and scrubs it smoothly.
+            let video = software ? ["-c:v", "prores_ks", "-profile:v", "2"] : ["-c:v", "prores_videotoolbox", "-profile:v", "standard"]
+            return video + ["-c:a", "pcm_s16le"]
+        case .toMKV:
+            // Every stream as it is, subtitles too (MP4's text ones as SRT).
+            return ["-map", "0:v", "-map", "0:a?", "-map", "0:s?", "-c", "copy", "-c:s", "srt"]
         case .makeVertical:
             // The middle of the frame at 9:16, 1080×1920, for Reels, TikTok and Shorts.
             return ["-vf", "crop='min(iw,ih*9/16)':ih,scale=1080:1920:flags=lanczos,setsar=1"] + h264

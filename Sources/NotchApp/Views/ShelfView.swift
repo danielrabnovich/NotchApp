@@ -1467,7 +1467,7 @@ private struct ConvertChoice: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(op.title)
+        .help(op.note.map { "\(op.title) · \($0)" } ?? op.title)
     }
 }
 
