@@ -579,8 +579,9 @@ enum PopUpMenu {
     }
 
     /// Groups of items with a separator between them.
-    /// `checked` puts a checkmark beside the items it names, for options that toggle.
-    static func show(sections: [[Item]], title: String? = nil, checked: [String: Bool] = [:]) {
+    /// `checked` puts a checkmark beside the items it names, for options that toggle; `notes` puts
+    /// a line of small print under them.
+    static func show(sections: [[Item]], title: String? = nil, checked: [String: Bool] = [:], notes: [String: String] = [:]) {
         let menu = NSMenu()
         if let title {
             let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -597,6 +598,9 @@ enum PopUpMenu {
                 item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
                 item.target = target
                 if checked[label] == true { item.state = .on }
+                if let note = notes[label] {
+                    if #available(macOS 14.4, *) { item.subtitle = note } else { item.toolTip = note }
+                }
                 menu.addItem(item)
             }
         }
