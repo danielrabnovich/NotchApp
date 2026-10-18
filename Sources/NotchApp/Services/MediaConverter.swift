@@ -176,6 +176,11 @@ final class MediaConverter: ObservableObject {
 
     enum Kind { case video, audio, image }
 
+    /// Where the result goes: beside the original under its own name ("Clip (compressed).mp4"),
+    /// beside it under the original's name with the new extension, or in the original's place
+    /// with the original in the Trash (only once the conversion has worked).
+    enum Saving: Equatable { case copy, sameName, replace }
+
     struct Job: Identifiable, Equatable {
         enum State: Equatable { case queued, running, done(URL), failed(String) }
         let id = UUID()
@@ -185,8 +190,11 @@ final class MediaConverter: ObservableObject {
         var batch: UUID?
         var state: State = .queued
         var progress: Double?
+        var saving: Saving = .copy
         /// The media engine turned it down; this go uses the CPU.
         var software = false
+        /// Measured when it starts: a replaced original is in the Trash by the end.
+        var sourceSize: Int64 = 0
         var isActive: Bool { state == .queued || state == .running }
     }
 
@@ -309,13 +317,13 @@ final class MediaConverter: ObservableObject {
     }
 
     /// Converts every file; more than a few at once wait their turn.
-    func convert(_ urls: [URL], _ operation: Operation) {
+    func convert(_ urls: [URL], _ operation: Operation, saving: Saving = .copy) {
         let files = urls.filter { Self.kind(of: $0) != nil }
         guard !files.isEmpty else { return }
         Self.used(operation)
         let batch = files.count > 1 ? UUID() : nil
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            for url in files { jobs.insert(Job(source: url, operation: operation, batch: batch), at: 0) }
+            for url in files { jobs.insert(Job(source: url, operation: operation, batch: batch, saving: saving), at: 0) }
         }
         pump()
     }
@@ -376,9 +384,10 @@ final class MediaConverter: ObservableObject {
 
     private func start(_ job: Job) {
         let source = job.source, op = job.operation, id = job.id, software = job.software
-        let output = Self.outputURL(for: source, op, avoiding: reserved)
+        let output = Self.outputURL(for: source, op, keepingName: job.saving == .sameName, avoiding: reserved)
         reserved.insert(output.path)
-        update(id) { $0.state = .running; $0.progress = op.usesFFmpeg ? 0 : nil }
+        let size = Cleaner.allocatedSize(source)
+        update(id) { $0.state = .running; $0.progress = op.usesFFmpeg ? 0 : nil; $0.sourceSize = size }
 
         if Self.kind(of: source) == .image {
             guard let (tool, args) = Self.imageCommand(op, source: source, output: output) else {
@@ -501,13 +510,18 @@ final class MediaConverter: ObservableObject {
             }
             return
         }
-        update(id) { $0.state = .done(output); $0.progress = 1 }
-        if AppSettings.shared.shelfEnabled, AppSettings.shared.convertToShelf { ShelfStore.shared.add([output]) }
+        let replaced = job.saving == .replace ? Self.replaceOriginal(job.source, with: output) : nil
+        let result = replaced ?? output
+        update(id) { $0.state = .done(result); $0.progress = 1 }
+        // A replaced file on the shelf becomes the new one, where it was.
+        if replaced != nil, ShelfStore.shared.replace(job.source, with: result) {
+        } else if AppSettings.shared.shelfEnabled, AppSettings.shared.convertToShelf {
+            ShelfStore.shared.add([result])
+        }
         if job.batch != nil {
             batchFinished(job)
         } else {
-            let before = Cleaner.allocatedSize(job.source), after = Cleaner.allocatedSize(output)
-            let sizes = Self.sizeChange(before, after) ?? output.lastPathComponent
+            let sizes = Self.sizeChange(job.sourceSize, Cleaner.allocatedSize(result)) ?? result.lastPathComponent
             ActivityCenter.shared.show(.notice(title: job.operation.title.replacingOccurrences(of: "Convert to ", with: "Now "),
                                                detail: sizes, icon: "wand.and.stars"), for: 4)
         }
@@ -532,7 +546,7 @@ final class MediaConverter: ObservableObject {
         guard !group.contains(where: \.isActive) else { return }
         let outputs = group.compactMap { if case .done(let url) = $0.state { url } else { nil } }
         let failed = group.count - outputs.count
-        let before = group.filter { if case .done = $0.state { true } else { false } }.reduce(Int64(0)) { $0 + Int64(Cleaner.allocatedSize($1.source)) }
+        let before = group.filter { if case .done = $0.state { true } else { false } }.reduce(Int64(0)) { $0 + $1.sourceSize }
         let after = outputs.reduce(Int64(0)) { $0 + Int64(Cleaner.allocatedSize($1)) }
         var detail = Self.sizeChange(before, after) ?? ""
         if failed > 0 { detail = (detail.isEmpty ? "" : detail + " · ") + "\(failed) failed" }
@@ -739,12 +753,40 @@ final class MediaConverter: ObservableObject {
         }
     }
 
-    /// "Clip.mov" → "Clip (compressed).mp4", numbered if that name is taken.
-    nonisolated private static func outputURL(for source: URL, _ op: Operation, avoiding reserved: Set<String> = []) -> URL {
+    /// The ways these files can be saved after `op`, for the picker's second step. The original's
+    /// own name only when the extension changes (it would clash otherwise), and never replacing
+    /// a video with what was taken out of it.
+    static func savings(for urls: [URL], _ op: Operation) -> [Saving] {
+        var all: [Saving] = [.copy]
+        if !op.suffix.isEmpty, let ext = op.outputExtension, urls.allSatisfy({ Self.ext($0) != ext }) { all.append(.sameName) }
+        if ![.audioM4A, .audioMP3, .audioWAV, .youtubeThumbnail].contains(op) { all.append(.replace) }
+        return all
+    }
+
+    /// What the result will be called, to show before it's made.
+    static func previewName(for source: URL, _ op: Operation, _ saving: Saving) -> String {
+        let base = source.deletingPathExtension().lastPathComponent + (saving == .copy ? op.suffix : "")
+        return base + "." + (op.outputExtension ?? source.pathExtension)
+    }
+
+    /// The original to the Trash and the result under its name (with its own extension). Nil when
+    /// the original is untouched: the result was saved elsewhere (a folder it can't write to), or
+    /// the Trash said no. If another file already has the name, the result keeps the one it has.
+    nonisolated private static func replaceOriginal(_ source: URL, with output: URL) -> URL? {
+        let fm = FileManager.default
+        guard output.deletingLastPathComponent().standardizedFileURL == source.deletingLastPathComponent().standardizedFileURL,
+              (try? fm.trashItem(at: source, resultingItemURL: nil)) != nil else { return nil }
+        let target = source.deletingPathExtension().appendingPathExtension(output.pathExtension)
+        guard !fm.fileExists(atPath: target.path), (try? fm.moveItem(at: output, to: target)) != nil else { return output }
+        return target
+    }
+
+    /// "Clip.mov" → "Clip (compressed).mp4" (or "Clip.mp4" when keeping the name), numbered if that name is taken.
+    nonisolated private static func outputURL(for source: URL, _ op: Operation, keepingName: Bool = false, avoiding reserved: Set<String> = []) -> URL {
         let folder = source.deletingLastPathComponent()
         let writable = FileManager.default.isWritableFile(atPath: folder.path)
         let dir = writable ? folder : FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        let base = source.deletingPathExtension().lastPathComponent + op.suffix
+        let base = source.deletingPathExtension().lastPathComponent + (keepingName ? "" : op.suffix)
         let ext = op.outputExtension ?? source.pathExtension
         var url = dir.appendingPathComponent(base).appendingPathExtension(ext)
         var n = 2

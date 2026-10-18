@@ -211,16 +211,7 @@ struct ShelfView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.75))
             if !conversions.isEmpty {
-                Menu {
-                    ForEach(conversions.filter { !$0.isEdit }) { op in MenuItem(op.title, op.symbol) { converter.convert(urls, op) } }
-                    Divider()
-                    ForEach(conversions.filter(\.isEdit)) { op in MenuItem(op.title, op.symbol) { converter.convert(urls, op) } }
-                } label: {
-                    Label("Convert", systemImage: "wand.and.stars")
-                }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .fixedSize()
+                headerButton("Convert…") { withAnimation(Motion.pane.animation) { shelf.convertPicker = urls } }
             }
             headerButton("Zip") { shelf.compress(picked) }
             headerButton("AirDrop") { ShelfStore.airDrop(urls) }
@@ -571,16 +562,8 @@ private struct ShelfFileMenu: View {
         Divider()
         let conversions = MediaConverter.operations(for: urls)
         if !conversions.isEmpty {
-            Menu {
-                ForEach(conversions.filter { !$0.isEdit }) { op in
-                    MenuItem(op.title, op.symbol) { MediaConverter.shared.convert(urls, op) }
-                }
-                Divider()
-                ForEach(conversions.filter(\.isEdit)) { op in
-                    MenuItem(op.title, op.symbol) { MediaConverter.shared.convert(urls, op) }
-                }
-            } label: {
-                Label(many ? "Convert \(targets.count) Files" : "Convert", systemImage: "wand.and.stars")
+            MenuItem(many ? "Convert \(targets.count) Files…" : "Convert…", "wand.and.stars") {
+                withAnimation(Motion.pane.animation) { ShelfStore.shared.convertPicker = urls }
             }
         }
         if targets.allSatisfy({ MediaConverter.kind(of: $0.url) == .image }), targets.count <= 10 {
@@ -1408,18 +1391,27 @@ private struct VideoJobTile: View {
     }
 }
 
-/// Every conversion for files dropped on "More…": new formats on the first row, changes that keep
-/// the format after them. Picking one starts it and goes back to the shelf.
+/// Every conversion for files dropped on "More…" (or picked on the shelf), in two steps: what to
+/// make, new formats first, then how to save it. With only one way to save, picking starts it.
 private struct ConvertPicker: View {
     let urls: [URL]
     @EnvironmentObject private var shelf: ShelfStore
+    @State private var chosen: MediaConverter.Operation?
 
     var body: some View {
-        let ops = MediaConverter.operations(for: urls)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "wand.and.stars").font(.system(size: 11, weight: .semibold)).foregroundStyle(.purple)
-                Text(urls.count == 1 ? "Convert “\(urls[0].lastPathComponent)” to…" : "Convert \(urls.count) files to…")
+                if chosen != nil {
+                    Button { withAnimation(Motion.pane.animation) { chosen = nil } } label: {
+                        Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .help("Back")
+                } else {
+                    Image(systemName: "wand.and.stars").font(.system(size: 11, weight: .semibold)).foregroundStyle(.purple)
+                }
+                Text(heading)
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -1429,17 +1421,95 @@ private struct ConvertPicker: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white.opacity(0.5))
             }
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 6)], alignment: .leading, spacing: 6) {
-                    ForEach(ops.filter { !$0.isEdit } + ops.filter(\.isEdit)) { op in
-                        ConvertChoice(op: op) {
-                            MediaConverter.shared.convert(urls, op)
-                            shelf.convertPicker = nil
+            if let chosen {
+                savingStep(chosen)
+                    .transition(.opacity.combined(with: .offset(x: 16)))
+            } else {
+                operationStep
+                    .transition(.opacity.combined(with: .offset(x: -16)))
+            }
+        }
+    }
+
+    private var heading: String {
+        let files = urls.count == 1 ? "“\(urls[0].lastPathComponent)”" : "\(urls.count) files"
+        guard let chosen else { return "Convert \(files) to…" }
+        return "\(chosen.shortTitle): save \(urls.count == 1 ? "it" : "them") how?"
+    }
+
+    private var operationStep: some View {
+        let ops = MediaConverter.operations(for: urls)
+        return ScrollView(.vertical, showsIndicators: false) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 6)], alignment: .leading, spacing: 6) {
+                ForEach(ops.filter { !$0.isEdit } + ops.filter(\.isEdit)) { op in
+                    ConvertChoice(op: op) {
+                        if MediaConverter.savings(for: urls, op) == [.copy] {
+                            start(op, .copy)
+                        } else {
+                            withAnimation(Motion.pane.animation) { chosen = op }
                         }
                     }
                 }
             }
         }
+    }
+
+    private func savingStep(_ op: MediaConverter.Operation) -> some View {
+        let first = urls[0]
+        let more = urls.count > 1 ? " +\(urls.count - 1)" : ""
+        return HStack(spacing: 8) {
+            ForEach(MediaConverter.savings(for: urls, op), id: \.self) { saving in
+                let name = MediaConverter.previewName(for: first, op, saving) + more
+                switch saving {
+                case .copy:
+                    SavingChoice(symbol: "plus.square.on.square", title: "Save a Copy", detail: name) { start(op, saving) }
+                case .sameName:
+                    SavingChoice(symbol: "textformat", title: "Copy, Same Name", detail: name) { start(op, saving) }
+                case .replace:
+                    SavingChoice(symbol: "arrow.triangle.2.circlepath", title: "Replace Original", detail: "\(name) · old to Trash",
+                                 tint: .orange) { start(op, saving) }
+                }
+            }
+        }
+    }
+
+    private func start(_ op: MediaConverter.Operation, _ saving: MediaConverter.Saving) {
+        MediaConverter.shared.convert(urls, op, saving: saving)
+        shelf.convertPicker = nil
+    }
+}
+
+/// One way to save, as a card in the picker's second step.
+private struct SavingChoice: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    var tint: Color = .purple
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(hovering ? tint : .white.opacity(0.7))
+                Spacer(minLength: 0)
+                Text(title).font(.system(size: 12, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .notchSurface(RoundedRectangle(cornerRadius: 10, style: .continuous), active: hovering)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(detail)
     }
 }
 

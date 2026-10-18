@@ -264,6 +264,18 @@ final class ShelfStore: ObservableObject {
         remove([item])
     }
 
+    /// A file converted in place: the new one takes the old one's spot (and pin). False when the
+    /// old one isn't here.
+    @discardableResult
+    func replace(_ old: URL, with new: URL) -> Bool {
+        guard let i = items.firstIndex(where: { $0.url.standardizedFileURL == old.standardizedFileURL }) else { return false }
+        let item = items[i]
+        items[i] = ShelfItem(url: new, added: item.added, pinned: item.pinned, isScreenshot: item.isScreenshot)
+        selection.remove(item.id)
+        save()
+        return true
+    }
+
     func remove(_ gone: [ShelfItem]) {
         let ids = Set(gone.map(\.id))
         items.removeAll { ids.contains($0.id) }

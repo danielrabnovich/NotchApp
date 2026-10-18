@@ -282,6 +282,11 @@ enum DebugHooks {
             log("CONVOPS \(url.lastPathComponent): " + MediaConverter.operations(for: [url]).map(\.rawValue).joined(separator: ","))
         case "convjobs": // logs every conversion job's state
             for job in MediaConverter.shared.jobs { log("CONVJOB \(job.source.lastPathComponent) \(job.operation.rawValue) \(job.state)") }
+        case "convertsave": // convertsave <copy|same|replace> <operation> <path>
+            let saving: MediaConverter.Saving = parts[safe: 1] == "replace" ? .replace : parts[safe: 1] == "same" ? .sameName : .copy
+            if let op = MediaConverter.Operation(rawValue: parts[safe: 2] ?? "") {
+                MediaConverter.shared.convert([URL(fileURLWithPath: parts.dropFirst(3).joined(separator: " "))], op, saving: saving)
+            }
         case "convert": // convert <operation> <path>
             if let op = MediaConverter.Operation(rawValue: parts[safe: 1] ?? "") {
                 MediaConverter.shared.convert([URL(fileURLWithPath: parts.dropFirst(2).joined(separator: " "))], op)
