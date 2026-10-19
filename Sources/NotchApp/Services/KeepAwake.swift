@@ -187,7 +187,10 @@ enum LidSleep {
     /// lands in sudoers or the shell. A rule that fails `visudo -c` is removed again.
     static func allow() async -> Bool {
         let rule = "#\(getuid()) ALL=(root) NOPASSWD: /usr/bin/pmset disablesleep 1, /usr/bin/pmset disablesleep 0"
-        let command = "mkdir -p /etc/sudoers.d && echo '\(rule)' > \(rulePath) && chmod 0440 \(rulePath) && /usr/sbin/visudo -c -f \(rulePath) || { rm -f \(rulePath); exit 1; }"
+        // Written to a private temp file and checked with visudo before it goes live: a bad file in
+        // sudoers.d breaks sudo for the whole Mac, even for a moment. The rename is atomic.
+        let staged = "/etc/sudoers.d/.notchapp-lid.tmp"
+        let command = "umask 077 && mkdir -p /etc/sudoers.d && rm -f \(staged) && printf '%s\\n' '\(rule)' > \(staged) && chown root:wheel \(staged) && chmod 0440 \(staged) && /usr/sbin/visudo -c -q -f \(staged) && mv -f \(staged) \(rulePath) || { rm -f \(staged); exit 1; }"
         await MainActor.run { NSApp.activate(ignoringOtherApps: true) }
         guard await Shell.runAsAdmin(command, prompt: "NotchApp wants to keep your Mac awake with the lid closed. This adds a rule that only allows turning lid sleep off and on, so you won't be asked again.") else { return false }
         return await isAllowed()

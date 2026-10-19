@@ -93,7 +93,11 @@ echo "▸ Signing…"
 # A stable identity keeps macOS privacy grants (Accessibility, Calendar…) across rebuilds;
 # ad-hoc signatures change every build, so macOS asks again each time.
 IDENTITY=$(security find-identity -v -p codesigning | grep -m1 -oE '"(Apple Development|Developer ID Application)[^"]*"' | tr -d '"' || true)
-codesign --force --deep --sign "${IDENTITY:--}" "$APP" >/dev/null 2>&1
+# The hardened runtime (--options runtime) keeps other code out of NotchApp, which holds strong
+# permissions (Accessibility, Screen Recording): no injected libraries (DYLD_*), no unsigned code,
+# no debugger attaching. The entitlements list the protected resources it may ask for.
+codesign --force --deep --options runtime --entitlements Resources/NotchApp.entitlements \
+  --sign "${IDENTITY:--}" "$APP" >/dev/null 2>&1
 [ -n "$IDENTITY" ] && echo "  signed as $IDENTITY" || echo "  ad-hoc (permissions will reset on each build)"
 echo "✓ Built $APP"
 

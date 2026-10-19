@@ -78,6 +78,8 @@ final class VideoDownloader: ObservableObject {
     }
 
     func download(_ url: URL, format: Format, height: Int?) {
+        // Only web links reach yt-dlp: anything else could be read as one of its options.
+        guard Self.webURL(url.absoluteString) != nil else { return }
         guard let binary = Self.binary else {
             ActivityCenter.shared.show(.notice(title: "yt-dlp isn't installed", detail: "brew install yt-dlp", icon: "arrow.down.circle", tone: .warning), for: 4)
             return
@@ -110,7 +112,8 @@ final class VideoDownloader: ObservableObject {
         case .audio:
             args += ["-x", "--audio-format", "m4a"]
         }
-        args.append(url.absoluteString)
+        // "--" ends the options, so the link can never be taken for one (yt-dlp has --exec).
+        args += ["--", url.absoluteString]
 
         let p = Process()
         p.executableURL = binary
@@ -257,10 +260,10 @@ final class VideoDownloader: ObservableObject {
     /// Asks yt-dlp which resolutions a link has (a couple of seconds; nothing is downloaded).
     func probe(_ url: URL) async -> MediaInfo? {
         if let cached = probes[url] { return cached }
-        guard let binary = Self.binary else { return nil }
+        guard let binary = Self.binary, Self.webURL(url.absoluteString) != nil else { return nil }
         probing.insert(url)
         defer { probing.remove(url) }
-        let result = await Shell.run(binary.path, ["-J", "--no-playlist", "--no-warnings", url.absoluteString], timeout: 30)
+        let result = await Shell.run(binary.path, ["-J", "--no-playlist", "--no-warnings", "--", url.absoluteString], timeout: 30)
         guard result.ok, let data = result.out.data(using: .utf8),
               let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         let info = Self.parse(obj)

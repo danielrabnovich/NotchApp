@@ -70,14 +70,24 @@ enum AgentReply {
     private static func sendViaCmux(_ text: String, pid: pid_t) -> Bool {
         let env = environment(of: pid)
         guard let panel = env["CMUX_PANEL_ID"], !panel.isEmpty else { return false }
-        let cli = env["CMUX_BUNDLED_CLI_PATH"] ?? "/Applications/cmux.app/Contents/Resources/bin/cmux"
-        guard FileManager.default.isExecutableFile(atPath: cli) else { return false }
+        // The path comes from the agent's environment, which anything in that terminal can set:
+        // only a cmux CLI inside a cmux.app in Applications runs (NotchApp's children share its
+        // privacy permissions, so an arbitrary program must never be one of them).
+        let cli = Self.trustedCmux(env["CMUX_BUNDLED_CLI_PATH"]) ?? "/Applications/cmux.app/Contents/Resources/bin/cmux"
+        guard Self.trustedCmux(cli) != nil, FileManager.default.isExecutableFile(atPath: cli) else { return false }
         var target = ["--panel", panel]
         if let workspace = env["CMUX_WORKSPACE_ID"], !workspace.isEmpty { target += ["--workspace", workspace] }
         // "\" stays literal: the CLI reads \n and \r as Enter.
         let literal = text.replacingOccurrences(of: "\\", with: "\\\\")
         guard Shell.runSync(cli, ["send-panel"] + target + ["--", literal], timeout: 5).ok else { return false }
         return Shell.runSync(cli, ["send-key-panel"] + target + ["enter"], timeout: 5).ok
+    }
+
+    private static func trustedCmux(_ path: String?) -> String? {
+        guard let path else { return nil }
+        let real = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        let roots = ["/Applications/cmux.app/", FileManager.default.homeDirectoryForCurrentUser.path + "/Applications/cmux.app/"]
+        return roots.contains(where: real.hasPrefix) && real.hasSuffix("/Contents/Resources/bin/cmux") ? real : nil
     }
 
     /// A process's environment (same user only), from `ps -E`. Values with spaces are cut at the
@@ -105,6 +115,8 @@ enum AgentReply {
     }
 
     private static func script(for bundleID: String, tty: String, text: String) -> String? {
+        // The tty goes into the script's text, so it must be exactly a device name.
+        guard tty.range(of: #"^/dev/ttys?[0-9]{1,4}$"#, options: .regularExpression) != nil else { return nil }
         let quoted = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         switch bundleID {
         case "com.apple.Terminal":

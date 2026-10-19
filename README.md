@@ -208,6 +208,7 @@ docs/         README screenshots
 defaults write com.notchapp.NotchApp debugHooks -bool YES   # then relaunch
 swiftc scripts/debug.swift -o build/notchdebug
 build/notchdebug pin; build/notchdebug open home; build/notchdebug snapshot /tmp/notch.png
+# Log: ~/Library/Logs/NotchApp/debug.log (commands need the token NotchApp writes at launch)
 build/notchdebug volume 0.5 | brightness 0.3 | charging | meeting | screenshot | fakeplay | close
 build/notchdebug expand cpu | timer start|pause|skip|reset | pane notes|downloads | peek timer|download
 ```

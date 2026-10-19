@@ -1,4 +1,5 @@
 import AppKit
+import Security
 
 /// Keeps NotchApp itself up to date from the GitHub repo's releases: checks the latest one (daily,
 /// and from Settings → About), offers it in the notch, then downloads its zip, checks it's
@@ -150,11 +151,18 @@ final class AppUpdater: ObservableObject {
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw Failure(message: "The download didn't come through.") }
         let work = FileManager.default.temporaryDirectory.appendingPathComponent("NotchAppUpdate-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-        let zip = work.appendingPathComponent(release.assetName)
+        // A fixed name: the asset's own name comes from the server and could hold "../".
+        let zip = work.appendingPathComponent("update.zip")
         try FileManager.default.moveItem(at: file, to: zip)
-        let unzip = await Shell.run("/usr/bin/ditto", ["-x", "-k", zip.path, work.path], timeout: 120)
-        guard unzip.ok, let app = (try FileManager.default.contentsOfDirectory(at: work, includingPropertiesForKeys: nil))
+        let unpacked = work.appendingPathComponent("unpacked", isDirectory: true)
+        let unzip = await Shell.run("/usr/bin/ditto", ["-x", "-k", zip.path, unpacked.path], timeout: 120)
+        guard unzip.ok, let app = (try FileManager.default.contentsOfDirectory(at: unpacked, includingPropertiesForKeys: [.isSymbolicLinkKey]))
             .first(where: { $0.pathExtension == "app" }) else { throw Failure(message: "The download wasn't an app.") }
+        // A real folder inside the download, not a link pointing somewhere else.
+        guard (try? app.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true,
+              app.resolvingSymlinksInPath().path.hasPrefix(unpacked.resolvingSymlinksInPath().path + "/") else {
+            throw Failure(message: "The download wasn't an app.")
+        }
         return app
     }
 
@@ -166,12 +174,28 @@ final class AppUpdater: ObservableObject {
         guard await Shell.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path], timeout: 60).ok else {
             throw Failure(message: "The download's signature doesn't check out.")
         }
-        func team(_ path: String) async -> String? {
-            let out = await Shell.run("/bin/sh", ["-c", "/usr/bin/codesign -dv \"\(path)\" 2>&1 | grep TeamIdentifier"], timeout: 30).out
-            return out.split(separator: "=").last.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        // Both must carry a developer's team, and the same one. A copy without one (an ad-hoc build)
+        // can't tell a genuine update from any app with the same bundle ID, so it doesn't install
+        // updates itself; the release page has them.
+        guard let mine = teamIdentifier(Bundle.main.bundleURL) else {
+            throw Failure(message: "This copy isn't signed by a developer, so it can't check updates are genuine. Download the update from the release page instead.")
         }
-        let mine = await team(Bundle.main.bundlePath), theirs = await team(app.path)
-        guard mine == theirs else { throw Failure(message: "The download is signed by someone else.") }
+        guard let theirs = teamIdentifier(app), theirs == mine else {
+            throw Failure(message: "The download is signed by someone else.")
+        }
+    }
+
+    /// The signing team of an app, read with the Security framework (no shell, so no path can
+    /// become a command); nil when it has none (ad-hoc signed) or the signature doesn't hold.
+    nonisolated static func teamIdentifier(_ app: URL) -> String? {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(app as CFURL, [], &code) == errSecSuccess, let code,
+              SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures), nil) == errSecSuccess else { return nil }
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dict = info as? [String: Any], let team = dict[kSecCodeInfoTeamIdentifier as String] as? String,
+              !team.isEmpty else { return nil }
+        return team
     }
 
     /// The old copy goes to the Trash, the new one takes its place, and it starts once this one has quit.
@@ -187,7 +211,9 @@ final class AppUpdater: ObservableObject {
         }
         let relaunch = Process()
         relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
-        relaunch.arguments = ["-c", "while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done; open \"\(current.path)\""]
+        // The pid and path go in as arguments, never into the script's text.
+        relaunch.arguments = ["-c", #"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; /usr/bin/open "$2""#,
+                              "sh", String(getpid()), current.path]
         try relaunch.run()
         NSApp.terminate(nil)
     }

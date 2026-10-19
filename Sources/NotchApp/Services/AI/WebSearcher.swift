@@ -166,7 +166,28 @@ enum WebSearcher {
 
     // MARK: - Page text
 
+    /// Search results point anywhere; pages are read only when they're public web pages, never
+    /// this Mac, the local network or a non-web scheme (a result can't make NotchApp probe them).
+    static func isPublicWebPage(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url.host(percentEncoded: false)?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]")),
+              !host.isEmpty else { return false }
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local") || host.hasSuffix(".internal")
+            || host.hasSuffix(".lan") || host.hasSuffix(".home.arpa") || !host.contains(".") && !host.contains(":") { return false }
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        if parts.count == 4 {
+            let (a, b) = (parts[0], parts[1])
+            if a == 10 || a == 127 || a == 0 || (a == 169 && b == 254) || (a == 172 && (16...31).contains(b))
+                || (a == 192 && b == 168) || (a == 100 && (64...127).contains(b)) || a >= 224 { return false }
+        }
+        if host.contains(":") {   // IPv6 literal
+            if host == "::1" || host.hasPrefix("fe80") || host.hasPrefix("fc") || host.hasPrefix("fd") || host.hasPrefix("::ffff") { return false }
+        }
+        return true
+    }
+
     private static func pageText(_ url: URL) async throws -> String {
+        guard isPublicWebPage(url) else { return "" }
         let (data, response) = try await session.data(from: url)
         guard let http = response as? HTTPURLResponse, http.statusCode < 400,
               (http.value(forHTTPHeaderField: "Content-Type") ?? "text/html").contains("html") else { return "" }

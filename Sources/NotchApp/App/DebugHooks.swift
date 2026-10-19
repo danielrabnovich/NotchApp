@@ -1,30 +1,68 @@
 import AppKit
 import SwiftUI
+import Security
 
 /// Developer hooks for previewing states without touching the mouse.
 /// Enable with: defaults write com.notchapp.NotchApp debugHooks -bool YES
 /// Then: swift scripts/debug.swift open home | close | volume 0.5 | snapshot /tmp/x.png …
+///
+/// Commands arrive as distributed notifications, which any app on the Mac can post (sandboxed ones
+/// too), so each must start with a token NotchApp writes at launch to a file only this user can
+/// read (`tokenFile`); scripts/debug.swift adds it. The log is private to this user as well.
 @MainActor
 enum DebugHooks {
     static let name = Notification.Name("com.notchapp.debug")
     /// While pinned, the mouse tracker won't close the notch.
     static var pinned = false
 
-    /// Appends a line to /tmp/notchapp-debug.log when debug hooks are enabled.
+    /// ~/Library/Logs/NotchApp/debug.log: searches, answers and screen questions go in it, so it's
+    /// readable only by this user (not /tmp, which every account can read).
+    nonisolated static let logFile: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/NotchApp/debug.log")
+
+    nonisolated static let tokenFile: URL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/NotchApp/debug-token")
+
+    /// Appends a line to the debug log when debug hooks are enabled.
     nonisolated static func log(_ line: String) {
         guard UserDefaults.standard.bool(forKey: "debugHooks") else { return }
-        let url = URL(fileURLWithPath: "/tmp/notchapp-debug.log")
         let data = Data((line + "\n").utf8)
-        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(data); try? h.close() }
-        else { try? data.write(to: url) }
+        if let h = try? FileHandle(forWritingTo: logFile) { h.seekToEndOfFile(); h.write(data); try? h.close(); return }
+        let fm = FileManager.default
+        try? fm.createDirectory(at: logFile.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                attributes: [.posixPermissions: 0o700])
+        fm.createFile(atPath: logFile.path, contents: data, attributes: [.posixPermissions: 0o600])
     }
 
+    private static var token = ""
+
     static func install(controllers: @escaping () -> [NotchWindowController]) {
-        guard UserDefaults.standard.bool(forKey: "debugHooks") else { return }
-        DistributedNotificationCenter.default().addObserver(forName: name, object: nil, queue: .main) { note in
-            let command = note.object as? String ?? ""
-            MainActor.assumeIsolated { run(command, controllers()) }
+        guard UserDefaults.standard.bool(forKey: "debugHooks") else {
+            try? FileManager.default.removeItem(at: tokenFile)
+            return
         }
+        // A fresh secret each launch, in a file only this user can read.
+        var bytes = [UInt8](repeating: 0, count: 24)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return }
+        token = bytes.map { String(format: "%02x", $0) }.joined()
+        let fm = FileManager.default
+        try? fm.removeItem(at: tokenFile)
+        guard fm.createFile(atPath: tokenFile.path, contents: Data(token.utf8), attributes: [.posixPermissions: 0o600]) else { return }
+        DistributedNotificationCenter.default().addObserver(forName: name, object: nil, queue: .main) { note in
+            let raw = note.object as? String ?? ""
+            MainActor.assumeIsolated {
+                // "<token> <command>": anything without the token is ignored.
+                guard let space = raw.firstIndex(of: " "), !token.isEmpty,
+                      constantTimeEqual(String(raw[..<space]), token) else { return }
+                run(String(raw[raw.index(after: space)...]), controllers())
+            }
+        }
+    }
+
+    private static func constantTimeEqual(_ a: String, _ b: String) -> Bool {
+        let x = Array(a.utf8), y = Array(b.utf8)
+        guard x.count == y.count else { return false }
+        return zip(x, y).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
     private static func run(_ command: String, _ controllers: [NotchWindowController]) {

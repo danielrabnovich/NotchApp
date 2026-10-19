@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- NotchApp runs with the hardened runtime: no injected libraries, no unsigned code, no debugger
+     attaching. These are the protected things it's allowed to ask for (each still needs the user's OK). -->
+<dict>
+  <!-- Controls Finder (empty Trash, selection), Messages replies, Terminal/iTerm2 agent replies, Spotify. -->
+  <key>com.apple.security.automation.apple-events</key><true/>
+  <!-- Live captions, call transcripts, Ramble, sound alerts. -->
+  <key>com.apple.security.device.audio-input</key><true/>
+  <!-- Camera mirror. -->
+  <key>com.apple.security.device.camera</key><true/>
+  <!-- Today's events, meeting alerts, calendar actions from Search. -->
+  <key>com.apple.security.personal-information.calendars</key><true/>
+  <!-- Birthdays. -->
+  <key>com.apple.security.personal-information.addressbook</key><true/>
+  <!-- When to leave, the Wi-Fi network's name. -->
+  <key>com.apple.security.personal-information.location</key><true/>
+</dict>
+</plist>
