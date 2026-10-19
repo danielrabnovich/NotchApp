@@ -102,9 +102,11 @@ extension ScreenContext {
             config.width = Int(window.frame.width * CGFloat(filter.pointPixelScale))
             config.height = Int(window.frame.height * CGFloat(filter.pointPixelScale))
         } else {
-            let mouse = await MainActor.run { NSEvent.mouseLocation }
-            let screen = await MainActor.run { NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main }
-            let displayID = await MainActor.run { screen?.displayID }
+            let displayID: CGDirectDisplayID? = await MainActor.run {
+                let mouse = NSEvent.mouseLocation
+                let screen: NSScreen? = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+                return screen?.displayID
+            }
             guard let display = content.displays.first(where: { $0.displayID == displayID }) ?? content.displays.first else {
                 throw Failure(message: "Couldn't find a display to look at.")
             }

@@ -128,7 +128,9 @@ final class LeaveBy: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     private static func item(_ location: CLLocation) -> MKMapItem {
+        #if compiler(>=6.2) // MKMapItem(location:address:) is in the macOS 26 SDK
         if #available(macOS 26, *) { return MKMapItem(location: location, address: nil) }
+        #endif
         return MKMapItem(placemark: MKPlacemark(coordinate: location.coordinate))
     }
 

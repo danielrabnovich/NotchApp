@@ -470,9 +470,17 @@ final class PagesHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+// Spelled out rather than `@Entry`: that macro's plugin ships with Xcode, not the Command Line Tools.
+private struct NotchPageKey: EnvironmentKey {
+    static let defaultValue: NotchTab? = nil
+}
+
 extension EnvironmentValues {
     /// The page a view is on (unset outside the open notch's pages).
-    @Entry var notchPage: NotchTab?
+    var notchPage: NotchTab? {
+        get { self[NotchPageKey.self] }
+        set { self[NotchPageKey.self] = newValue }
+    }
 }
 
 /// The open notch's pages, hosted in AppKit so Core Animation can move them.

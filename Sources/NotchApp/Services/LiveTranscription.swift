@@ -7,6 +7,8 @@ import Speech
 /// microphone (you). Each source has its own transcriber, so a transcript knows who's who without
 /// guessing at voices.
 
+// SpeechAnalyzer is in the macOS 26 SDK (Swift 6.2).
+#if compiler(>=6.2)
 /// One stream of audio into one transcriber. Buffers arrive in any format; they're converted to
 /// the transcriber's own on a serial queue.
 @available(macOS 26, *)
@@ -81,6 +83,19 @@ final class SpeechStream: @unchecked Sendable {
         results?.cancel()
     }
 }
+
+#else
+/// Built with an SDK older than macOS 26 (Command Line Tools on macOS 15): SpeechAnalyzer isn't
+/// there to compile against, so speech features say they're unavailable.
+@available(macOS 26, *)
+final class SpeechStream: @unchecked Sendable {
+    static func make(onText: @escaping @Sendable (String, _ final: Bool) -> Void) async throws -> SpeechStream {
+        throw NSError(domain: "NotchApp", code: 1, userInfo: [NSLocalizedDescriptionKey: "Speech needs a build made with the macOS 26 SDK"])
+    }
+    func append(_ buffer: AVAudioPCMBuffer) {}
+    func finish() async {}
+}
+#endif
 
 /// What the Mac is playing, as audio buffers: a listen-only process tap on every app's output
 /// (nothing is muted or rerouted), as the visualizer uses.

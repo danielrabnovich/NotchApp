@@ -1784,9 +1784,15 @@ private struct GlowLayers: NSViewRepresentable {
         var isCompact: Bool { compact }
 
         /// Apple Intelligence's palette: lilac/violet, periwinkle, sky, pink, coral and peach.
-        private static let colors: [CGColor] = [0xBC82F3, 0x8D9FFF, 0x79C4FB, 0xF5B9EA, 0xFF6778, 0xFFBA71, 0xFFA1F3, 0xBC82F3].map {
-            CGColor(srgbRed: CGFloat(($0 >> 16) & 0xFF) / 255, green: CGFloat(($0 >> 8) & 0xFF) / 255, blue: CGFloat($0 & 0xFF) / 255, alpha: 1)
-        }
+        private static let colors: [CGColor] = {
+            let hex: [Int] = [0xBC82F3, 0x8D9FFF, 0x79C4FB, 0xF5B9EA, 0xFF6778, 0xFFBA71, 0xFFA1F3, 0xBC82F3]
+            return hex.map { (v: Int) -> CGColor in
+                let r = CGFloat((v >> 16) & 0xFF) / 255
+                let g = CGFloat((v >> 8) & 0xFF) / 255
+                let b = CGFloat(v & 0xFF) / 255
+                return CGColor(srgbRed: r, green: g, blue: b, alpha: 1)
+            }
+        }()
 
         override init(frame: NSRect) {
             super.init(frame: frame)

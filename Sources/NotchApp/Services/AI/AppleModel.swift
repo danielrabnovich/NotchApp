@@ -1,6 +1,10 @@
 import Foundation
-// Weakly linked: the framework is only there from macOS 26, and the app runs on 14.
+// Weakly linked: the framework is only there from macOS 26, and the app runs on 14. Building it
+// needs the macOS 26 SDK; with an older one (Command Line Tools on macOS 15) the model is simply
+// unavailable.
+#if canImport(FoundationModels)
 @_weakLinked import FoundationModels
+#endif
 
 /// Apple's own on-device model (Apple Intelligence): no download, no key, nothing leaves the Mac.
 /// It reads text only, and holds about 8,000 tokens in all, so long input is cut to fit (and cut
@@ -12,29 +16,45 @@ enum AppleModel {
     }
 
     static var isAvailable: Bool {
+        #if canImport(FoundationModels)
         guard #available(macOS 26, *) else { return false }
         return Engine.isAvailable
+        #else
+        return false
+        #endif
     }
 
     /// Why it can't be used, in a line for Settings; nil when it can.
     static var unavailableReason: String? {
+        #if canImport(FoundationModels)
         guard #available(macOS 26, *) else { return "Needs macOS 26 or later" }
         return Engine.unavailableReason
+        #else
+        return "Needs macOS 26 or later"
+        #endif
     }
 
     /// Characters of input that fit with room for the instructions and the reply (~3.5 per token).
     static let inputBudget = 14_000
 
     static func chat(system: String, user: String, json: Bool = false, temperature: Double = 0.2) async throws -> String {
+        #if canImport(FoundationModels)
         guard #available(macOS 26, *) else { throw Unavailable() }
         let instructions = json ? system + "\nReply with ONLY the JSON object: no prose, no code fences." : system
         return try await fitting(user) { try await Engine.respond(instructions: instructions, text: $0, temperature: temperature) }
+        #else
+        throw Unavailable()
+        #endif
     }
 
     static func stream(system: String, user: String, temperature: Double = 0.3,
                        onText: @escaping @Sendable (String) async -> Void) async throws -> String {
+        #if canImport(FoundationModels)
         guard #available(macOS 26, *) else { throw Unavailable() }
         return try await fitting(user) { try await Engine.stream(instructions: system, text: $0, temperature: temperature, onText: onText) }
+        #else
+        throw Unavailable()
+        #endif
     }
 
     /// Runs `body` on the text cut to the budget; if the model still finds it too long, on half as much.
@@ -75,6 +95,7 @@ enum AppleModel {
     }
 }
 
+#if canImport(FoundationModels)
 @available(macOS 26, *)
 private enum Engine {
     /// Lenient guardrails: summarizing or rewriting what's on screen trips the strict ones on ordinary text.
@@ -115,3 +136,4 @@ private enum Engine {
         return final
     }
 }
+#endif
