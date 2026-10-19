@@ -56,6 +56,8 @@ final class NotificationMirror: ObservableObject {
     private var launchWatch: Any?
     /// A look once a second as well, in case Notification Center doesn't announce a new banner.
     private var heartbeat: Timer?
+    /// Waiting for Accessibility to be allowed.
+    private var accessWait: Timer?
 
     // MARK: - Watching
 
@@ -63,7 +65,17 @@ final class NotificationMirror: ObservableObject {
         stop()
         guard AppSettings.shared.notificationMirror != .off else { return }
         guard AXIsProcessTrusted() else {
-            DebugHooks.log("NotificationMirror: needs Accessibility")
+            // Granted later (or again, after a rebuild resets it): start then, not at the next launch.
+            DebugHooks.log("NotificationMirror: needs Accessibility; starts once it's allowed")
+            let wait = Timer(timeInterval: 2, repeats: true) { _ in
+                MainActor.assumeIsolated {
+                    guard AXIsProcessTrusted() else { return }
+                    NotificationMirror.shared.apply()
+                }
+            }
+            wait.tolerance = 0.5
+            RunLoop.main.add(wait, forMode: .common)
+            accessWait = wait
             return
         }
         attach()
@@ -93,6 +105,8 @@ final class NotificationMirror: ObservableObject {
         poll = nil
         heartbeat?.invalidate()
         heartbeat = nil
+        accessWait?.invalidate()
+        accessWait = nil
         if let launchWatch { NSWorkspace.shared.notificationCenter.removeObserver(launchWatch) }
         launchWatch = nil
     }
@@ -158,7 +172,10 @@ final class NotificationMirror: ObservableObject {
         }
         // Out of sight (again, each look: a new banner can bring the window back), unless one up
         // isn't ours to show: then the system shows them all.
-        if !live.isEmpty, foreignIDs.isEmpty, !paneOpen { windows.forEach(Self.hide) }
+        if !live.isEmpty, foreignIDs.isEmpty, !paneOpen {
+            windows.forEach(Self.hide)
+            if !fresh.isEmpty { DebugHooks.log("NotificationMirror: hid \(fresh.count) at \(Date().timeIntervalSince1970)") }
+        }
         for (_, item) in fresh { show(item) }
     }
 
