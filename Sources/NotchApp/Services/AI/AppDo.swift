@@ -23,15 +23,32 @@ enum AppDo {
 
     struct Failure: LocalizedError {
         let message: String
+        /// Nothing in the app's menus matched: Search tries the request the usual way instead.
+        var noMatch = false
         var errorDescription: String? { message }
     }
 
     /// Typed text that reads as an instruction for an app rather than a search: it starts with a verb.
+    /// "Find a photo of…", "open my resume", "show the pdf from Sarah" are searches of the Mac, not
+    /// menu commands, so they stay with Search.
     static func looksLikeInstruction(_ q: String) -> Bool {
-        let words = q.lowercased().split(separator: " ").map(String.init)
-        guard words.count >= 2, let first = words.first else { return false }
-        return verbs.contains(first)
+        let lower = q.lowercased()
+        let words = lower.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        guard words.count >= 2, let first = words.first, verbs.contains(first) else { return false }
+        for word in words where searchWords.contains(word) { return false }
+        if first == "find" {
+            let inApp: [String] = ["find and replace", "find next", "find previous", "find in"]
+            for phrase in inApp where lower.hasPrefix(phrase) { return true }
+            return false
+        }
+        return true
     }
+
+    private static let searchWords: Set<String> = [
+        "my", "named", "called", "photo", "photos", "picture", "pictures", "pic", "pics", "image", "images", "file", "files",
+        "document", "documents", "doc", "docs", "pdf", "screenshot", "screenshots", "video", "videos", "folder", "resume",
+        "slides", "deck", "spreadsheet", "essay", "notes", "receipt", "invoice",
+    ]
 
     private static let verbs: Set<String> = [
         "export", "save", "print", "share", "open", "close", "new", "make", "turn", "switch", "show", "hide", "toggle",
@@ -75,7 +92,7 @@ enum AppDo {
         let picks = Array(([all.first].compactMap { $0 } + all.dropFirst().filter { !unavailable($0) }).prefix(3))
         DebugHooks.log("AppDo [\(name)] \(request) → \(picks.map(\.title)) sure=\(obj["sure"] ?? "?") of \(candidates.count)")
         guard let first = picks.first else {
-            throw Failure(message: "Couldn't find a way to do that in \(name). Try the words its menus use.")
+            throw Failure(message: "Couldn't find a way to do that in \(name). Try the words its menus use.", noMatch: true)
         }
         if unavailable(first) {
             throw Failure(message: "“\(first.title)” is in \(name)'s menus, but not available right now. It may need something open or selected first.")

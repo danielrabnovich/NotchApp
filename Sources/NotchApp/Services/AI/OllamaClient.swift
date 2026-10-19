@@ -179,6 +179,7 @@ enum OllamaClient {
     // MARK: - Chat
 
     /// Single-shot chat. With `json: true` the model is constrained to emit a JSON object.
+    /// Models whose runner has no JSON mode get the same request with JSON asked for in the prompt.
     static func chat(system: String, user: String, images: [Data] = [], json: Bool = false, temperature: Double = 0.2) async throws -> String {
         if await AppSettings.shared.aiProvider == .apple {
             return try await AppleModel.chat(system: system, user: user, json: json, temperature: temperature)
@@ -186,6 +187,30 @@ enum OllamaClient {
         if let cloud = await CloudLLM.active {
             return try await CloudLLM.chat(cloud, system: system, user: user, images: images, json: json, quick: json)
         }
+        let name = await model
+        if json, await noJSONMode.contains(name) {
+            let text = try await localChat(system: system + "\nReply with ONLY the JSON object: no prose, no code fences.",
+                                           user: user, images: images, json: false, temperature: temperature)
+            return outermostJSON(text)
+        }
+        do {
+            return try await localChat(system: system, user: user, images: images, json: json, temperature: temperature)
+        } catch let error as OllamaError where json && error.message.localizedCaseInsensitiveContains("structured output") {
+            // "structured output is unavailable" (some MLX-backed models). Without this, every feature
+            // that asks for JSON failed with that message.
+            await MainActor.run { _ = noJSONMode.insert(name) }
+            DebugHooks.log("OllamaClient: \(name) has no JSON mode; asking for JSON in the prompt instead")
+            return try await chat(system: system, user: user, images: images, json: true, temperature: temperature)
+        }
+    }
+
+    /// The JSON object in a reply that wrapped it in prose or code fences.
+    private static func outermostJSON(_ text: String) -> String {
+        guard let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"), start < end else { return text }
+        return String(text[start...end])
+    }
+
+    private static func localChat(system: String, user: String, images: [Data], json: Bool, temperature: Double) async throws -> String {
         do {
             return try await chat(system: system, user: user, images: images, json: json, temperature: temperature, disableThinking: true)
         } catch let error as OllamaError where error.isThinkingUnsupported {
@@ -307,23 +332,7 @@ enum OllamaClient {
     @MainActor private static var noJSONMode: Set<String> = []
 
     static func chatJSON(system: String, user: String, images: [Data] = []) async throws -> [String: Any] {
-        let name = await model
-        let text: String
-        if await AppSettings.shared.aiProvider == .apple {
-            text = try await AppleModel.chat(system: system, user: user, json: true, temperature: 0.1)
-        } else if await noJSONMode.contains(name) {
-            text = try await chat(system: system + "\nReply with ONLY the JSON object: no prose, no code fences.",
-                                  user: user, images: images, json: false, temperature: 0.1)
-        } else {
-            do {
-                text = try await chat(system: system, user: user, images: images, json: true, temperature: 0.1)
-            } catch let error as OllamaError where error.message.localizedCaseInsensitiveContains("structured output") {
-                // Without this fallback every routing call failed and search quietly fell back to keywords.
-                await MainActor.run { _ = noJSONMode.insert(name) }
-                DebugHooks.log("OllamaClient: \(name) has no JSON mode; asking for JSON in the prompt instead")
-                return try await chatJSON(system: system, user: user, images: images)
-            }
-        }
+        let text = try await chat(system: system, user: user, images: images, json: true, temperature: 0.1)
         if let obj = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] { return obj }
         // Models occasionally wrap JSON in prose; grab the outermost object.
         if let start = text.firstIndex(of: "{"), let end = text.lastIndex(of: "}"),
