@@ -7,7 +7,7 @@ import SwiftUI
 final class AssistantStore: ObservableObject {
     static let shared = AssistantStore()
 
-    enum Route: String { case files, web, weather, actions, calendar, notes, screen, write, app }
+    enum Route: String { case files, web, weather, actions, calendar, notes, screen, write, app, help }
 
     /// Text work for the model from the command bar.
     enum Writing {
@@ -448,14 +448,22 @@ final class AssistantStore: ObservableObject {
                     try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
                     throw Finished()
                 }
+                var chosen = forced
                 if forced == .app {
-                    try await doInApp(trimmed, id: id, useAI: useAI, progress: progress)
+                    if try await doInApp(trimmed, id: id, useAI: useAI, progress: progress) { throw Finished() }
+                    // Not something the app's menus do: search for it instead.
+                    chosen = nil
+                    update(id) { $0.route = nil; $0.state = .running(stage: "Thinking") }
+                }
+                // "What can you do", "where's the setting for…", "what's new": NotchApp's own help.
+                if chosen == .help || (chosen == nil && HelpBrain.isAvailable && Router.isAboutApp(trimmed)) {
+                    try await answerHelp(trimmed, id: id, useAI: useAI, progress: progress)
                     throw Finished()
                 }
                 var understanding = Router.understandWithoutAI(trimmed)
                 if useAI, let smart = try? await Router.understand(trimmed) { understanding = smart }
                 understanding.dayOffset = Router.weekendAdjusted(trimmed, dayOffset: understanding.dayOffset)
-                var route = forced ?? understanding.route
+                var route = chosen ?? understanding.route
                 if route == .screen, !AppSettings.shared.screenQuestions { route = .web }
                 update(id) { $0.route = route }
                 switch route {
@@ -505,6 +513,8 @@ final class AssistantStore: ObservableObject {
                     update(id) { $0.notes = answer; $0.state = .done }
                 case .screen:
                     try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
+                case .help:
+                    try await answerHelp(trimmed, id: id, useAI: useAI, progress: progress)
                 case .write, .app:
                     break // writing jobs run through write(_:), app ones above (run() is handed them by route)
                 case .weather:
@@ -574,21 +584,29 @@ final class AssistantStore: ObservableObject {
 
     /// Carries out an instruction in the app in front: a sure, harmless pick runs straight away (the
     /// notch steps aside for it); otherwise the picks wait for a click.
-    private func doInApp(_ request: String, id: UUID, useAI: Bool, progress: @escaping @Sendable (String) async -> Void) async throws {
+    /// Returns false when nothing in the app's menus matches, so Search can try it the usual way.
+    private func doInApp(_ request: String, id: UUID, useAI: Bool, progress: @escaping @Sendable (String) async -> Void) async throws -> Bool {
         guard useAI else {
             throw AppDo.Failure(message: "Doing things in apps needs an AI model: start Ollama, or add a cloud model's key, in Settings → Search.")
         }
         let app = FrontmostTracker.shared.userApp?.localizedName ?? "the app"
         await progress("Looking through \(app)")
-        let choice = try await AppDo.choose(request)
+        let choice: AppDo.Choice
+        do {
+            choice = try await AppDo.choose(request)
+        } catch let failure as AppDo.Failure where failure.noMatch {
+            DebugHooks.log("AppDo: no match for \(request); searching instead")
+            return false
+        }
         try Task.checkCancellation()
         if choice.sure, let first = choice.picks.first, !AppDo.isRisky(first) {
             CommandCenter.shared.run([first])
             ActivityCenter.shared.show(.notice(title: first.title, detail: "In \(choice.app)", icon: first.icon, tone: .success), for: 2.5)
             withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { if current?.id == id { current = nil } }
-            return
+            return true
         }
         update(id) { $0.appPicks = choice.picks; $0.appName = choice.app; $0.state = .done }
+        return true
     }
 
     /// Runs one of the picks shown for "do it in this app".
@@ -597,11 +615,21 @@ final class AssistantStore: ObservableObject {
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = nil }
     }
 
+    private func answerHelp(_ query: String, id: UUID, useAI: Bool,
+                            progress: @escaping @Sendable (String) async -> Void) async throws {
+        update(id) { $0.route = .help }
+        let (answer, sources) = try await HelpBrain.answer(query, useAI: useAI, progress: progress) { soFar, sources in
+            await MainActor.run { AssistantStore.shared.update(id, animated: false) { $0.answer = soFar; $0.sources = sources } }
+        }
+        try Task.checkCancellation()
+        update(id) { $0.answer = answer; $0.sources = sources; $0.state = .done }
+    }
+
     /// Same question, the other way (files ↔ web).
     func switchRoute() {
         guard let job = current, let route = job.route, route != .actions, route != .calendar, route != .write else { return }
         // Files ↔ web; a weather or screen answer switches to a full web search.
-        run(job.query, route: [.files, .weather, .screen].contains(route) ? .web : .files)
+        run(job.query, route: [.files, .weather, .screen, .help].contains(route) ? .web : .files)
     }
 
     func clear() {
@@ -685,10 +713,14 @@ enum Router {
         page", "is this right", "translate this", "what does this mean", "help me reply to this email". \
         So is rewriting text they typed after a colon: "rewrite this more politely: send me the report now", \
         "make this shorter: …", "fix the grammar: …", "translate to french: …".
+        - "help": questions about this app itself (NotchApp, "you"): what it can do, how to use one of its \
+        features, where a setting is, its keyboard shortcuts, what's new in it, or why something in it isn't \
+        working: "what can you do", "how do I keep screenshots", "where do I change the hover delay", \
+        "how do I add a cloud model", "what's new", "why can't you see my screen".
         - "web": questions and information from the internet: facts, news, sports, prices, places, hours, how-to, \
         definitions, recommendations.
         Reply with JSON only:
-        {"route": "files" or "web" or "weather" or "actions" or "calendar" or "notes" or "screen",
+        {"route": "files" or "web" or "weather" or "actions" or "calendar" or "notes" or "screen" or "help",
          "web_query": "concise search-engine query; keep time words like latest/last/this as written, don't add years",
          "location": "city for weather, or null if none given",
          "day_offset": 0 for today, 1 for tomorrow, etc. (weather only),
@@ -747,6 +779,19 @@ extension Router {
                        options: .regularExpression) != nil { return true }
         return anywhere.contains { phrase in
             lower.range(of: "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b", options: .regularExpression) != nil
+        }
+    }
+
+    /// Questions plainly about NotchApp itself, so they go straight to its help.
+    static func isAboutApp(_ query: String) -> Bool {
+        let l = query.lowercased().replacingOccurrences(of: "’", with: "'")
+        let phrases = ["notchapp", "notch app", "this app", "what can you do", "what can u do", "what do you do",
+                       "your features", "your capabilities", "capabilities", "what's new", "whats new", "changelog",
+                       "release notes", "recent changes", "in settings", "in the settings", "which setting", "where is the setting",
+                       "where's the setting", "the setting for", "the settings for", "how do i use you", "how do you work",
+                       "your shortcuts", "my shortcuts", "glances", "add-ons", "hover delay", "fake notch"]
+        return phrases.contains { phrase in
+            l.range(of: "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b", options: .regularExpression) != nil
         }
     }
 

@@ -9,6 +9,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cancellables = Set<AnyCancellable>()
     private let settings = AppSettings.shared
 
+    /// notchapp://settings/<page> links (from help answers, or anywhere else) open that page.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls { HelpBrain.open(url) }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEditMenu()
         MediaController.shared.start()

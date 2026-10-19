@@ -251,11 +251,11 @@ struct AskView: View {
     /// suggestion list's files and apps (nil entries for rows that aren't files).
     private var browsable: [URL] {
         guard let job = assistant.current else { return [] }
-        let streaming = (job.route == .web || job.route == .screen) && !(job.answer ?? "").isEmpty
+        let streaming = (job.route == .web || job.route == .screen || job.route == .help) && !(job.answer ?? "").isEmpty
         guard job.state == .done || streaming else { return [] }
         switch job.route {
         case .files?: return job.files.map(\.url)
-        case .weather?, .calendar?, .actions?: return []
+        case .weather?, .calendar?, .actions?, .help?: return []
         default: return (job.answer ?? "").isEmpty ? job.sources.map(\.url) : job.sources.prefix(5).map(\.url)
         }
     }
@@ -293,7 +293,8 @@ struct AskView: View {
     private func openSelected() -> Bool {
         guard assistant.current != nil, browsable.indices.contains(resultIndex) else { return false }
         QuickLook.shared.close()
-        NSWorkspace.shared.open(browsable[resultIndex])
+        let url = browsable[resultIndex]
+        if !HelpBrain.open(url) { NSWorkspace.shared.open(url) }
         if showsFiles { finish() }
         return true
     }
@@ -506,6 +507,7 @@ struct AskView: View {
         case .calendar?: "calendar"
         case .notes?: "note.text"
         case .screen?: "macwindow"
+        case .help?: "questionmark.circle"
         case .write?: "character.bubble"
         case .app?: "wand.and.stars"
         case nil: "magnifyingglass"
@@ -773,6 +775,8 @@ private struct ResultView: View {
             WebResults(job: job, accent: accent, selection: $selection)
         case .running where job.route == .screen && !(job.answer ?? "").isEmpty:
             ScreenResults(job: job, accent: accent, selection: $selection)
+        case .running where job.route == .help && !(job.answer ?? "").isEmpty:
+            HelpResults(job: job, accent: accent, selection: $selection)
         case .running(let stage):
             VStack(spacing: 10) {
                 Spacer(minLength: 0)
@@ -785,6 +789,7 @@ private struct ResultView: View {
                      : job.route == .calendar ? "Reading your calendar"
                      : job.route == .notes ? "Looking in your notes"
                      : job.route == .screen ? ScreenQuestion.privacyLine
+                     : job.route == .help ? "From NotchApp's guide, settings and changelog"
                      : "Working out where to look")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.3))
@@ -820,6 +825,7 @@ private struct ResultView: View {
                 case .calendar?: if let answer = job.calendar { CalendarResult(answer: answer) }
                 case .notes?: if let answer = job.notes { NotesResult(answer: answer) }
                 case .screen?: ScreenResults(job: job, accent: accent, selection: $selection)
+                case .help?: HelpResults(job: job, accent: accent, selection: $selection)
                 default: WebResults(job: job, accent: accent, selection: $selection)
                 }
                 RouteFooter(job: job)
@@ -894,6 +900,7 @@ private struct RouteFooter: View {
         case .calendar?: ("calendar", job.calendar?.tasks.isEmpty == false ? "Your calendar and tasks" : "Your calendar")
         case .notes?: ("note.text", "Your notes and tasks")
         case .screen?: ("macwindow", job.sources.isEmpty ? "Looked at your screen" : "Your screen and the web")
+        case .help?: ("questionmark.circle", "NotchApp help")
         case .write?: ("character.bubble", "Written by \(!AppSettings.shared.aiProvider.isCloud ? "the model on this Mac" : AppSettings.shared.aiProvider.shortName)")
         default: ("globe", "Searched the web")
         }
@@ -1297,6 +1304,33 @@ private struct ScreenResults: View {
     }
 }
 
+/// A help answer about NotchApp, with each "Settings → …" path a link to that page.
+private struct HelpResults: View {
+    let job: AssistantStore.Job
+    let accent: Color
+    @Binding var selection: Int
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            AnswerText(text: job.answer ?? "", accent: accent, settingsLinks: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.trailing, 28)
+        }
+        .overlay(alignment: .topTrailing) {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(job.answer ?? "", forType: .string)
+            } label: {
+                Image(systemName: "doc.on.doc").font(.system(size: 10))
+            }
+            .buttonStyle(NotchIconButtonStyle(size: 20))
+            .help("Copy answer")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .environment(\.openURL, OpenURLAction { url in HelpBrain.open(url) ? .handled : .systemAction })
+    }
+}
+
 /// Plain search results (no model to write an answer): title, site and snippet.
 private struct LinkResults: View {
     let sources: [WebSource]
@@ -1403,6 +1437,8 @@ private struct ShelfIconButton: View {
 private struct AnswerText: View {
     let text: String
     let accent: Color
+    /// "Settings → Shelf → Quick drops" becomes a link to that page (help answers).
+    var settingsLinks = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -1482,12 +1518,29 @@ private struct AnswerText: View {
         var rest = Substring(s)
         while let open = rest.firstIndex(of: "["), let close = rest[open...].firstIndex(of: "]"),
               Int(rest[rest.index(after: open)..<close]) != nil {
-            result = result + Text(String(rest[..<open]))
+            result = result + linked(String(rest[..<open]))
             let n = String(rest[rest.index(after: open)..<close])
             result = result + Text(" \(n)").font(.system(size: 9, weight: .medium)).foregroundColor(.white.opacity(0.45)).baselineOffset(4)
             rest = rest[rest.index(after: close)...]
         }
-        return result + Text(String(rest))
+        return result + linked(String(rest))
+    }
+
+    private func linked(_ s: String) -> Text {
+        guard settingsLinks, s.contains("Settings") else { return Text(s) }
+        var result = Text("")
+        for part in HelpBrain.linkify(s) {
+            if let url = part.link {
+                var a = AttributedString(part.text)
+                a.link = url
+                a.foregroundColor = accent
+                a.underlineStyle = .single
+                result = result + Text(a)
+            } else {
+                result = result + Text(part.text)
+            }
+        }
+        return result
     }
 }
 

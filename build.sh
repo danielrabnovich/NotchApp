@@ -34,6 +34,10 @@ cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 cp build/MediaAdapter.dylib MediaAdapter/adapter.pl "$APP/Contents/Resources/"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
+# What Search answers questions about NotchApp from: the guide, every setting and the changelog.
+echo "▸ Building help…"
+python3 scripts/build-help.py "$APP/Contents/Resources/Help.json" || echo "  (skipped: help answers will be unavailable)"
+
 # The App Intents (Shortcuts, Siri) metadata, as Xcode would extract it: needs Xcode's toolchain.
 if TOOL=$(xcrun --find appintentsmetadataprocessor 2>/dev/null); then
   echo "▸ Extracting App Intents…"
@@ -68,6 +72,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.2</string>
   <key>LSUIElement</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>$BUNDLE_ID</string>
+    <key>CFBundleURLSchemes</key><array><string>notchapp</string></array>
+  </dict></array>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSCameraUsageDescription</key><string>NotchApp's camera mirror shows a preview of yourself before a call.</string>
   <key>NSAppleEventsUsageDescription</key><string>NotchApp's Controls switch Dark Mode and empty the Trash, its app actions read the files selected in Finder and copy the song playing in Spotify, and replies to a coding agent are typed into its own Terminal or iTerm2 tab.</string>
