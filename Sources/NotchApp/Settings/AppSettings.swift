@@ -62,7 +62,15 @@ final class AppSettings: ObservableObject {
     /// How much of the open notch is glass, as iOS lets you choose: never by frosting it, only by
     /// how far the black reaches, how dark the shade over the glass is and how deep its rim bends.
     enum GlassLevel: String, CaseIterable, Identifiable {
-        case tinted, balanced, clear
+        case tinted, balanced, airy, clear
+        var id: String { rawValue }
+        var label: String { rawValue.capitalized }
+    }
+
+    /// What plays around the search bar: Apple Intelligence's colours, a white shimmer along its
+    /// edge, or nothing at all.
+    enum SearchBarEffect: String, CaseIterable, Identifiable {
+        case glow, shimmer, none
         var id: String { rawValue }
         var label: String { rawValue.capitalized }
     }
@@ -86,6 +94,7 @@ final class AppSettings: ObservableObject {
     @Published var showShadow: Bool { didSet { defaults.set(showShadow, forKey: "showShadow") } }
     @Published var notchMaterial: NotchMaterial { didSet { defaults.set(notchMaterial.rawValue, forKey: "notchMaterial") } }
     @Published var glassLevel: GlassLevel { didSet { defaults.set(glassLevel.rawValue, forKey: "glassLevel") } }
+    @Published var searchBarEffect: SearchBarEffect { didSet { defaults.set(searchBarEffect.rawValue, forKey: "searchBarEffect") } }
     /// Glass only where the system can draw it.
     var usesGlass: Bool { notchMaterial == .glass && NotchMaterial.isAvailable }
     @Published var haptics: Bool { didSet { defaults.set(haptics, forKey: "haptics") } }
@@ -278,6 +287,7 @@ final class AppSettings: ObservableObject {
             "openTo": "ask",
             "notchMaterial": NotchMaterial.glass.rawValue,
             "glassLevel": GlassLevel.balanced.rawValue,
+            "searchBarEffect": SearchBarEffect.glow.rawValue,
             "haptics": true,
             "musicEnabled": true,
             "musicLiveActivity": true,
@@ -383,6 +393,7 @@ final class AppSettings: ObservableObject {
         openTo = defaults.string(forKey: "openTo") ?? "ask"
         notchMaterial = NotchMaterial(rawValue: defaults.string(forKey: "notchMaterial") ?? "") ?? .glass
         glassLevel = GlassLevel(rawValue: defaults.string(forKey: "glassLevel") ?? "") ?? .balanced
+        searchBarEffect = SearchBarEffect(rawValue: defaults.string(forKey: "searchBarEffect") ?? "") ?? .glow
         haptics = defaults.bool(forKey: "haptics")
         glanceDensity = GlanceDensity(rawValue: defaults.string(forKey: "glanceDensity") ?? "") ?? .regular
         alertLevel = AlertLevel(rawValue: defaults.string(forKey: "alertLevel") ?? "") ?? .all

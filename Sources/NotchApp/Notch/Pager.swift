@@ -29,9 +29,11 @@ final class PagerState: ObservableObject {
     }
 
     /// The finger is on the trackpad, moving the pages.
-    var isSwiping = false
+    var isSwiping = false { willSet { if (newValue || isSettling) != isMoving { objectWillChange.send() } } }
     /// A slide is springing into place.
-    private(set) var isSettling = false
+    private(set) var isSettling = false { willSet { if (isSwiping || newValue) != isMoving { objectWillChange.send() } } }
+    // (Only starting or stopping moving is announced, for views paused while pages slide, like the
+    // search bar's glow: nothing else here is published, so a swipe doesn't re-render the pages.)
     var isMoving: Bool { isSwiping || isSettling }
 
     /// The page the layout rests on (the committed tab).

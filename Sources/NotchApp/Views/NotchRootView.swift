@@ -118,8 +118,10 @@ enum DynamicGlass {
     struct Look: Equatable {
         /// How far down the open notch stays black (a fraction of its height).
         var solid: CGFloat
-        /// The shade over the glass, a third and two thirds of the way down it and at the rim.
-        var shade: (CGFloat, CGFloat, CGFloat)
+        /// The shade left over the glass at the rim, and how quickly it clears on the way there
+        /// (the width of the fade's shoulder, as a fraction of it: smaller clears sooner).
+        var shade: CGFloat
+        var fade: CGFloat
         /// How far the rim bends what's behind, and over how many points inside the edge.
         var refraction: Double
         var refractionHeight: Double
@@ -130,17 +132,22 @@ enum DynamicGlass {
         init(_ level: AppSettings.GlassLevel) {
             switch level {
             case .tinted:
-                self.init(solid: 0.7, shade: (0.84, 0.77, 0.68), refraction: -45, refractionHeight: 16, highlight: 0.3, rim: 0.26)
+                self.init(solid: 0.7, shade: 0.68, fade: 0.6, refraction: -45, refractionHeight: 16, highlight: 0.3, rim: 0.26)
             case .balanced:
-                self.init(solid: 0.62, shade: (0.72, 0.6, 0.46), refraction: -60, refractionHeight: 20, highlight: 0.4, rim: 0.32)
+                self.init(solid: 0.62, shade: 0.46, fade: 0.58, refraction: -60, refractionHeight: 20, highlight: 0.4, rim: 0.32)
+            case .airy:
+                self.init(solid: 0.54, shade: 0.26, fade: 0.53, refraction: -80, refractionHeight: 28, highlight: 0.5, rim: 0.42)
             case .clear:
-                self.init(solid: 0.54, shade: (0.56, 0.4, 0.26), refraction: -80, refractionHeight: 28, highlight: 0.5, rim: 0.42)
+                // A shallower bend than Airy's: deeper, over this much glass, it squeezes the page
+                // into streaks along the rim instead of magnifying it.
+                self.init(solid: 0.42, shade: 0.08, fade: 0.46, refraction: -70, refractionHeight: 24, highlight: 0.7, rim: 0.55)
             }
         }
 
-        init(solid: CGFloat, shade: (CGFloat, CGFloat, CGFloat), refraction: Double, refractionHeight: Double, highlight: Double, rim: CGFloat) {
+        init(solid: CGFloat, shade: CGFloat, fade: CGFloat, refraction: Double, refractionHeight: Double, highlight: Double, rim: CGFloat) {
             self.solid = solid
             self.shade = shade
+            self.fade = fade
             self.refraction = refraction
             self.refractionHeight = refractionHeight
             self.highlight = highlight
@@ -148,21 +155,64 @@ enum DynamicGlass {
         }
 
         static func == (a: Look, b: Look) -> Bool {
-            a.solid == b.solid && a.shade == b.shade && a.refraction == b.refraction
+            a.solid == b.solid && a.shade == b.shade && a.fade == b.fade && a.refraction == b.refraction
                 && a.refractionHeight == b.refractionHeight && a.highlight == b.highlight && a.rim == b.rim
         }
     }
 
+    /// Points of glass below which the surface is a small card (a Banner, a peek, captions), whose
+    /// text sits on the glass itself rather than above it.
+    static let roomy: CGFloat = 110
+
     /// Dark enough to read white text over anything, clearing toward the rim so the bend shows.
-    /// `solid` is how far down (a fraction of the height) it stays black.
-    static func shade(solid: CGFloat, look: Look) -> [(alpha: CGFloat, location: CGFloat)] {
-        let rest = 1 - solid
-        return [(1, 0), (1, solid), (look.shade.0, solid + rest * 0.32), (look.shade.1, solid + rest * 0.68), (look.shade.2, 1)]
+    /// `solid` is how far down (a fraction of the height) it stays black, `height` the shape's.
+    static func shade(solid: CGFloat, height: CGFloat, look: Look) -> [(alpha: CGFloat, location: CGFloat)] {
+        let band = height * (1 - solid)
+        // A small card keeps more of the shade, the smaller the more, so its text still reads over a
+        // bright page; the rim still clears the most.
+        let small = min(1, max(0, (roomy - band) / 60))
+        let floor = look.shade + (1 - look.shade) * 0.3 * small
+        let start = fadeStart(solid: solid, height: height)
+        return [(1, 0)] + (0...steps).map { s in
+            let u = CGFloat(s) / CGFloat(steps)
+            return (1 - (1 - floor) * fade(u, width: look.fade), start + (1 - start) * u)
+        }
     }
 
-    /// Nothing along the black (it's flush with the screen edge), a fine highlight on the glass.
-    static func rim(solid: CGFloat, look: Look) -> [(alpha: CGFloat, location: CGFloat)] {
-        [(0, 0), (0, solid), (look.rim, 1)]
+    /// Nothing along the black (it's flush with the screen edge), a fine highlight on the glass,
+    /// coming in along the same curve as the glass itself.
+    static func rim(solid: CGFloat, height: CGFloat, look: Look) -> [(alpha: CGFloat, location: CGFloat)] {
+        let start = fadeStart(solid: solid, height: height)
+        return [(0, 0)] + (0...steps).map { s in
+            let u = CGFloat(s) / CGFloat(steps)
+            return (look.rim * fade(u, width: look.fade), start + (1 - start) * u)
+        }
+    }
+
+    private static let steps = 24
+
+    /// Where the fade begins: a little above the black's end (up to 24 points, a quarter of the glass
+    /// on a small card), so it has the room to be gentle. What sits just above is still near black.
+    private static func fadeStart(solid: CGFloat, height: CGFloat) -> CGFloat {
+        let lead = min(24, height * (1 - solid) * 0.25)
+        return max(0, solid - lead / max(height, 1))
+    }
+
+    /// How far the shade has cleared at `u` (0 where the fade begins, 1 at the rim): the shoulder of
+    /// a bell curve, so it leaves the black flat and its steepness never changes suddenly. Through
+    /// fixed points instead, it plunged and then flattened out, and that bend showed as a line.
+    private static func fade(_ u: CGFloat, width: CGFloat) -> CGFloat {
+        let w2 = width * width
+        let tail = exp(-1 / w2)
+        return 1 - (exp(-u * u / w2) - tail) / (1 - tail)
+    }
+
+    /// How deep the rim bends for `band` points of glass: the level's own on the open notch, scaled
+    /// down with a small card, where a full-depth bend reaches past its text and turns the page
+    /// behind it upside down. Whole points, so a resizing card doesn't retune the filter every frame.
+    static func refraction(band: CGFloat, look: Look) -> (amount: Double, height: Double) {
+        let height = min(look.refractionHeight, max(4, (Double(band) * 0.3).rounded()))
+        return (look.refraction * height / look.refractionHeight, height)
     }
 }
 
@@ -309,8 +359,9 @@ private struct NotchSurface: View, Animatable {
             // The shade and rim gradients run down the shape: from the top of the window (1 in
             // unit space, y up) to the shape's bottom edge.
             let bottom = 1 - size.height / H
-            for (layer, mask, stops) in [(shade, shadeMask, DynamicGlass.shade(solid: solid, look: look)),
-                                         (rim, rimMask, DynamicGlass.rim(solid: solid, look: look))] {
+            let band = size.height * (1 - solid)
+            for (layer, mask, stops) in [(shade, shadeMask, DynamicGlass.shade(solid: solid, height: size.height, look: look)),
+                                         (rim, rimMask, DynamicGlass.rim(solid: solid, height: size.height, look: look))] {
                 layer.frame = bounds
                 mask.frame = bounds
                 mask.path = path
@@ -333,7 +384,7 @@ private struct NotchSurface: View, Animatable {
             clip.cornerRadius = b
             clip.sublayers?.first?.frame = clip.bounds
             lens.layout(width: clip.bounds.width, height: clip.bounds.height, radius: b)
-            lens.tune(look)
+            lens.tune(look, band: band)
         }
     }
 }
@@ -358,7 +409,7 @@ enum GlassLens {
         let element: CALayer
         private let backdrop: CALayer
         private let glass: NSObject
-        private var look: DynamicGlass.Look?
+        private var tuned: (amount: Double, height: Double, highlight: Double)?
 
         init(element: CALayer, backdrop: CALayer, glass: NSObject) {
             self.element = element
@@ -366,14 +417,18 @@ enum GlassLens {
             self.glass = glass
         }
 
-        /// The level's bend and highlight; the filter is handed back for them to take effect.
-        func tune(_ look: DynamicGlass.Look) {
-            guard look != self.look else { return }
-            self.look = look
-            glass.setValue(look.refraction, forKey: "inputInnerRefractionAmount")
-            glass.setValue(look.refractionHeight, forKey: "inputInnerRefractionHeight")
-            glass.setValue(look.highlight, forKey: "inputKeyFillHighlightAmount")
-            backdrop.filters = [glass]
+        /// The level's bend (scaled to `band` points of glass) and highlight; the filter is handed
+        /// back for them to take effect.
+        func tune(_ look: DynamicGlass.Look, band: CGFloat) {
+            let bend = DynamicGlass.refraction(band: band, look: look)
+            let next = (amount: bend.amount, height: bend.height, highlight: look.highlight)
+            guard tuned.map({ $0 != next }) ?? true else { return }
+            tuned = next
+            glass.setValue(next.amount, forKey: "inputInnerRefractionAmount")
+            glass.setValue(next.height, forKey: "inputInnerRefractionHeight")
+            glass.setValue(next.highlight, forKey: "inputKeyFillHighlightAmount")
+            // A copy: handed the filter it already has, the layer keeps drawing with the old values.
+            backdrop.filters = [glass.copy()]
         }
 
         /// The glass's shape: the clip's own rectangle with the same corners, carried well past the

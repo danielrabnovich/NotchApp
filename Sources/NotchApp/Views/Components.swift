@@ -595,7 +595,25 @@ struct KeyCap: View {
     }
 }
 
-/// Rounded text button: solid white when primary, a soft fill otherwise.
+/// What a click does, as macOS shows it: the system accent (blue unless the Mac is set
+/// otherwise), on default buttons, links and send buttons alike.
+enum ActionColor {
+    static var fill: Color { Color(nsColor: .controlAccentColor) }
+    /// As text over black or glass: a step lighter, as dark mode draws links.
+    static var link: Color { Color(nsColor: NSColor.controlAccentColor.blended(withFraction: 0.3, of: .white) ?? .controlAccentColor) }
+}
+
+/// A link inside a line of text ("Undo", "Add your key"): the accent colour, nothing around it.
+struct NotchLinkButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(ActionColor.link.opacity(configuration.isPressed ? 0.6 : 1))
+            .contentShape(Rectangle())
+    }
+}
+
+/// Rounded text button: the accent colour when primary (as a Mac's default button is), a soft
+/// fill otherwise.
 struct NotchPillButtonStyle: ButtonStyle {
     var primary = false
     var height: CGFloat = 26
@@ -612,12 +630,13 @@ struct NotchPillButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(.system(size: 11.5, weight: primary ? .semibold : .medium))
-                .foregroundStyle(primary ? .black : .white.opacity(0.88))
+                .font(.system(size: height < 24 ? 10.5 : 11.5, weight: primary ? .semibold : .medium))
+                .foregroundStyle(.white.opacity(primary ? 1 : 0.88))
                 .fixedSize()
-                .padding(.horizontal, 12)
+                .padding(.horizontal, height < 24 ? 9 : 12)
                 .frame(height: height)
-                .background(Capsule().fill(primary ? .white.opacity(hovering ? 1 : 0.92) : .white.opacity(hovering ? 0.16 : 0.1)))
+                .background(Capsule().fill(primary ? AnyShapeStyle(ActionColor.fill.opacity(hovering ? 1 : 0.9))
+                                                   : AnyShapeStyle(.white.opacity(hovering ? 0.18 : 0.12))))
                 .scaleEffect(configuration.isPressed ? 0.96 : 1)
                 .animation(Motion.small.animation, value: configuration.isPressed)
                 .animation(.easeOut(duration: 0.12), value: hovering)
@@ -698,5 +717,42 @@ struct TabKeyboard: ViewModifier {
             return false
         }
         return handle(event)
+    }
+}
+
+/// The send button at the end of a reply field, as in Messages: an arrow in an accent-coloured
+/// circle once there's something to send, greyed out until then.
+struct SendButton: View {
+    var size: CGFloat = 22
+    let enabled: Bool
+    var sending = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle().fill(enabled || sending ? AnyShapeStyle(ActionColor.fill) : AnyShapeStyle(.white.opacity(0.12)))
+                if sending {
+                    ProgressView().controlSize(.mini).tint(.white)
+                } else {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: size * 0.5, weight: .bold))
+                        .foregroundStyle(.white.opacity(enabled ? 1 : 0.35))
+                }
+            }
+            .frame(width: size, height: size)
+            .contentShape(Circle())
+        }
+        .buttonStyle(PressScale())
+        .disabled(!enabled || sending)
+        .animation(.easeOut(duration: 0.15), value: enabled)
+    }
+
+    private struct PressScale: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.88 : 1)
+                .animation(Motion.small.animation, value: configuration.isPressed)
+        }
     }
 }

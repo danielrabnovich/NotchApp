@@ -232,12 +232,8 @@ private struct MessageReplyView: View {
                             .lineLimit(1...3)
                             .focused($focused)
                             .onSubmit(send)
-                        Button(action: send) {
-                            Image(systemName: sending ? "ellipsis" : "arrow.up").font(.system(size: 10, weight: .bold))
-                        }
-                        .buttonStyle(NotchIconButtonStyle(size: 22))
-                        .disabled(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sending)
-                        .help("Send without leaving what you're doing")
+                        SendButton(enabled: !reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, sending: sending, action: send)
+                            .help("Send without leaving what you're doing")
                     }
                     .padding(.leading, 11)
                     .padding(.trailing, 3)

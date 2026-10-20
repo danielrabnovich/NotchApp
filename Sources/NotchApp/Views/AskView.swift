@@ -43,7 +43,11 @@ struct AskView: View {
     @ViewBuilder private var search: some View {
         // One layout with a single search field: swapping between separate layouts recreated
         // the field and took the cursor out of it as soon as suggestions appeared.
+        // The bar moves up with the first key typed, not a beat later when the suggestions arrive
+        // (it slid up through them then). Typing instructions for an action, or about a captured
+        // window, keeps it where it is: there are no suggestions to make room for.
         let idle = assistant.current == nil && suggestions.items.isEmpty
+            && (query.isEmpty || pendingAction != nil || assistant.context != nil)
         VStack(spacing: idle ? 12 : 6) {
             if idle { Spacer(minLength: 0) }
             searchBar(compact: !idle)
@@ -59,7 +63,13 @@ struct AskView: View {
                     .padding(SuggestionList.inset)
                     .notchSurface(RoundedRectangle(cornerRadius: SuggestionList.radius, style: .continuous))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .transition(.opacity.combined(with: .offset(y: -4)))
+                    // In once the bar has mostly made its move, so it doesn't pass over them.
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: -6))
+                                                .animation(.easeOut(duration: 0.2).delay(0.12)),
+                                            removal: .opacity.animation(.easeOut(duration: 0.1))))
+            } else if !idle {
+                // Typed, and the suggestions are on their way: room for them.
+                Spacer(minLength: 0)
             } else {
                 Group {
                     if let context = assistant.context {
@@ -85,6 +95,8 @@ struct AskView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The bar's move up and its change of size, as one motion.
+        .animation(Motion.pane.animation, value: idle)
         .contentShape(Rectangle())
         .onTapGesture {
             guard idle else { return }
@@ -365,8 +377,11 @@ struct AskView: View {
                     ThinkingRing(size: compact ? 20 : 24, speed: 0.9, disc: false)
                         .transition(.scale(scale: 0.5).combined(with: .opacity))
                 } else {
+                    // One size, scaled down for the compact bar: a symbol that changes size redraws in
+                    // place, where a scale moves along with the bar.
                     Image(systemName: routeIcon)
-                        .font(.system(size: compact ? 14 : 17, weight: .medium))
+                        .font(.system(size: 17, weight: .medium))
+                        .scaleEffect(compact ? 14.0 / 17 : 1)
                         .foregroundStyle(.white.opacity(looksFocused ? 0.8 : 0.45))
                         .contentTransition(.symbolEffect(.replace))
                 }
@@ -452,7 +467,10 @@ struct AskView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                // In where it lands, once the bar has moved there (a view coming in starts out in its
+                // final place, which ahead of the bar was outside it).
+                .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.8)).animation(.easeOut(duration: 0.16).delay(0.2)),
+                                        removal: .opacity.animation(.easeOut(duration: 0.1))))
             } else if settings.hotKeysEnabled, let combo = HotKeys.combo(for: .search) {
                 // The shortcut that brings the bar back, like Spotlight's ⌘Space: whatever it's set to
                 // in Settings (a rebound key, or none when it's turned off).
@@ -466,19 +484,18 @@ struct AskView: View {
         .frame(maxWidth: compact ? .infinity : 500)
         .notchSurface(Capsule(), active: looksFocused)
         .overlay {
-            // Above results the bar spans the page: keep the glow to the bar plus a 7pt bloom.
-            if compact {
-                RainbowGlow(focused: looksFocused, running: running, compact: true, pager: viewModel.pager, onScreen: viewModel.tab == .ask && viewModel.isSettled)
-                    .mask { Capsule().padding(-7) }
-            } else {
-                RainbowGlow(focused: looksFocused, running: running, pager: viewModel.pager, onScreen: viewModel.tab == .ask && viewModel.isSettled)
+            // Above results the bar spans the page: keep the glow to the bar plus a 7pt bloom. One glow
+            // either way, so the bar widening as you type doesn't bring a fresh one (and its flare).
+            if settings.searchBarEffect != .none {
+                RainbowGlow(style: settings.searchBarEffect, focused: looksFocused, running: running, compact: compact, typing: query.count,
+                            pager: viewModel.pager, onScreen: viewModel.tab == .ask && viewModel.isSettled)
+                    .mask { Capsule().padding(compact ? -7 : -RainbowGlow.spread) }
             }
         }
         // Room for the glow's bloom when the bar spans the page, so it isn't cut off at the edges.
         .padding(.horizontal, compact ? 8 : 0)
         .padding(.top, compact ? 7 : 0)
         .animation(.easeOut(duration: 0.18), value: looksFocused)
-        .animation(Motion.pane.animation, value: compact)
         .animation(.easeOut(duration: 0.15), value: query.isEmpty)
         // Only hold the notch open once something's typed, so an auto-focused empty bar
         // doesn't stop it closing when the pointer leaves.
@@ -800,16 +817,15 @@ private struct ResultView: View {
             VStack(spacing: 10) {
                 Image(systemName: "exclamationmark.triangle").font(.system(size: 20))
                 Text(message).font(.system(size: 12)).multilineTextAlignment(.center)
-                HStack(spacing: 16) {
+                HStack(spacing: 8) {
                     // Straight to the right list: "Screen Recording" is easy to confuse with Accessibility.
                     if job.route == .screen, !ScreenQuestion.hasPermission {
                         Button("Open Screen Recording settings") { ScreenQuestion.openPrivacySettings() }
+                            .buttonStyle(NotchPillButtonStyle())
                     }
                     Button("Try again") { assistant.run(job.query, route: job.route) }
+                        .buttonStyle(NotchPillButtonStyle(primary: true))
                 }
-                .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(accent)
             }
             .foregroundStyle(.white.opacity(0.6))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -919,28 +935,26 @@ private struct RouteFooter: View {
             }
             // What an action wrote (a summary, a drafted reply) is for copying; searching the web for
             // its hidden instruction instead wouldn't mean anything.
+            // What to do next, as buttons rather than faint links: the suggested next step in the
+            // accent colour, the others plain, so they read over the glass and anything behind it.
             if let next = job.followUpTitle, job.state == .done {
-                Text("·")
                 Button(next) { assistant.runFollowUp() }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.85))
+                    .buttonStyle(NotchPillButtonStyle(primary: true, height: 20))
+                    .padding(.leading, 4)
             }
             if job.route == .write || job.actionTitle != nil, let answer = job.answer, job.state == .done {
-                Text("·")
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(answer, forType: .string)
                     Haptics.tap()
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.65))
+                .buttonStyle(NotchPillButtonStyle(height: 20))
             } else if job.route != .calendar, job.actionTitle == nil {
-                Text("·")
                 Button(job.route == .web || job.route == .notes ? "Search my files instead" : "Search the web instead") {
                     assistant.switchRoute()
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(0.65))
+                .buttonStyle(NotchPillButtonStyle(height: 20))
+                .padding(.leading, job.followUpTitle == nil || job.state != .done ? 4 : 0)
             }
             Spacer()
             if !assistant.aiAvailable && job.route != .weather && assistant.pullingModel == nil {
@@ -954,7 +968,7 @@ private struct RouteFooter: View {
             }
         }
         .font(.system(size: 10.5, weight: .medium))
-        .foregroundStyle(.white.opacity(0.32))
+        .foregroundStyle(.white.opacity(0.5))
     }
 }
 
@@ -1035,9 +1049,8 @@ private struct FileResults: View {
                     Text("NotchApp can't see \(access.missing.map(\.name).joined(separator: ", ")) yet.")
                         .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
                     Button("Allow in System Settings") { FolderAccess.openPrivacySettings() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.85))
+                        .buttonStyle(NotchPillButtonStyle(primary: true, height: 24))
+                        .padding(.top, 4)
                 } else {
                     Text("Try a word that might be in its name").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
                 }
@@ -1745,19 +1758,16 @@ private struct ConfirmationLine: View {
             if let undo = confirmation.undo {
                 Text("·").foregroundStyle(.white.opacity(0.3))
                 Button("Undo") { CommandCenter.shared.undo(undo) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.55))
+                    .buttonStyle(NotchLinkButtonStyle())
             }
             if let destination = confirmation.destination, case .show(let tab, let pane) = destination {
                 Text("·").foregroundStyle(.white.opacity(0.3))
                 Button("Show") { CommandCenter.shared.show(tab, pane: pane) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.55))
+                    .buttonStyle(NotchLinkButtonStyle())
             } else if let destination = confirmation.destination, case .settingsPane(let pane) = destination {
                 Text("·").foregroundStyle(.white.opacity(0.3))
                 Button("Settings") { CommandCenter.shared.run([Command(action: .settingsPane(pane), title: pane.title, icon: pane.icon)]) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.55))
+                    .buttonStyle(NotchLinkButtonStyle())
             }
         }
         .font(.system(size: 11.5, weight: .medium))
@@ -1765,18 +1775,21 @@ private struct ConfirmationLine: View {
     }
 }
 
-/// An Apple Intelligence–style glow around the search bar: three layered strokes of an angular
-/// gradient in Apple Intelligence's palette (a crisp core, a soft bloom and a faint wash that tints
-/// the bar's inside), slowly rotating while you type or a search runs.
-///
-/// Blurring a rotating gradient live would re-blur every frame and bring back dropped frames, so
-/// 16 rotation steps are rendered once and the view crossfades between neighbouring steps.
+/// An Apple Intelligence–style glow around the search bar: layered strokes of a conic gradient in
+/// Apple Intelligence's palette (a crisp core, a soft bloom and a faint wash that tints the bar's
+/// inside), each turning at its own pace so the colours flow into one another. It eases in as it comes
+/// on, flares as a search starts, pulses with each key typed, runs faster while a search does, and
+/// drifts slowly when the bar isn't focused. It's never frozen while it can be seen, except for Reduce Motion. As a shimmer,
+/// the same layers carry a white light round the edge instead, with no colour.
 private struct RainbowGlow: View {
+    var style: AppSettings.SearchBarEffect = .glow
     let focused: Bool
     let running: Bool
     /// The bar spans the page above results: keep the glow tight to the bar (edge, inner tint and a
     /// small bloom) so it isn't clipped by the page or spill onto the list below.
     var compact = false
+    /// Changes with each key typed, for a pulse of light.
+    var typing = 0
     /// Paused while pages slide, another tab is showing or the notch is still springing open.
     @ObservedObject var pager: PagerState
     var onScreen = true
@@ -1787,41 +1800,53 @@ private struct RainbowGlow: View {
     var body: some View {
         let still = pager.isSwiping || pager.isSettling || !onScreen
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        // Turns slowly while you type, twice as fast while a search runs, and holds its angle when
-        // paused: speed changes never move it, so it can't jump.
-        let speed: Float = still || reduceMotion || !(focused || running) ? 0 : running ? 2 : 1
-        GlowLayers(speed: speed, compact: compact)
+        // How fast it flows: drifting when the bar isn't focused, faster while a search runs; held
+        // where it is while paused (it carries on from the same angle).
+        let speed: Float = still || reduceMotion ? 0 : running ? 2.2 : focused ? 1 : 0.35
+        let level: Float = running ? 0.8 : focused ? 0.62 : 0.3
+        GlowLayers(style: style, speed: speed, level: level, compact: compact, typing: typing)
             .padding(-Self.spread)
-            .opacity(running ? 0.9 : focused ? 0.7 : 0.35)
-            .animation(.easeOut(duration: 0.3), value: focused)
-            .animation(.easeOut(duration: 0.3), value: running)
             .allowsHitTesting(false)
     }
 }
 
-/// The glow as Core Animation layers: a conic gradient in Apple Intelligence's palette, rotating in
-/// the window server, seen through the bar's outline in three blurred strata (a faint wash that
-/// tints the inside, a soft bloom, a fine core along the edge). Nothing is drawn per frame by the
-/// app. (It used to crossfade 16 pre-blurred stills at 30 fps, which stepped and dimmed between
-/// frames, and jumped whenever the turn speed changed.)
+/// The glow as Core Animation layers, seen through the bar's outline in three blurred strata. Every
+/// motion is a Core Animation animation that runs in the window server: nothing is drawn per frame by
+/// the app. Each speed change restarts the turns from where they are (there's no shared clock to
+/// re-base, which could leave a reused glow stuck).
 /// Lets the app build the search bar's glow ahead of the first open.
 enum SearchGlow {
     @MainActor static func prewarm() { GlowLayers.prewarm() }
 }
 
 private struct GlowLayers: NSViewRepresentable {
+    let style: AppSettings.SearchBarEffect
     let speed: Float
+    let level: Float
     let compact: Bool
+    let typing: Int
 
     /// Finished glows, kept for the next open: building the layers and their blur filters cost a
     /// dropped frame at the start of every open. (One per notch screen at most, so it stays tiny.)
     @MainActor private static var pool: [GlowView] = []
 
-    func makeNSView(context: Context) -> GlowView { Self.pool.popLast() ?? GlowView() }
-    func updateNSView(_ view: GlowView, context: Context) { view.set(speed: speed, compact: compact) }
+    func makeNSView(context: Context) -> GlowView {
+        let view = Self.pool.popLast() ?? GlowView()
+        view.typing = typing
+        return view
+    }
+
+    func updateNSView(_ view: GlowView, context: Context) {
+        view.apply(style)
+        view.set(speed: speed, level: level, compact: compact)
+        if typing != view.typing {
+            if typing > view.typing { view.pulse() }
+            view.typing = typing
+        }
+    }
 
     static func dismantleNSView(_ view: GlowView, coordinator: ()) {
-        view.set(speed: 0, compact: view.isCompact)
+        view.reset()
         if pool.count < 2 { pool.append(view) }
     }
 
@@ -1831,10 +1856,28 @@ private struct GlowLayers: NSViewRepresentable {
     }
 
     final class GlowView: NSView {
-        private let spin = CALayer()        // the time base: its speed is the turn speed
-        private var strata: [(wrapper: CALayer, masked: CALayer, mask: CAShapeLayer, gradient: CAGradientLayer, line: CGFloat)] = []
+        private struct Stratum {
+            let wrapper: CALayer
+            let mask: CAShapeLayer
+            let gradient: CAGradientLayer
+            let line: CGFloat
+            let opacity: Float
+            /// Seconds per turn at speed 1, and which way.
+            var period: Double
+            var direction: Double
+        }
+
+        /// All the strata; its opacity is how bright the glow is.
+        private let glow = CALayer()
+        private var strata: [Stratum] = []
+        private var speed: Float = 0
+        private var level: Float = 0
         private var compact = false
-        var isCompact: Bool { compact }
+        private var style: AppSettings.SearchBarEffect = .glow
+        var typing = 0
+
+        /// One white light with a tail, once round: the shimmer.
+        private static let shimmer: [CGColor] = [0, 0, 0.5, 0.95, 0].map { CGColor(gray: 1, alpha: $0) }
 
         /// Apple Intelligence's palette: lilac/violet, periwinkle, sky, pink, coral and peach.
         private static let colors: [CGColor] = {
@@ -1851,10 +1894,12 @@ private struct GlowLayers: NSViewRepresentable {
             super.init(frame: frame)
             wantsLayer = true
             layerUsesCoreImageFilters = true
-            layer?.addSublayer(spin)
-            spin.speed = 0
-            // (line width, blur, opacity), widest first.
-            for (line, blur, opacity) in [(CGFloat(16), 18.0, Float(0.18)), (5, 6, 0.5), (1.5, 0, 0.9)] {
+            glow.opacity = 0
+            layer?.addSublayer(glow)
+            // (line width, blur, opacity, seconds per turn, direction), widest first. The wash turns
+            // the other way, so the colours inside and along the edge drift through each other.
+            let specs: [(CGFloat, Double, Float, Double, Double)] = [(16, 18, 0.2, 15, 1), (5, 6, 0.55, 9, -1), (1.5, 0, 0.95, 6.5, -1)]
+            for (i, (line, blur, opacity, period, direction)) in specs.enumerated() {
                 let wrapper = CALayer()
                 wrapper.opacity = opacity
                 if blur > 0, let filter = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputRadiusKey: blur]) {
@@ -1871,47 +1916,193 @@ private struct GlowLayers: NSViewRepresentable {
                 gradient.colors = Self.colors
                 gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
                 gradient.endPoint = CGPoint(x: 0.5, y: 0)
-                let turn = CABasicAnimation(keyPath: "transform.rotation.z")
-                turn.fromValue = 0
-                turn.toValue = -2 * Double.pi
-                turn.duration = 6
-                turn.repeatCount = .infinity
-                turn.isRemovedOnCompletion = false
-                gradient.add(turn, forKey: "turn")
+                // Each starts a third of a turn on from the last, so they never line up.
+                gradient.setValue(Double(i) * 2 * .pi / 3, forKeyPath: "transform.rotation.z")
                 masked.addSublayer(gradient)
                 wrapper.addSublayer(masked)
-                spin.addSublayer(wrapper)
-                strata.append((wrapper, masked, mask, gradient, line))
+                glow.addSublayer(wrapper)
+                strata.append(Stratum(wrapper: wrapper, mask: mask, gradient: gradient, line: line, opacity: opacity, period: period, direction: direction))
             }
         }
         required init?(coder: NSCoder) { fatalError() }
 
-        func set(speed: Float, compact: Bool) {
+        /// Colour or shimmer. The shimmer's layers turn together, so the soft light stays with the
+        /// bright one, and there's no wash: only the edge lights up.
+        func apply(_ style: AppSettings.SearchBarEffect) {
+            guard style != self.style else { return }
+            self.style = style
+            let shimmer = style == .shimmer
+            let glow: [(period: Double, direction: Double)] = [(15, 1), (9, -1), (6.5, -1)]
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for i in strata.indices {
+                strata[i].gradient.colors = shimmer ? Self.shimmer : Self.colors
+                strata[i].wrapper.opacity = shimmer ? [0, 0.4, 1][i] : strata[i].opacity
+                strata[i].period = shimmer ? 4 : glow[i].period
+                strata[i].direction = shimmer ? 1 : glow[i].direction
+                strata[i].gradient.setValue(shimmer ? 0 : Double(i) * 2 * .pi / 3, forKeyPath: "transform.rotation.z")
+            }
+            CATransaction.commit()
+            if speed > 0 { turn() }
+            if shimmer { strata[0].wrapper.removeAnimation(forKey: "breathe") } else { breathe(speed > 0) }
+        }
+
+        func set(speed: Float, level: Float, compact: Bool) {
             if compact != self.compact {
                 self.compact = compact
                 needsLayout = true
             }
-            guard speed != spin.speed else { return }
-            // Re-base the clock where it is now, so the angle carries on from here at the new speed.
-            let now = CACurrentMediaTime()
-            let local = spin.convertTime(now, from: nil)
-            spin.beginTime = now
-            spin.timeOffset = local
-            spin.speed = speed
+            let (wasSpeed, wasLevel) = (self.speed, self.level)
+            self.speed = speed
+            self.level = level
+            if level != wasLevel { fade(to: level) }
+            if speed != wasSpeed {
+                turn()
+                breathe(speed > 0)
+            }
+            // A search starting while it's already flowing: it flares, and settles. (Not as it comes
+            // on: that waits for the notch to settle, so a flare there came late, as a jump.)
+            if speed > 0, wasSpeed > 0, wasLevel >= 0.5, level > wasLevel + 0.1 {
+                ignite()
+            }
+        }
+
+        /// Ready to be shown again from nothing: dark, still, and with nothing left running.
+        func reset() {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            glow.removeAllAnimations()
+            glow.opacity = 0
+            for s in strata {
+                hold(s.gradient)
+                s.gradient.removeAnimation(forKey: "ignite")
+                s.mask.removeAllAnimations()
+                s.wrapper.removeAllAnimations()
+            }
+            CATransaction.commit()
+            speed = 0
+            level = 0
+        }
+
+        /// A key typed: a quick swell of light along the edge.
+        func pulse() {
+            guard speed > 0 else { return }
+            for s in strata.dropFirst() {
+                let swell = CABasicAnimation(keyPath: "opacity")
+                swell.isAdditive = true
+                swell.fromValue = 0.12
+                swell.toValue = 0
+                swell.duration = 0.35
+                swell.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                s.wrapper.add(swell, forKey: "pulse")
+                let widen = CABasicAnimation(keyPath: "lineWidth")
+                widen.isAdditive = true
+                widen.fromValue = s.line * 0.3
+                widen.toValue = 0
+                widen.duration = 0.35
+                widen.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                s.mask.add(widen, forKey: "pulse")
+            }
+        }
+
+        /// Brightness eases to the new level from wherever it is now.
+        private func fade(to level: Float) {
+            let from = glow.presentation()?.opacity ?? glow.opacity
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            glow.opacity = level
+            CATransaction.commit()
+            let ease = CABasicAnimation(keyPath: "opacity")
+            ease.fromValue = from
+            ease.toValue = level
+            ease.duration = 0.35
+            ease.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            glow.add(ease, forKey: "level")
+        }
+
+        /// Turns every stratum at the current speed, from the angle it's at now.
+        private func turn() {
+            for s in strata {
+                let angle = hold(s.gradient)
+                guard speed > 0 else { continue }
+                let turn = CABasicAnimation(keyPath: "transform.rotation.z")
+                turn.fromValue = angle
+                turn.toValue = angle + s.direction * 2 * .pi
+                turn.duration = s.period / Double(speed)
+                turn.repeatCount = .infinity
+                s.gradient.add(turn, forKey: "turn")
+            }
+        }
+
+        /// Stops a gradient's turn where it is on screen, and returns that angle.
+        @discardableResult private func hold(_ gradient: CAGradientLayer) -> Double {
+            let angle = (gradient.presentation() ?? gradient).value(forKeyPath: "transform.rotation.z") as? Double ?? 0
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            gradient.removeAnimation(forKey: "turn")
+            gradient.setValue(angle, forKeyPath: "transform.rotation.z")
+            CATransaction.commit()
+            return angle
+        }
+
+        /// The bloom and wash breathe slowly, out of step with each other.
+        private func breathe(_ on: Bool) {
+            for (i, s) in strata.dropLast().enumerated() {
+                // (The shimmer has no wash to breathe: it would show as a faint ring.)
+                guard on, !(style == .shimmer && i == 0) else { s.wrapper.removeAnimation(forKey: "breathe"); continue }
+                guard s.wrapper.animation(forKey: "breathe") == nil else { continue }
+                let breathe = CABasicAnimation(keyPath: "opacity")
+                breathe.isAdditive = true
+                breathe.fromValue = -0.04
+                breathe.toValue = 0.05
+                breathe.duration = 2.4 + Double(i) * 0.9
+                breathe.autoreverses = true
+                breathe.repeatCount = .infinity
+                breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                s.wrapper.add(breathe, forKey: "breathe")
+            }
+        }
+
+        /// A search starting: a soft flare, a little brighter and wider for a moment, the colours
+        /// sweeping round a little faster, then easing into the steady flow.
+        private func ignite() {
+            let duration = 0.7
+            let flare = CAKeyframeAnimation(keyPath: "opacity")
+            flare.values = [glow.presentation()?.opacity ?? 0, min(1, level + 0.08), level]
+            flare.keyTimes = [0, 0.3, 1]
+            flare.timingFunctions = [CAMediaTimingFunction(name: .easeOut), CAMediaTimingFunction(name: .easeInEaseOut)]
+            flare.duration = duration
+            glow.add(flare, forKey: "level")
+            for s in strata {
+                let sweep = CABasicAnimation(keyPath: "transform.rotation.z")
+                sweep.isAdditive = true
+                sweep.fromValue = -s.direction * 0.25 * .pi
+                sweep.toValue = 0
+                sweep.duration = duration
+                sweep.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+                s.gradient.add(sweep, forKey: "ignite")
+                let bloom = CABasicAnimation(keyPath: "lineWidth")
+                bloom.isAdditive = true
+                bloom.fromValue = s.line * 0.25
+                bloom.toValue = 0
+                bloom.duration = duration
+                bloom.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                s.mask.add(bloom, forKey: "ignite")
+            }
         }
 
         override func layout() {
             super.layout()
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            spin.frame = bounds
+            glow.frame = bounds
             let bar = bounds.insetBy(dx: RainbowGlow.spread, dy: RainbowGlow.spread)
             let path = CGPath(roundedRect: bar, cornerWidth: bar.height / 2, cornerHeight: bar.height / 2, transform: nil)
             // Large enough that the turning gradient always covers the bar.
             let side = hypot(bar.width, bar.height) + 40
             for s in strata {
                 s.wrapper.frame = bounds
-                s.masked.frame = bounds
+                s.wrapper.sublayers?.first?.frame = bounds
                 s.mask.frame = bounds
                 s.mask.path = path
                 s.gradient.bounds = CGRect(x: 0, y: 0, width: side, height: side)
@@ -2004,7 +2195,11 @@ private struct SuggestionList: View {
                 }
             }
             .scrollDisabled(items.count <= Self.maxRows)
-            .frame(height: CGFloat(min(items.count + placeholders, Self.maxRows)) * rowHeight)
+            // Up to its rows' height, and no taller than the room under the bar: the notch grows to
+            // fit new rows with a spring, and a list already at full height overflowed the page until
+            // it caught up, which pushed the bar up and back (rows coming in on the third key or so).
+            .frame(minHeight: 0, maxHeight: CGFloat(min(items.count + placeholders, Self.maxRows)) * rowHeight, alignment: .top)
+            .clipped()
             .onChange(of: selected) { _, i in proxy.scrollTo(i) }
         }
         .transaction { $0.animation = nil }
@@ -2515,10 +2710,10 @@ private struct AIStatusLine: View {
                         Text("Searching without AI ·")
                         if OllamaClient.isInstalled {
                             Button("Start Ollama for smarter results") { assistant.startServer() }
-                                .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
+                                .buttonStyle(NotchLinkButtonStyle())
                         } else {
                             Link("Get Ollama for smarter results", destination: URL(string: "https://ollama.com/download")!)
-                                .foregroundStyle(.white.opacity(0.7))
+                                .foregroundStyle(ActionColor.link)
                         }
                     }
                 case .modelMissing:
@@ -2530,13 +2725,13 @@ private struct AIStatusLine: View {
                     HStack(spacing: 4) {
                         Text("Searching without AI ·")
                         Button("Add your \(provider) key") { SettingsWindowController.shared.show(pane: .assistant) }
-                            .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
+                            .buttonStyle(NotchLinkButtonStyle())
                     }
                 case .appleUnavailable(let why):
                     HStack(spacing: 4) {
                         Text("Searching without AI ·")
                         Button(why) { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension")!) }
-                            .buttonStyle(.plain).foregroundStyle(.white.opacity(0.7))
+                            .buttonStyle(NotchLinkButtonStyle())
                     }
                 }
             }

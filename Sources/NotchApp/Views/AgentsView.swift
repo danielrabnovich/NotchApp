@@ -181,14 +181,11 @@ private struct SessionRow: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
                     .onSubmit(send)
-                Button(action: send) {
-                    Image(systemName: "arrow.up").font(.system(size: 9, weight: .bold))
-                }
-                .buttonStyle(NotchIconButtonStyle(size: 20))
-                .disabled(reply.trimmingCharacters(in: .whitespaces).isEmpty)
-                .help("Typed into its own pane (cmux, Terminal or iTerm2); elsewhere it's copied for you to paste")
+                SendButton(size: 20, enabled: !reply.trimmingCharacters(in: .whitespaces).isEmpty, action: send)
+                    .help("Typed into its own pane (cmux, Terminal or iTerm2); elsewhere it's copied for you to paste")
             }
-            .padding(.horizontal, 9)
+            .padding(.leading, 10)
+            .padding(.trailing, 3)
             .frame(height: 26)
             .notchSurface(Capsule())
         }

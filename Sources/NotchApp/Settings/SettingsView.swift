@@ -402,10 +402,20 @@ private struct AppearancePane: View {
                             ForEach(AppSettings.GlassLevel.allCases) { Text($0.label).tag($0) }
                         } label: {
                             RowLabel(title: "Glass", subtitle: s.glassLevel == .tinted ? "More black, a gentler bend at the edge."
-                                     : s.glassLevel == .clear ? "Less black, a deeper bend at the edge." : "Black melting into glass, evenly.")
+                                     : s.glassLevel == .balanced ? "Black melting into glass, evenly."
+                                     : s.glassLevel == .airy ? "Less black, a deeper bend at the edge."
+                                     : "Mostly glass: the desktop shows through, magnified at the edge.")
                         }
                         .pickerStyle(.segmented)
                     }
+                    Picker(selection: $s.searchBarEffect) {
+                        ForEach(AppSettings.SearchBarEffect.allCases) { Text($0.label).tag($0) }
+                    } label: {
+                        RowLabel(title: "Search bar", subtitle: s.searchBarEffect == .glow ? "Apple Intelligence's colours flow around it as you type and search."
+                                 : s.searchBarEffect == .shimmer ? "A white light runs along its edge, without colour."
+                                 : "Just the bar, with no glow or motion around it.")
+                    }
+                    .pickerStyle(.segmented)
                 } header: {
                     Text("Open notch")
                 }

@@ -548,6 +548,9 @@ final class FrameProbe: NSObject {
 enum DebugSimulator {
     static func run(_ event: String, _ args: [String]) {
         switch event {
+        case "reply": // a made-up message's reply box; nothing is sent unless Send is clicked
+            NotchPresenter.shared.present(.message(.init(id: "debug", app: "Messages", bundleID: "com.apple.MobileSMS", title: "Alex",
+                                                         subtitle: "", body: "Are we still on for dinner tonight?", date: Date(), canReply: false)))
         case "meeting":
             ActivityCenter.shared.show(.meeting(title: "Design review", minutes: 3, color: .systemPurple), for: 8)
             let link = MeetingLinks.Link(url: URL(string: "https://zoom.us/j/123456789")!, service: "Zoom")
