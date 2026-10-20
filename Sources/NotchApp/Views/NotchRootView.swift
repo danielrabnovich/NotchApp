@@ -325,12 +325,18 @@ private struct NotchSurface: View, Animatable {
 
         /// Cuts every layer to the notch as it is now: centred, from the top of the window.
         func relayout() {
-            guard let (shape, size, glass, solid, look, settled) = state, bounds.width > 0, size.width > 0, size.height > 0 else { return }
+            guard let (shape, exact, glass, solid, look, settled) = state, bounds.width > 0, exact.width > 0, exact.height > 0 else { return }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             defer { CATransaction.commit() }
 
             let scale = window?.backingScaleFactor ?? 2
+            // Whole pixels (the width in pairs, so it stays centred on whole pixels too). The spring's
+            // tail creeps a fraction of a pixel for a while after it looks settled; drawn exactly, the
+            // lip's last row of pixels flickered between glass and what's behind it, which shows over
+            // a hard edge like Mission Control's.
+            let size = CGSize(width: max(2 / scale, (exact.width * scale / 2).rounded() * 2 / scale),
+                              height: max(1 / scale, (exact.height * scale).rounded() / scale))
             for l in [root, glassLayer, shade, shadeMask, rim, rimMask, black, windowMask] { l.contentsScale = scale }
             let H = bounds.height
             let x0 = (bounds.width - size.width) / 2 // centred, exactly where SwiftUI puts the content
