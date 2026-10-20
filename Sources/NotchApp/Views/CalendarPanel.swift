@@ -3,9 +3,12 @@ import SwiftUI
 
 /// Home's day at a glance: the month and this week (tap a day to see its events), the weather,
 /// today's events (with a countdown, or Join when the call is about to start), and the tasks due
-/// today. `wide` when it has Home to itself (nothing playing): events and tasks side by side.
+/// today. Beside a playing song it takes half of Home (`half`); otherwise it gets the weather in
+/// full as well (`full`), with tasks in a column of their own when nothing else is on Home (`roomy`).
 struct TodayPanel: View {
-    var wide = false
+    enum Layout { case half, full, roomy }
+    var layout: Layout = .half
+    private var wide: Bool { layout != .half }
     @EnvironmentObject private var calendar: CalendarManager
     @EnvironmentObject private var tasks: TaskStore
     @EnvironmentObject private var settings: AppSettings
@@ -18,7 +21,7 @@ struct TodayPanel: View {
         // A minute is fine enough for "in 25 min" and for when the next event moves up.
         TimelineView(.periodic(from: .now, by: 30)) { context in
             let now = context.date
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 header(now: now)
                 // Someone's birthday: a line of its own, first thing.
                 if !birthdays.today.isEmpty {
@@ -40,10 +43,23 @@ struct TodayPanel: View {
                             .controlSize(.small)
                     }
                     Spacer(minLength: 0)
-                } else if let picked, !Calendar.current.isDate(picked, inSameDayAs: now) {
-                    dayList(picked, now: now)
                 } else {
-                    content(now: now)
+                    HStack(alignment: .top, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            if let picked, !Calendar.current.isDate(picked, inSameDayAs: now) {
+                                dayList(picked, now: now)
+                            } else {
+                                content(now: now)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        if wide, let report = weather.report, report.days.count > 1 {
+                            SectionDivider()
+                            Forecast(report: report)
+                                .frame(width: 128)
+                                .transition(.opacity)
+                        }
+                    }
                 }
             }
         }
@@ -55,26 +71,26 @@ struct TodayPanel: View {
     }
 
     private func header(now: Date) -> some View {
-        HStack(alignment: .center, spacing: wide ? 14 : 8) {
-            Text(picked ?? now, format: .dateTime.month(.abbreviated))
-                .font(.system(size: wide ? 24 : 17, weight: .bold))
-                .contentShape(Rectangle())
-                .onTapGesture { calendar.openCalendar() }
-                .help("Open Calendar")
-            WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: wide ? 30 : 23,
-                      picked: settings.calendarEnabled ? $picked : .constant(nil))
-            Spacer(minLength: 0)
+        // The weather sits over the forecast column, on its left edge: the same 18 + 1 + 18 points
+        // in from the events as the column below.
+        HStack(alignment: .center, spacing: 18) {
+            HStack(alignment: .center, spacing: 12) {
+                Text(picked ?? now, format: .dateTime.month(.abbreviated))
+                    .font(.system(size: 22, weight: .bold))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .contentShape(Rectangle())
+                    .onTapGesture { calendar.openCalendar() }
+                    .help("Open Calendar")
+                WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: 30,
+                          picked: settings.calendarEnabled ? $picked : .constant(nil))
+                Spacer(minLength: 0)
+            }
             if wide, let report = weather.report {
-                HStack(spacing: 4) {
-                    Image(systemName: WeatherReport.symbol(report.currentCode))
-                        .symbolRenderingMode(.multicolor)
-                        .font(.system(size: 11))
-                    Text("\(Int(report.currentTemp.rounded()))°")
-                        .font(.system(size: 12, weight: .medium).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.75))
-                }
-                .help(report.summary)
-                .transition(.opacity)
+                Color.clear.frame(width: 1, height: 1)
+                WeatherNow(report: report)
+                    .frame(width: 128, alignment: .leading)
+                    .transition(.opacity)
             }
         }
     }
@@ -118,7 +134,7 @@ struct TodayPanel: View {
             .foregroundStyle(.white.opacity(0.45))
             .frame(maxWidth: .infinity)
             Spacer(minLength: 0)
-        } else if wide {
+        } else if layout == .roomy {
             HStack(alignment: .top, spacing: 14) {
                 if !shown.isEmpty {
                     eventList(shown, now: now)
@@ -136,7 +152,7 @@ struct TodayPanel: View {
         } else {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 6) {
-                    taskList(due, now: now)
+                    taskList(shownTasks, now: now)
                     rows(shown, now: now)
                 }
             }
@@ -165,6 +181,77 @@ struct TodayPanel: View {
     private func dueToday(_ now: Date) -> [TaskItem] {
         let end = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now))!
         return tasks.open.filter { ($0.due ?? .distantFuture) < end }
+    }
+}
+
+/// The weather now, at the end of the header: its symbol, the temperature, and today's range.
+private struct WeatherNow: View {
+    let report: WeatherReport
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: WeatherReport.symbol(report.currentCode))
+                .symbolRenderingMode(.multicolor)
+                .font(.system(size: 20))
+            VStack(alignment: .leading, spacing: 0) {
+                Text("\(Int(report.currentTemp.rounded()))°")
+                    .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                if let today = report.days.first {
+                    Text("H \(Int(today.high.rounded()))°  L \(Int(today.low.rounded()))°")
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+            }
+        }
+        .help(report.summary)
+    }
+}
+
+/// The weather beyond the header: what it's like out, then the next few days.
+private struct Forecast: View {
+    let report: WeatherReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(WeatherReport.describe(report.currentCode))
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.system(size: 10.5).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
+            }
+            .padding(.bottom, 2)
+            ForEach(report.days.dropFirst().prefix(3)) { day in
+                HStack(spacing: 6) {
+                    Text(day.date, format: .dateTime.weekday(.abbreviated))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .frame(width: 30, alignment: .leading)
+                    Image(systemName: WeatherReport.symbol(day.code))
+                        .symbolRenderingMode(.multicolor)
+                        .font(.system(size: 11))
+                        .frame(width: 18)
+                    Spacer(minLength: 0)
+                    Text("\(Int(day.high.rounded()))°")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    Text("\(Int(day.low.rounded()))°")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.45))
+                        .frame(width: 26, alignment: .trailing)
+                }
+                .help(WeatherReport.describe(day.code) + (day.rainChance > 0 ? ", \(day.rainChance)% chance of rain" : ""))
+            }
+        }
+    }
+
+    /// "Feels 55° · Rain 40%", the rain only once it's likely enough to matter.
+    private var detail: String {
+        var parts = ["Feels \(Int(report.feelsLike.rounded()))°"]
+        if let today = report.days.first, today.rainChance >= 20 { parts.append("Rain \(today.rainChance)%") }
+        else { parts.append("\(report.humidity)% humid") }
+        return parts.joined(separator: " · ")
     }
 }
 

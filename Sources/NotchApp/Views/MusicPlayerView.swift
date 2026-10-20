@@ -5,12 +5,15 @@ struct MusicPlayerView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var audio: AudioOutputManager
 
-    private let artSize: CGFloat = 100
+    /// Beside Home's day, in half the notch: the art a little smaller and closer, so the player
+    /// fits its half (it ran a few points over, and the art was cut off at the left).
+    var half = false
+    private var artSize: CGFloat { half ? 90 : 100 }
 
     var body: some View {
         let accent = settings.accent(for: media)
 
-        HStack(spacing: 16) {
+        HStack(spacing: half ? 14 : 16) {
             artwork(accent: accent)
 
             VStack(alignment: .leading, spacing: 0) {
@@ -44,7 +47,7 @@ struct MusicPlayerView: View {
 
                 controls
             }
-            .frame(height: artSize)
+            .frame(height: 100)
         }
         .animation(.easeInOut(duration: 0.25), value: media.title)
     }

@@ -286,6 +286,13 @@ private struct NotchSurface: View, Animatable {
                 let backdrop = layerClass.init()
                 backdrop.setValue(true, forKey: "windowServerAware") // samples other apps' windows, not just its own
                 backdrop.setValue(UUID().uuidString, forKey: "groupName")
+                // In Mission Control the glass flickered, and any screen capture made it stop (so it
+                // never showed in a recording). Both of these together fixed it: no cache of the
+                // filtered backdrop, which Mission Control's own drawing may not invalidate; and a
+                // margin for the rim's bend, which reads past the backdrop's edge. Neither costs
+                // the window server anything measurable.
+                backdrop.setValue(true, forKey: "disableFilterCache")
+                backdrop.setValue(32, forKey: "marginWidth")
                 // The window server pays no attention to masks around a backdrop, but it does clip to
                 // rounded corners: the glass sits in a layer cut to the notch's body, its bottom
                 // corners the same quarter circles as the notch's.

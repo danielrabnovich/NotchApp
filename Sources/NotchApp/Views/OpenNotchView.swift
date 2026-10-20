@@ -274,22 +274,31 @@ struct HomeView: View {
 
     private var content: some View {
         HStack(spacing: 18) {
-            if settings.musicEnabled, musicLarge || !showsToday {
+            if settings.musicEnabled, showsToday, musicLarge {
+                // Playing: an even split, fixed, so neither side moves as songs change.
+                GeometryReader { geo in
+                    let half = (geo.size.width - 37) / 2
+                    HStack(spacing: 18) {
+                        MusicPlayerView(half: true)
+                            .frame(width: half, alignment: .leading)
+                        divider
+                        TodayPanel(layout: .half)
+                            .frame(width: half)
+                    }
+                }
+            } else if settings.musicEnabled, !showsToday {
                 MusicPlayerView()
                     .frame(maxWidth: .infinity)
-                if showsToday {
-                    divider
-                    TodayPanel()
-                        .frame(width: 210)
-                }
             } else if showsToday {
-                // Music keeps its place on the left, small; the day widens into the room it gave up.
-                if settings.musicEnabled, media.hasTrack {
+                // Music keeps its place on the left, small; the day widens into the room it gave up,
+                // with the weather in full.
+                let compact = settings.musicEnabled && media.hasTrack
+                if compact {
                     CompactMusicCard()
-                        .frame(width: 190)
+                        .frame(width: 170)
                     divider
                 }
-                TodayPanel(wide: true)
+                TodayPanel(layout: compact ? .full : .roomy)
                     .frame(maxWidth: .infinity)
             } else {
                 VStack(spacing: 6) {
