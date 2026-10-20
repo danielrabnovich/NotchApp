@@ -112,33 +112,32 @@ private struct NetworkPane: View {
     @EnvironmentObject private var network: NetworkMonitor
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 18) {
             SpeedTestCard()
-                .frame(width: 210)
+                .frame(width: 200)
+            SectionDivider()
             TrafficCard()
                 .frame(maxWidth: .infinity)
+            SectionDivider()
             ConnectionCard()
                 .frame(width: 200)
         }
+        .padding(.top, 4)
         .onAppear { network.viewerAppeared() }
         .onDisappear { network.viewerDisappeared() }
     }
 }
 
+/// One of a pane's sections. No box: sections sit straight on the notch, as Home's do, with a
+/// rule between them where they stand side by side (`SectionDivider`).
 private struct Card<Content: View>: View {
     var tint: Color = .white
     @ViewBuilder let content: Content
 
     var body: some View {
         content
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.vertical, 2)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(LinearGradient(colors: [tint.opacity(0.1), .white.opacity(0.035)], startPoint: .top, endPoint: .bottom))
-            )
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white.opacity(0.07), lineWidth: 1))
     }
 }
 
@@ -148,11 +147,8 @@ private struct CardTitle: View {
     let tint: Color
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon).font(.system(size: 9, weight: .bold)).foregroundStyle(tint)
-            Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(.white.opacity(0.6))
-        }
-        .frame(height: 16)
+        NotchSectionLabel(title: title, symbol: icon, tint: tint)
+            .frame(height: 16)
     }
 }
 
@@ -183,16 +179,23 @@ private struct SpeedTestCard: View {
         case .idle:
             VStack(alignment: .leading, spacing: 8) {
                 if let last = speed.last {
+                    // The numbers lead; running it again is a link beside when it last ran.
                     ResultRow(result: last, compact: true)
-                    Text("Last run " + last.date.formatted(.relative(presentation: .named)))
-                        .font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.35))
+                    HStack(spacing: 4) {
+                        Text("Last run " + last.date.formatted(.relative(presentation: .named)) + " ·")
+                            .foregroundStyle(.white.opacity(0.4))
+                        Button("Run Again") { speed.start() }
+                            .buttonStyle(NotchLinkButtonStyle())
+                    }
+                    .font(.system(size: 10.5, weight: .medium))
+                    .lineLimit(1)
                 } else {
                     Text("Download, upload and responsiveness, measured against Apple's servers.")
-                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.45))
+                        .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.5))
                         .fixedSize(horizontal: false, vertical: true)
+                    Button("Run Test") { speed.start() }
+                        .buttonStyle(NotchPillButtonStyle(primary: true, height: 24))
                 }
-                Button("Run Test") { speed.start() }
-                    .buttonStyle(NotchPillButtonStyle(primary: true, height: 24))
             }
         case .connecting, .download, .upload:
             VStack(alignment: .leading, spacing: 4) {
@@ -272,7 +275,7 @@ private struct ResultRow: View {
     private func value(_ icon: String, _ text: String, _ color: Color) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 3) {
             Image(systemName: icon).font(.system(size: 10, weight: .bold)).foregroundStyle(color)
-            Text(text).font(.system(size: compact ? 18 : 22, weight: .semibold, design: .rounded).monospacedDigit())
+            Text(text).font(.system(size: 24, weight: .semibold, design: .rounded).monospacedDigit())
             Text("Mbps").font(.system(size: 9, weight: .semibold, design: .rounded)).foregroundStyle(.white.opacity(0.4))
         }
     }
@@ -306,7 +309,7 @@ private struct TrafficCard: View {
         let r = formatRate(bytes)
         return HStack(alignment: .firstTextBaseline, spacing: 3) {
             Image(systemName: icon).font(.system(size: 9, weight: .bold)).foregroundStyle(color)
-            Text(r.value).font(.system(size: 18, weight: .semibold, design: .rounded).monospacedDigit())
+            Text(r.value).font(.system(size: 24, weight: .semibold, design: .rounded).monospacedDigit())
             Text(r.unit).font(.system(size: 9, weight: .semibold, design: .rounded)).foregroundStyle(.white.opacity(0.45))
         }
     }
@@ -356,7 +359,7 @@ private struct ConnectionCard: View {
     var body: some View {
         let info = network.info
         Card {
-            VStack(alignment: .leading, spacing: 2.5) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
                     CardTitle(title: title(info), icon: icon(info), tint: .white.opacity(0.8))
                     Spacer(minLength: 0)
@@ -415,7 +418,7 @@ private struct PingRow: View {
             Text(ms(internet)).foregroundStyle(color(internet, ok: 40, slow: 120))
                 .help("The internet (1.1.1.1)")
         }
-        .font(.system(size: 10, weight: .medium).monospacedDigit())
+        .font(.system(size: 11, weight: .medium).monospacedDigit())
         .lineLimit(1)
     }
 
@@ -446,7 +449,7 @@ private struct InfoRow: View {
                 .foregroundStyle(copied ? ToolsPalette.good : tint)
                 .textSelection(.disabled)
         }
-        .font(.system(size: 10, weight: .medium).monospacedDigit())
+        .font(.system(size: 11, weight: .medium).monospacedDigit())
         .lineLimit(1)
         .contentShape(Rectangle())
         .onTapGesture {
@@ -482,12 +485,15 @@ private struct CleanerPane: View {
     @State private var dropTargeted = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            VStack(spacing: 6) {
+        HStack(spacing: 18) {
+            VStack(alignment: .leading, spacing: 10) {
                 DiskCard()
                 UninstallDrop(targeted: dropTargeted)
             }
-            .frame(width: 180)
+            .padding(.top, 4)
+            .frame(width: 190)
+
+            SectionDivider()
 
             Group {
                 if uninstaller.target != nil {
@@ -527,8 +533,8 @@ private struct DiskCard: View {
                     Spacer(minLength: 2)
                     if let disk = cleaner.disk {
                         Text(formatBytes(disk.available))
-                            .font(.system(size: 13, weight: .semibold, design: .rounded).monospacedDigit())
-                        Text("free").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.white.opacity(0.45))
+                            .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
+                        Text("free").font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.white.opacity(0.45))
                     }
                 }
                 if let disk = cleaner.disk {
@@ -592,25 +598,25 @@ private struct UninstallDrop: View {
     @EnvironmentObject private var uninstaller: AppUninstaller
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "xmark.app.fill")
-                .font(.system(size: 15))
-                .foregroundStyle(.white.opacity(targeted ? 0.95 : 0.6))
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Uninstall an app").font(.system(size: 11, weight: .semibold))
-                Text(uninstaller.message ?? "Drop it here, or click").font(.system(size: 9.5))
-                    .foregroundStyle(uninstaller.message != nil ? .orange : .white.opacity(0.45))
-                    .lineLimit(1)
+        Button(action: pickApp) {
+            HStack(spacing: 10) {
+                IconBadge(symbol: "trash.fill", tint: .red, size: 26)
+                    .scaleEffect(targeted ? 1.1 : 1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Uninstall an app").font(.system(size: 12.5, weight: .semibold))
+                    Text(uninstaller.message ?? (targeted ? "Release to look it over" : "Drop it here, or click"))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(uninstaller.message != nil ? .orange : .white.opacity(0.5))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(.white.opacity(targeted ? 0.1 : 0))
+                .padding(.horizontal, -7)
+                .padding(.vertical, -4))
         }
-        .padding(.horizontal, 10)
-        .frame(height: 32)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(.white.opacity(targeted ? 0.6 : 0.18), style: StrokeStyle(lineWidth: 1.2, dash: [5, 4])))
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(targeted ? 0.1 : 0.03)))
-        .contentShape(Rectangle())
-        .onTapGesture { pickApp() }
+        .buttonStyle(NotchRowButtonStyle())
         .animation(.easeOut(duration: 0.15), value: targeted)
     }
 
@@ -874,7 +880,7 @@ private struct DevicesPane: View {
     @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 18) {
             if devices.devices.isEmpty {
                 Card {
                     VStack(spacing: 6) {
@@ -887,13 +893,16 @@ private struct DevicesPane: View {
                 }
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 22) {
                         ForEach(devices.devices) { DeviceCard(device: $0).frame(width: 150) }
                     }
                 }
+                .scrollEdgeFade()
             }
-            PrivacyCard().frame(width: 170)
+            SectionDivider()
+            PrivacyCard().frame(width: 180)
         }
+        .padding(.top, 4)
         .onAppear { devices.refresh() }
     }
 }
@@ -906,7 +915,7 @@ private struct DeviceCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Image(systemName: device.icon).font(.system(size: 15)).foregroundStyle(.white.opacity(0.85))
-                    Text(device.name).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                    Text(device.name).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 if device.left != nil || device.right != nil {
@@ -1009,13 +1018,17 @@ private struct VPNPane: View {
                 }
             } else if vpn.connections.count <= 2 {
                 // One or two VPNs: side by side at equal widths, filling the pane.
-                HStack(spacing: 10) {
-                    ForEach(vpn.connections) { VPNRow(connection: $0, showsExit: $0.id == carrier, fills: true) }
+                HStack(spacing: 18) {
+                    ForEach(vpn.connections) { c in
+                        if c.id != vpn.connections.first?.id { SectionDivider() }
+                        VPNRow(connection: c, showsExit: c.id == carrier, fills: true)
+                    }
                 }
+                .padding(.top, 4)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10, alignment: .top), count: columns), spacing: 8) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 22, alignment: .top), count: columns), spacing: 14) {
                         ForEach(vpn.connections) { VPNRow(connection: $0, showsExit: $0.id == carrier) }
                     }
                 }
@@ -1069,8 +1082,8 @@ private struct VPNRow: View {
                         .offset(x: 2, y: 2)
                 }
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(c.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                    Text(subtitle).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+                    Text(c.name).font(.system(size: 12.5, weight: .semibold)).lineLimit(1)
+                    Text(subtitle).font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
                 }
                 Spacer(minLength: 6)
                 if c.appURL != nil {
@@ -1092,15 +1105,9 @@ private struct VPNRow: View {
                 }
             }
         }
-        // Same card as the others in Tools (Card): radius, padding and tinted fill.
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        // Unboxed, as Tools' other sections are (Card).
+        .padding(.vertical, 2)
         .frame(maxWidth: .infinity, maxHeight: fills ? .infinity : nil, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(LinearGradient(colors: [(c.isUp ? statusColor : Color.white).opacity(0.1), .white.opacity(0.035)],
-                                 startPoint: .top, endPoint: .bottom)))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .strokeBorder(c.isUp ? statusColor.opacity(0.3) : .white.opacity(0.07), lineWidth: 1))
         .contextMenu {
             if showsExit, let ip = vpn.exit?.ip {
                 MenuItem("Copy Public IP", "doc.on.doc") {

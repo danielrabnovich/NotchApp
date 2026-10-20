@@ -1,9 +1,9 @@
 import EventKit
 import SwiftUI
 
-/// Home's day at a glance: the date and the weather, what's up next (with a countdown, or Join
-/// when the call is about to start), the rest of today's events, and the tasks due today.
-/// `wide` when it has Home to itself (nothing playing): events and tasks side by side.
+/// Home's day at a glance: the month and this week (tap a day to see its events), the weather,
+/// today's events (with a countdown, or Join when the call is about to start), and the tasks due
+/// today. `wide` when it has Home to itself (nothing playing): events and tasks side by side.
 struct TodayPanel: View {
     var wide = false
     @EnvironmentObject private var calendar: CalendarManager
@@ -11,13 +11,15 @@ struct TodayPanel: View {
     @EnvironmentObject private var settings: AppSettings
     @ObservedObject private var weather = TodayWeather.shared
     @ObservedObject private var birthdays = Birthdays.shared
+    /// A day tapped in the week strip; nil is today.
+    @State private var picked: Date?
 
     var body: some View {
         // A minute is fine enough for "in 25 min" and for when the next event moves up.
         TimelineView(.periodic(from: .now, by: 30)) { context in
             let now = context.date
             VStack(alignment: .leading, spacing: 8) {
-                header
+                header(now: now)
                 // Someone's birthday: a line of its own, first thing.
                 if !birthdays.today.isEmpty {
                     HStack(spacing: 6) {
@@ -38,26 +40,31 @@ struct TodayPanel: View {
                             .controlSize(.small)
                     }
                     Spacer(minLength: 0)
+                } else if let picked, !Calendar.current.isDate(picked, inSameDayAs: now) {
+                    dayList(picked, now: now)
                 } else {
                     content(now: now)
                 }
             }
         }
+        .onDisappear { picked = nil }
         .onAppear {
             weather.refreshIfStale()
             birthdays.refreshIfStale()
         }
     }
 
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(Date.now, format: .dateTime.weekday(.wide))
-                .font(.system(size: 13, weight: .semibold))
-            Text(Date.now, format: .dateTime.month(.abbreviated).day())
-                .font(.system(size: 12))
-                .foregroundStyle(.white.opacity(0.5))
-            Spacer(minLength: 4)
-            if let report = weather.report {
+    private func header(now: Date) -> some View {
+        HStack(alignment: .center, spacing: wide ? 14 : 8) {
+            Text(picked ?? now, format: .dateTime.month(.abbreviated))
+                .font(.system(size: wide ? 24 : 17, weight: .bold))
+                .contentShape(Rectangle())
+                .onTapGesture { calendar.openCalendar() }
+                .help("Open Calendar")
+            WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: wide ? 30 : 23,
+                      picked: settings.calendarEnabled ? $picked : .constant(nil))
+            Spacer(minLength: 0)
+            if wide, let report = weather.report {
                 HStack(spacing: 4) {
                     Image(systemName: WeatherReport.symbol(report.currentCode))
                         .symbolRenderingMode(.multicolor)
@@ -70,8 +77,24 @@ struct TodayPanel: View {
                 .transition(.opacity)
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture { calendar.openCalendar() }
+    }
+
+    /// A day other than today, picked in the week strip: all of its events.
+    @ViewBuilder private func dayList(_ day: Date, now: Date) -> some View {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: day)
+        let end = cal.date(byAdding: .day, value: 1, to: start)!
+        let events = calendar.week.filter { $0.startDate < end && $0.endDate > start }
+        if events.isEmpty {
+            Spacer(minLength: 0)
+            Text("Nothing on \(day.formatted(.dateTime.weekday(.wide)))")
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.45))
+                .frame(maxWidth: .infinity)
+            Spacer(minLength: 0)
+        } else {
+            eventList(events, now: now)
+        }
     }
 
     @ViewBuilder private func content(now: Date) -> some View {
@@ -79,12 +102,13 @@ struct TodayPanel: View {
         // The next timed event: on now, or still to come today; else the first one in the coming week.
         let today = events.first { !$0.isAllDay }
         let next = today ?? (settings.calendarEnabled ? calendar.later : nil)
-        let rest = events.filter { $0 !== today }
+        // Nothing timed left today: the next event in the coming week goes at the end, with its day.
+        let shown = today == nil ? events + (next.map { [$0] } ?? []) : events
         let due = settings.tasksEnabled ? dueToday(now) : []
         // With room to spare and nothing due, the top of the list instead.
         let shownTasks = due.isEmpty && wide && settings.tasksEnabled ? Array(tasks.open.prefix(4)) : due
 
-        if next == nil, rest.isEmpty, shownTasks.isEmpty {
+        if shown.isEmpty, shownTasks.isEmpty {
             Spacer(minLength: 0)
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle")
@@ -96,12 +120,9 @@ struct TodayPanel: View {
             Spacer(minLength: 0)
         } else if wide {
             HStack(alignment: .top, spacing: 14) {
-                if next != nil || !rest.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if let next { UpNextCard(event: next, now: now) }
-                        eventList(rest)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if !shown.isEmpty {
+                    eventList(shown, now: now)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if !shownTasks.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -113,21 +134,22 @@ struct TodayPanel: View {
             }
             Spacer(minLength: 0)
         } else {
-            if let next { UpNextCard(event: next, now: now) }
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 6) {
                     taskList(due, now: now)
-                    eventList(rest)
+                    rows(shown, now: now)
                 }
             }
         }
     }
 
-    private func eventList(_ events: [EKEvent]) -> some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(events, id: \.calendarItemIdentifier) { EventRow(event: $0) }
-            }
+    private func eventList(_ events: [EKEvent], now: Date) -> some View {
+        ScrollView(.vertical, showsIndicators: false) { rows(events, now: now) }
+    }
+
+    private func rows(_ events: [EKEvent], now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(events, id: \.calendarItemIdentifier) { EventRow(event: $0, now: now) }
         }
     }
 
@@ -143,54 +165,6 @@ struct TodayPanel: View {
     private func dueToday(_ now: Date) -> [TaskItem] {
         let end = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now))!
         return tasks.open.filter { ($0.due ?? .distantFuture) < end }
-    }
-}
-
-/// The next event, larger: when it starts (or that it's on now), and Join once it's close.
-private struct UpNextCard: View {
-    let event: EKEvent
-    let now: Date
-
-    var body: some View {
-        let color = Color(nsColor: event.calendar?.color ?? .systemBlue)
-        let link = MeetingLinks.find(in: event)
-        let soon = event.startDate.timeIntervalSince(now) < 15 * 60
-        HStack(spacing: 8) {
-            RoundedRectangle(cornerRadius: 1.5).fill(color).frame(width: 3)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(event.title ?? "Untitled")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .lineLimit(1)
-                Text(when)
-                    .font(.system(size: 10.5, weight: .medium).monospacedDigit())
-                    .foregroundStyle(soon ? color : .white.opacity(0.55))
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 0)
-            if soon, let link {
-                Button("Join") { MeetingLinks.join(link) }
-                    .buttonStyle(NotchPillButtonStyle(primary: true, height: 22))
-                    .help("Join on \(link.service)")
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(color.opacity(0.14)))
-    }
-
-    /// "in 25 min · 3:00 PM", "Now · until 3:30 PM", "at 5:00 PM", "Tomorrow · 9:00 AM".
-    private var when: String {
-        let time = Date.FormatStyle(date: .omitted, time: .shortened)
-        let cal = Calendar.current
-        if !cal.isDate(event.startDate, inSameDayAs: now) {
-            let day = cal.isDateInTomorrow(event.startDate) ? "Tomorrow" : event.startDate.formatted(.dateTime.weekday(.wide))
-            return "\(day) · \(event.startDate.formatted(time))"
-        }
-        if event.startDate <= now { return "Now · until \(event.endDate.formatted(time))" }
-        let minutes = Int((event.startDate.timeIntervalSince(now) / 60).rounded(.up))
-        if minutes < 60 { return "in \(minutes) min · \(event.startDate.formatted(time))" }
-        if minutes < 180 { return "in \(minutes / 60)h \(minutes % 60)m · \(event.startDate.formatted(time))" }
-        return "at \(event.startDate.formatted(time))"
     }
 }
 
@@ -257,45 +231,130 @@ final class TodayWeather: ObservableObject {
     }
 }
 
+/// An event: its title and where it is, and on the right when it starts (in its calendar's color
+/// once it's close or on now), or Join for a call about to start.
 private struct EventRow: View {
     let event: EKEvent
+    let now: Date
 
     var body: some View {
-        let now = Date()
-        let ongoing = !event.isAllDay && event.startDate <= now && event.endDate > now
+        let color = Color(nsColor: event.calendar?.color ?? .systemBlue)
+        let link = !event.isAllDay && event.endDate > now && event.startDate.timeIntervalSince(now) < 15 * 60
+            ? MeetingLinks.find(in: event) : nil
         HStack(spacing: 8) {
             RoundedRectangle(cornerRadius: 1.5)
-                .fill(Color(nsColor: event.calendar?.color ?? .systemBlue))
+                .fill(color)
                 .frame(width: 3)
             VStack(alignment: .leading, spacing: 1) {
                 Text(event.title ?? "Untitled")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
-                Text(timeText)
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.5))
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 10.5).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(1)
+                }
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 6)
             // A Join button from 15 minutes before until the call ends.
-            if !event.isAllDay, event.endDate > now, event.startDate.timeIntervalSince(now) < 15 * 60,
-               let link = MeetingLinks.find(in: event) {
+            if let link {
                 Button("Join") { MeetingLinks.join(link) }
                     .buttonStyle(NotchPillButtonStyle(primary: true, height: 20))
                     .help("Join on \(link.service)")
-            } else if ongoing {
-                Text("Now")
-                    .font(.system(size: 9, weight: .bold))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color(nsColor: event.calendar?.color ?? .systemBlue).opacity(0.35)))
+            } else {
+                let (text, soon) = when
+                Text(text)
+                    .font(.system(size: 11.5, weight: soon ? .semibold : .regular).monospacedDigit())
+                    .foregroundStyle(soon ? color : .white.opacity(0.5))
+                    .lineLimit(1)
             }
         }
         .frame(height: 30)
     }
 
-    private var timeText: String {
-        if event.isAllDay { return "All day" }
+    /// Where it is (the first line of the address), else its times.
+    private var detail: String? {
+        if let place = event.location?.split(whereSeparator: \.isNewline).first, !place.isEmpty { return String(place) }
+        if event.isAllDay { return nil }
         let f = Date.FormatStyle(date: .omitted, time: .shortened)
         return "\(event.startDate.formatted(f)) – \(event.endDate.formatted(f))"
+    }
+
+    /// "Now", "in 25 min" (both in its color), "13:30", "Tomorrow 9:00", "All day".
+    private var when: (String, Bool) {
+        if event.isAllDay { return ("All day", false) }
+        let time = event.startDate.formatted(date: .omitted, time: .shortened)
+        let cal = Calendar.current
+        if event.startDate <= now, event.endDate > now { return ("Now", true) }
+        if event.startDate > now, !cal.isDate(event.startDate, inSameDayAs: now) {
+            let day = cal.isDateInTomorrow(event.startDate) ? "Tomorrow" : event.startDate.formatted(.dateTime.weekday(.abbreviated))
+            return ("\(day) \(time)", false)
+        }
+        let minutes = Int((event.startDate.timeIntervalSince(now) / 60).rounded(.up))
+        if minutes > 0, minutes < 60 { return ("in \(minutes) min", true) }
+        return (time, false)
+    }
+}
+
+/// This calendar week, a day to a column: today in red, the weekend brighter, dots in the colors
+/// of each day's calendars. Tapping a day picks it; tapping today goes back.
+private struct WeekStrip: View {
+    let now: Date
+    let events: [EKEvent]
+    let pitch: CGFloat
+    @Binding var picked: Date?
+
+    var body: some View {
+        let cal = Calendar.current
+        let days = cal.dateInterval(of: .weekOfYear, for: now).map { week in
+            (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: week.start) }
+        } ?? []
+        HStack(spacing: 0) {
+            ForEach(days, id: \.self) { day in cell(day, cal: cal) }
+        }
+    }
+
+    private func cell(_ day: Date, cal: Calendar) -> some View {
+        let isToday = cal.isDate(day, inSameDayAs: now)
+        let isPicked = !isToday && picked.map { cal.isDate($0, inSameDayAs: day) } == true
+        let weekend = cal.isDateInWeekend(day)
+        let past = day < cal.startOfDay(for: now)
+        let end = cal.date(byAdding: .day, value: 1, to: day)!
+        var colors: [Color] = []
+        var seen = Set<String>()
+        for event in events where event.startDate < end && event.endDate > day {
+            guard let calendar = event.calendar, seen.insert(calendar.calendarIdentifier).inserted else { continue }
+            colors.append(Color(nsColor: calendar.color))
+        }
+        return VStack(spacing: 1) {
+            Text(isToday ? day.formatted(.dateTime.weekday(.abbreviated)).uppercased() : day.formatted(.dateTime.weekday(.narrow)))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white.opacity(isToday || isPicked ? 0.85 : 0.4))
+                .lineLimit(1)
+                .fixedSize()
+            Text(day, format: .dateTime.day())
+                // Smaller in a narrow strip, where today's two bold digits ran wider than the column.
+                .font(.system(size: isToday ? (pitch < 30 ? 16 : 19) : (pitch < 30 ? 14 : 15),
+                              weight: isToday ? .bold : weekend ? .semibold : .medium).monospacedDigit())
+                .foregroundStyle(isToday ? Color(nsColor: .systemRed) : .white.opacity(past ? 0.3 : weekend || isPicked ? 1 : 0.6))
+                .lineLimit(1)
+                .fixedSize()
+                .frame(height: 22)
+            HStack(spacing: 2) {
+                ForEach(colors.prefix(3).indices, id: \.self) { i in
+                    Circle().fill(colors[i]).frame(width: 4, height: 4)
+                }
+            }
+            .frame(height: 4)
+        }
+        .padding(.vertical, 3)
+        .frame(width: pitch)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.white.opacity(isPicked ? 0.12 : 0)))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(Motion.small.animation) { picked = isToday ? nil : day }
+        }
+        .help(day.formatted(.dateTime.weekday(.wide).month(.wide).day()))
     }
 }

@@ -26,10 +26,10 @@ struct ControlsView: View {
     private var controlsBody: some View {
         let shown = tiles.tiles.filter(\.isAvailable)
         return HStack(alignment: .top, spacing: 14) {
-            VStack(spacing: 10) {
-                PillSlider(icon: volumeIcon, value: controls.volume) { controls.setVolume($0) }
+            VStack(alignment: .leading, spacing: 12) {
+                LevelRow(icon: volumeIcon, value: controls.volume, muted: false) { controls.setVolume($0) }
                 if Brightness.isAvailable {
-                    PillSlider(icon: "sun.max.fill", value: controls.brightness) { controls.setBrightness($0) }
+                    LevelRow(icon: brightnessIcon, value: controls.brightness, muted: false) { controls.setBrightness($0) }
                 }
                 Spacer(minLength: 0)
                 if settings.updateChecks {
@@ -43,7 +43,10 @@ struct ControlsView: View {
                         .onTapGesture { controls.clearError() }
                 }
             }
+            .padding(.top, 6)
             .frame(width: 210)
+
+            SectionDivider()
 
             if shown.isEmpty {
                 VStack(spacing: 6) {
@@ -78,6 +81,8 @@ struct ControlsView: View {
             SystemTweaks.shared.refresh()
         }
     }
+
+    private var brightnessIcon: String { controls.brightness < 0.5 ? "sun.min.fill" : "sun.max.fill" }
 
     private var volumeIcon: String {
         controls.volume <= 0.001 ? "speaker.slash.fill" : controls.volume < 0.34 ? "speaker.wave.1.fill"
@@ -323,39 +328,11 @@ private struct PortRow: View {
     }
 }
 
-/// A wide Control Center-style slider: drag anywhere on it to set the level.
-private struct PillSlider: View {
-    let icon: String
-    let value: Float
-    let onChange: (Float) -> Void
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.1))
-                Capsule()
-                    .fill(.white.opacity(0.9))
-                    .frame(width: max(geo.size.height, geo.size.width * CGFloat(min(1, max(0, value)))))
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.black.opacity(0.7))
-                    .frame(width: geo.size.height)
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .contentShape(Capsule())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { g in
-                onChange(Float(min(1, max(0, g.location.x / max(geo.size.width, 1)))))
-            })
-        }
-        .frame(height: 30)
-    }
-}
-
 private struct ControlTile: View {
     let icon: String
     let title: String
     let on: Bool
-    var onTint: Color = .white
+    var onTint: Color = ActionColor.fill
     let action: () -> Void
 
     var body: some View {
@@ -378,21 +355,21 @@ private struct ControlTileLabel: View {
             VStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(on ? (onTint == .white ? Color.black : .white) : .white.opacity(0.85))
-                    .frame(width: 32, height: 32)
-                    .background(Circle().fill(on ? onTint : .white.opacity(hovering ? 0.16 : 0.1)))
+                    .foregroundStyle(on ? .white : .white.opacity(0.85))
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(on ? AnyShapeStyle(onTint.gradient) : AnyShapeStyle(.white.opacity(hovering ? 0.17 : 0.11))))
                     .contentTransition(.symbolEffect(.replace))
                 Text(title)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.75))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(on ? 0.95 : 0.7))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(hovering ? 0.06 : 0)))
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -427,29 +404,17 @@ private struct KeepAwakeTile: View {
 private struct UpdatesCard: View {
     let action: () -> Void
     @EnvironmentObject private var updates: UpdateChecker
-    @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: updates.updates.isEmpty ? "checkmark.seal.fill" : "arrow.down.app.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(updates.updates.isEmpty ? Color.green : Color.blue)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.system(size: 11.5, weight: .semibold))
-                    Text(subtitle).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.45))
-                }
-                Spacer(minLength: 0)
+            NotchRow(title: title, detail: subtitle) {
+                IconBadge(symbol: updates.updates.isEmpty ? "checkmark" : "arrow.down", tint: updates.updates.isEmpty ? .green : .blue, size: 26)
+            } trailing: {
                 if updates.checking { ProgressView().controlSize(.mini).tint(.white) }
-                Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(.white.opacity(0.35))
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.35))
             }
-            .padding(.horizontal, 10)
-            .frame(height: 38)
-            .notchSurface(RoundedRectangle(cornerRadius: 12, style: .continuous), active: hovering)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        .buttonStyle(NotchRowButtonStyle())
     }
 
     private var title: String {

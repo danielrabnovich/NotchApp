@@ -9,6 +9,8 @@ final class CalendarManager: ObservableObject {
     @Published private(set) var events: [EKEvent] = []
     /// The first timed event after today (within a week), for Home when today has nothing left.
     @Published private(set) var later: EKEvent?
+    /// Everything in this calendar week, past days too, for Home's week strip.
+    @Published private(set) var week: [EKEvent] = []
     @Published private(set) var status: EKAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
 
     let store = EKEventStore()
@@ -46,6 +48,7 @@ final class CalendarManager: ObservableObject {
         timer?.invalidate()
         timer = nil
         events = []
+        week = []
     }
 
     func requestAccess() {
@@ -64,7 +67,7 @@ final class CalendarManager: ObservableObject {
 
     func reload() {
         status = EKEventStore.authorizationStatus(for: .event)
-        guard hasAccess, AppSettings.shared.calendarEnabled else { events = []; later = nil; return }
+        guard hasAccess, AppSettings.shared.calendarEnabled else { events = []; later = nil; week = []; return }
         let now = Date()
         let cal = Calendar.current
         let start = cal.startOfDay(for: now)
@@ -75,6 +78,10 @@ final class CalendarManager: ObservableObject {
             .sorted { ($0.isAllDay ? 0 : 1, $0.startDate) < ($1.isAllDay ? 0 : 1, $1.startDate) }
         let week = store.predicateForEvents(withStart: end, end: cal.date(byAdding: .day, value: 7, to: end)!, calendars: nil)
         later = store.events(matching: week).filter { !$0.isAllDay }.min { $0.startDate < $1.startDate }
+        if let days = cal.dateInterval(of: .weekOfYear, for: now) {
+            self.week = store.events(matching: store.predicateForEvents(withStart: days.start, end: days.end, calendars: nil))
+                .sorted { ($0.isAllDay ? 0 : 1, $0.startDate) < ($1.isAllDay ? 0 : 1, $1.startDate) }
+        }
         checkAlerts(now: now)
     }
 

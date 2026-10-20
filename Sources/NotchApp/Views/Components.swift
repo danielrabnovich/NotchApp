@@ -568,6 +568,26 @@ enum SystemIcons {
         ? NSWorkspace.shared.icon(forFile: "/Applications/Tailscale.app") : nil
 }
 
+/// An app's own icon, trimmed to its rounded square: in dark mode macOS draws a light glass rim
+/// around icons, which at a few dozen points read as a white border on the notch. `size` is the
+/// square itself (an icon's art fills about four fifths of its image).
+struct TrimmedAppIcon: View {
+    let image: NSImage
+    let size: CGFloat
+
+    var body: some View {
+        // The square spans 9.8–90.2% of the image and its rim the outer ~2.5% of that; the cut
+        // runs just inside the rim, its corner the square's own continuous curve.
+        let canvas = size / 0.754
+        Image(nsImage: image)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: canvas, height: canvas)
+            .mask(RoundedRectangle(cornerRadius: size * 0.235, style: .continuous).frame(width: size, height: size))
+            .frame(width: size, height: size)
+    }
+}
+
 extension View {
     /// The shared raised surface: a top-lit fill with a hairline edge that catches the light,
     /// brighter while `active` (focused, hovered).

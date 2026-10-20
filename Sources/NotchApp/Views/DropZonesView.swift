@@ -143,24 +143,27 @@ private struct DropBin: View {
     @State private var targeted = false
 
     var body: some View {
+        // A soft, solid target (no dashes): its symbol on a disc of its colour, the whole bin
+        // taking the colour while something's over it.
         RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(targeted ? tint.opacity(0.28) : .white.opacity(enabled ? 0.06 : 0.03))
+            .fill(targeted ? tint.opacity(0.26) : .white.opacity(enabled ? 0.06 : 0.025))
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .strokeBorder(targeted ? tint : .white.opacity(enabled ? 0.18 : 0.08),
-                                  style: StrokeStyle(lineWidth: targeted ? 2 : 1, dash: targeted ? [] : [6, 5]))
+                    .strokeBorder(targeted ? tint.opacity(0.9) : .white.opacity(enabled ? 0.1 : 0.05), lineWidth: targeted ? 1.5 : 1)
             )
             .overlay {
-                VStack(spacing: 6) {
+                VStack(spacing: 7) {
                     Group {
                         if let image {
-                            Image(nsImage: image).resizable().frame(width: 30, height: 30)
+                            TrimmedAppIcon(image: image, size: 32)
                                 .opacity(enabled ? 1 : 0.4)
-                                .scaleEffect(targeted ? 1.1 : 1)
                         } else {
                             Image(systemName: icon)
-                                .font(.system(size: 22, weight: .semibold))
-                                .foregroundStyle(targeted ? tint : .white.opacity(enabled ? 0.85 : 0.3))
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(targeted ? .white : tint.opacity(enabled ? 1 : 0.4))
+                                .frame(width: 38, height: 38)
+                                .background(Circle().fill(targeted ? AnyShapeStyle(tint.gradient) : AnyShapeStyle(tint.opacity(enabled ? 0.2 : 0.08))))
+                                .scaleEffect(targeted ? 1.08 : 1)
                                 .symbolEffect(.bounce, value: targeted)
                         }
                     }
@@ -216,7 +219,7 @@ private struct DropChip: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(targeted ? tint.opacity(0.3) : .white.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(targeted ? tint : .white.opacity(0.16), style: StrokeStyle(lineWidth: targeted ? 1.5 : 1, dash: targeted ? [] : [5, 4])))
+            .strokeBorder(targeted ? tint.opacity(0.9) : .white.opacity(0.1), lineWidth: targeted ? 1.5 : 1))
         .scaleEffect(targeted ? 1.04 : 1)
         .animation(Motion.small.animation, value: targeted)
         .onDrop(of: [UTType.item], isTargeted: $targeted) { _ in onDrop() }

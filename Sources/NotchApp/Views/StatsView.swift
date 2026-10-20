@@ -8,9 +8,11 @@ struct StatsView: View {
     @State private var expanded: StatKind?
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 4) {
             ForEach(StatKind.allCases) { kind in
                 let mode = mode(for: kind)
+                // Rules between the columns rather than a box around each.
+                if kind != StatKind.allCases.first { SectionDivider().padding(.vertical, 10) }
                 card(kind, mode: mode)
                     .frame(width: mode == .compact ? CardMode.compactWidth : nil)
                     .frame(maxWidth: mode == .compact ? CardMode.compactWidth : .infinity)
@@ -376,15 +378,13 @@ private struct StatCard<Graph: View, Footer: View, Note: View, Detail: View>: Vi
         .padding(.top, 8)
         .padding(.bottom, 9)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // No box: a soft highlight under the pointer (each column is a button), a wash of its
+        // colour while it's open.
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(LinearGradient(colors: [tint.opacity(mode == .expanded ? 0.15 : 0.10), .white.opacity(0.035)],
-                                     startPoint: .top, endPoint: .bottom))
+                .fill(mode == .expanded ? AnyShapeStyle(tint.opacity(0.08)) : AnyShapeStyle(.white.opacity(hovering ? 0.05 : 0)))
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(.white.opacity(hovering ? 0.14 : 0.07), lineWidth: 1)
-        )
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onHover { hovering = $0 }
@@ -395,12 +395,7 @@ private struct StatCard<Graph: View, Footer: View, Note: View, Detail: View>: Vi
     private var summary: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(tint)
-                Text(title)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.6))
+                NotchSectionLabel(title: title, symbol: icon, tint: tint)
                 Spacer(minLength: 2)
                 if let temperature { TemperaturePill(celsius: temperature) }
             }
@@ -408,10 +403,10 @@ private struct StatCard<Graph: View, Footer: View, Note: View, Detail: View>: Vi
 
             HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text(value)
-                    .font(.system(size: 22, weight: .semibold, design: .rounded).monospacedDigit())
+                    .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
                     .rollingNumber(value)
                 Text(unit)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.45))
             }
             .padding(.top, 2)

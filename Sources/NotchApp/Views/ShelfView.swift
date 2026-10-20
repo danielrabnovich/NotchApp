@@ -96,6 +96,8 @@ struct ShelfView: View {
 
             // Beside the clipboard they're only drop targets, so they wait for something to be dragged.
             if (settings.airDropZone || showsTaildrop) && (!showingClipboard || drag.active) {
+                SectionDivider()
+                    .transition(.opacity)
                 VStack(spacing: 8) {
                     if settings.airDropZone { AirDropZone(compact: showsTaildrop) }
                     if showsTaildrop { TaildropZone(compact: settings.airDropZone) }
@@ -238,24 +240,31 @@ struct ShelfView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Nothing on the shelf: a quiet invitation, outlined only while something is being dragged.
     private var emptyState: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(.white.opacity(0.2), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.white.opacity(0.03)))
-            .overlay {
-                VStack(spacing: 6) {
-                    Image(systemName: "tray.and.arrow.down")
-                        .font(.system(size: 22, weight: .medium))
-                    Text("Drop files here")
-                        .font(.system(size: 12, weight: .medium))
-                    if settings.screenshotCatcher {
-                        Text("New screenshots land here too")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.white.opacity(0.4))
-                    }
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        return VStack(spacing: 8) {
+            Image(systemName: "tray.and.arrow.down.fill")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white.opacity(drag.active ? 0.95 : 0.7))
+                .frame(width: 42, height: 42)
+                .background(Circle().fill(.white.opacity(drag.active ? 0.16 : 0.09)))
+                .scaleEffect(drag.active ? 1.06 : 1)
+            VStack(spacing: 2) {
+                Text("Drop files here")
+                    .font(.system(size: 13, weight: .semibold))
+                if settings.screenshotCatcher {
+                    Text("New screenshots land here too")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.45))
                 }
-                .foregroundStyle(.white.opacity(0.6))
             }
+        }
+        .foregroundStyle(.white.opacity(0.9))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(shape.fill(.white.opacity(drag.active ? 0.04 : 0)))
+        .overlay(shape.strokeBorder(.white.opacity(drag.active ? 0.3 : 0), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
+        .animation(.easeOut(duration: 0.2), value: drag.active)
     }
 }
 
@@ -611,7 +620,7 @@ private struct AirDropZone: View {
     var body: some View {
         SendZone(title: "AirDrop", accent: Color(red: 0.22, green: 0.56, blue: 1), compact: compact,
                  hint: shelf.items.isEmpty ? "Drop to send" : "Drop, or click\nto send the shelf",
-                 icon: { Image(nsImage: SystemIcons.airDrop).resizable().frame(width: $0, height: $0) },
+                 icon: { TrimmedAppIcon(image: SystemIcons.airDrop, size: $0 * 0.86) },
                  send: ShelfStore.airDrop,
                  sendShelf: { ShelfStore.airDrop(shelf.items.map(\.url)) })
     }
@@ -663,7 +672,7 @@ private struct SendZone<Icon: View>: View {
         let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
         let size: CGFloat = compact ? 26 : 34
         ZStack {
-            RadialGradient(colors: [accent.opacity(targeted ? 0.5 : hovering || drag.active ? 0.22 : 0.12), .clear],
+            RadialGradient(colors: [accent.opacity(targeted ? 0.25 : hovering || drag.active ? 0.14 : 0.06), .clear],
                            center: .center, startRadius: 0, endRadius: compact ? 44 : 64)
             if let sending {
                 VStack(spacing: compact ? 3 : 6) {
@@ -685,14 +694,15 @@ private struct SendZone<Icon: View>: View {
                 }
             } else {
                 VStack(spacing: compact ? 3 : 6) {
+                    // One gentle lift and nothing else: a glow or a second scale on the zone blurred
+                    // the app icon and haloed the label.
                     icon(size)
-                        .shadow(color: accent.opacity(targeted ? 0.7 : 0.3), radius: targeted ? 8 : 4)
-                        .scaleEffect(targeted ? 1.12 : hovering ? 1.04 : 1)
+                        .scaleEffect(targeted ? 1.08 : hovering ? 1.03 : 1)
                     Text(title)
-                        .font(.system(size: compact ? 11 : 12, weight: .semibold))
+                        .font(.system(size: compact ? 11.5 : 12.5, weight: .semibold))
                     if !compact {
                         Text(targeted ? "Release to send" : hint)
-                            .font(.system(size: 9, weight: targeted ? .semibold : .regular))
+                            .font(.system(size: 10, weight: targeted ? .semibold : .regular))
                             .multilineTextAlignment(.center)
                             .foregroundStyle(targeted ? accent : .white.opacity(0.45))
                             .contentTransition(.opacity)
@@ -702,14 +712,12 @@ private struct SendZone<Icon: View>: View {
         }
         .foregroundStyle(.white.opacity(0.9))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(shape.fill(accent.opacity(targeted ? 0.2 : 0)))
+        // No box at rest, only the icon's own glow: a soft fill under the pointer, its colour
+        // under a drag.
+        .background(shape.fill(targeted ? AnyShapeStyle(accent.opacity(0.2)) : AnyShapeStyle(.white.opacity(hovering ? 0.06 : 0))))
         .clipShape(shape)
-        .notchSurface(shape, active: hovering || targeted)
-        // While anything is dragged, a dashed outline in its colour says "drop here".
-        .overlay(shape.strokeBorder(accent.opacity(targeted ? 0.95 : drag.active ? 0.55 : 0),
-                                    style: StrokeStyle(lineWidth: targeted ? 1.5 : 1, dash: targeted ? [] : [4, 3])))
-        .shadow(color: accent.opacity(targeted ? 0.4 : 0), radius: 12)
-        .scaleEffect(targeted ? 1.04 : 1)
+        // While anything is dragged, a faint outline in its colour says "drop here"; over it, a firm one.
+        .overlay(shape.strokeBorder(accent.opacity(targeted ? 0.85 : drag.active ? 0.35 : 0), lineWidth: targeted ? 1.5 : 1))
         .animation(Motion.small.animation, value: targeted)
         .animation(.easeOut(duration: 0.15), value: hovering)
         .animation(.easeOut(duration: 0.2), value: drag.active)
@@ -826,7 +834,8 @@ struct TaildropIcon: View {
 
     var body: some View {
         if let icon = SystemIcons.tailscale {
-            Image(nsImage: icon).resizable().frame(width: size, height: size)
+            TrimmedAppIcon(image: icon, size: size * 0.86)
+                .frame(width: size, height: size)
         } else {
             Image(systemName: "paperplane.fill")
                 .font(.system(size: size * 0.6, weight: .medium))
