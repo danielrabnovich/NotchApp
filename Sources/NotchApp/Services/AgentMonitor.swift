@@ -31,15 +31,6 @@ final class AgentMonitor: ObservableObject {
             }
         }
 
-        var glyph: String {
-            switch self {
-            case .claude: "asterisk"
-            case .codex: "chevron.left.forwardslash.chevron.right"
-            case .opencode: "terminal.fill"
-            case .zcode: "z.square.fill"
-            }
-        }
-
         /// The desktop app to bring forward, when the tool has one.
         var appBundleIDs: [String] {
             switch self {

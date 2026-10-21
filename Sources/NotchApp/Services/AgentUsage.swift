@@ -238,6 +238,8 @@ final class AgentUsageStore: ObservableObject {
         var opencode: Buckets = [:]
         var zcode: Buckets = [:]
         var codexPlan: String?
+        /// Codex's rate-limit windows from the newest rollout event that had them.
+        var codexLimits: [LimitWindow]?
         /// Count and newest change of the Codex rollouts last read; unchanged means skip them.
         var codexSignature: String?
     }
@@ -261,6 +263,26 @@ final class AgentUsageStore: ObservableObject {
         }
     }
 
+    /// A plan's rolling usage window as Codex reports it: its length, how much is used, when it resets.
+    struct LimitWindow: Codable, Equatable {
+        var minutes: Int
+        var usedPercent: Double
+        var resets: Date
+
+        /// "5-hour", "Weekly".
+        var name: String {
+            minutes == 10080 ? "Weekly" : minutes > 0 && minutes % 1440 == 0 ? "\(minutes / 1440)-day" : "\(max(1, minutes / 60))-hour"
+        }
+    }
+
+    /// Claude Code's 5-hour block and what was used in it so far.
+    struct Block {
+        let start: Date
+        var end: Date { start.addingTimeInterval(5 * 3600) }
+        var tokens = TokenCounts()
+        var cost: Double = 0
+    }
+
     struct ToolSummary: Identifiable {
         var id: AgentMonitor.Tool { tool }
         let tool: AgentMonitor.Tool
@@ -280,7 +302,10 @@ final class AgentUsageStore: ObservableObject {
         var firstDay: Date?
     }
 
-    @Published private(set) var archive = Archive()
+    @Published private(set) var archive = Archive() {
+        didSet { claudeBlockStart = Self.blockStart(archive.claude) }
+    }
+    private var claudeBlockStart: Date?
     @Published private(set) var scanning = false
     @Published private(set) var lastScan: Date?
 
@@ -294,6 +319,7 @@ final class AgentUsageStore: ObservableObject {
     private init() {
         if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode(Archive.self, from: data) {
             archive = saved
+            claudeBlockStart = Self.blockStart(saved.claude)
         }
     }
 
@@ -421,6 +447,8 @@ final class AgentUsageStore: ObservableObject {
         var buckets: Buckets = [:]
         var plan = a.codexPlan
         var planDate = Date.distantPast
+        var limits = a.codexLimits
+        var limitsDate = Date.distantPast
         for url in files { autoreleasepool { // a whole rollout's parsed lines, drained per file
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
             var model = "gpt-5"
@@ -435,6 +463,13 @@ final class AgentUsageStore: ObservableObject {
                     plan = p
                     planDate = date
                 }
+                if let rates = payload["rate_limits"] as? [String: Any], date > limitsDate {
+                    let windows = ["primary", "secondary"].compactMap { (rates[$0] as? [String: Any]).flatMap { limitWindow($0, at: date) } }
+                    if !windows.isEmpty {
+                        limits = windows
+                        limitsDate = date
+                    }
+                }
                 guard let info = payload["info"] as? [String: Any], let total = info["total_token_usage"] as? [String: Any] else { continue }
                 let cached = int(total["cached_input_tokens"])
                 let now = TokenCounts(input: max(0, int(total["input_tokens"]) - cached), output: int(total["output_tokens"]),
@@ -447,6 +482,19 @@ final class AgentUsageStore: ObservableObject {
         } }
         a.codex = merged(a.codex, buckets)
         a.codexPlan = plan
+        a.codexLimits = limits
+    }
+
+    /// One of Codex's windows: newer builds give the reset time, older ones the seconds left.
+    nonisolated private static func limitWindow(_ w: [String: Any], at date: Date) -> LimitWindow? {
+        guard let used = (w["used_percent"] as? NSNumber)?.doubleValue else { return nil }
+        let resets: Date
+        if let at = (w["resets_at"] as? NSNumber)?.doubleValue {
+            resets = Date(timeIntervalSince1970: at)
+        } else if let left = (w["resets_in_seconds"] as? NSNumber)?.doubleValue {
+            resets = date.addingTimeInterval(left)
+        } else { return nil }
+        return LimitWindow(minutes: int(w["window_minutes"]), usedPercent: used, resets: resets)
     }
 
     nonisolated private static func scanOpenCode() -> Buckets {
@@ -552,12 +600,53 @@ final class AgentUsageStore: ObservableObject {
         return s
     }
 
+    // MARK: Limits
+
+    /// The newest block's start, counted the way ccusage does: a block starts at the hour of the
+    /// first message after the last one ended, and lasts five hours. Hours are enough, since
+    /// blocks start on the hour.
+    nonisolated private static func blockStart(_ claude: Buckets) -> Date? {
+        var start: Date?
+        for key in claude.keys.sorted() {
+            guard let hour = date(fromHourKey: key) else { continue }
+            if start.map({ hour.timeIntervalSince($0) >= 5 * 3600 }) ?? true { start = hour }
+        }
+        return start
+    }
+
+    /// Claude Code's block in progress, or nil when none is.
+    func claudeBlock(now: Date = Date()) -> Block? {
+        guard let start = claudeBlockStart else { return nil }
+        var block = Block(start: start)
+        guard now < block.end else { return nil }
+        for h in 0..<5 {
+            for (model, counts) in archive.claude[Self.hourKey(start.addingTimeInterval(Double(h) * 3600))] ?? [:] {
+                block.tokens = block.tokens + counts
+                block.cost += AgentPricing.cost(counts, model: model) ?? 0
+            }
+        }
+        return block
+    }
+
+    /// Codex's windows that haven't reset yet, shortest first.
+    func codexWindows(now: Date = Date()) -> [LimitWindow] {
+        (archive.codexLimits ?? []).filter { $0.resets > now }.sorted { $0.minutes < $1.minutes }
+    }
+
     /// The plan in force for a tool: chosen in Settings, else detected.
     func plan(for tool: AgentMonitor.Tool) -> AgentPlan? {
         let choice = AppSettings.shared.agentPlans[tool.rawValue] ?? ""
         if !choice.isEmpty, let p = AgentPlan.choices(for: tool).first(where: { $0.id == choice }) { return p }
         return AgentPlan.detect(tool)
     }
+}
+
+/// Time left until a date: "1h 12m", "45m", "2d 3h".
+func formatTimeLeft(until date: Date, now: Date = Date()) -> String {
+    let minutes = max(1, Int((date.timeIntervalSince(now) / 60).rounded(.up)))
+    if minutes < 60 { return "\(minutes)m" }
+    if minutes < 1440 { return minutes % 60 == 0 ? "\(minutes / 60)h" : "\(minutes / 60)h \(minutes % 60)m" }
+    return "\(minutes / 1440)d \(minutes % 1440 / 60)h"
 }
 
 /// "$1,234", "$56.78", "$0.42".
