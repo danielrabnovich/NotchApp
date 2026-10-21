@@ -63,6 +63,16 @@ enum WindowManager {
             }
         }
 
+        /// How much of the screen's width, for a step of left or right pressed again.
+        var share: String? {
+            switch self {
+            case .leftHalf, .rightHalf: "½"
+            case .leftTwoThirds, .rightTwoThirds: "⅔"
+            case .leftThird, .rightThird: "⅓"
+            default: nil
+            }
+        }
+
         var icon: String {
             switch self {
             case .leftHalf: "rectangle.lefthalf.filled"
@@ -71,7 +81,9 @@ enum WindowManager {
             case .bottomHalf: "rectangle.bottomhalf.filled"
             case .maximize, .almostMaximize: "rectangle.fill"
             case .center: "rectangle.center.inset.filled"
-            case .leftThird, .centerThird, .rightThird, .leftTwoThirds, .rightTwoThirds: "rectangle.split.3x1.fill"
+            case .leftThird: "rectangle.leftthird.inset.filled"
+            case .rightThird: "rectangle.rightthird.inset.filled"
+            case .centerThird, .leftTwoThirds, .rightTwoThirds: "rectangle.split.3x1.fill"
             case .topLeft: "rectangle.inset.topleft.filled"
             case .topRight: "rectangle.inset.topright.filled"
             case .bottomLeft: "rectangle.inset.bottomleft.filled"
@@ -110,6 +122,7 @@ enum WindowManager {
         let screens = NSScreen.screens
         guard let current = screens.max(by: { overlap($0, frame) < overlap($1, frame) }) ?? NSScreen.main else { return }
         var done = action
+        var destination = current
         var area = visible(current)
         var target: CGRect
         switch action {
@@ -122,6 +135,7 @@ enum WindowManager {
             guard ordered.count > 1, let i = ordered.firstIndex(of: current) else { return }
             let next = ordered[(i + (action == .nextDisplay ? 1 : ordered.count - 1)) % ordered.count]
             let from = visible(current)
+            destination = next
             area = visible(next)
             // Same place and size relative to the screen, scaled to fit.
             let scale = min(1, min(area.width / max(frame.width, 1), area.height / max(frame.height, 1)))
@@ -137,6 +151,7 @@ enum WindowManager {
                 if step == 0, let beside = neighbor(of: current, left: left) {
                     // On to the display that way, against the side it came in from.
                     done = left ? .rightHalf : .leftHalf
+                    destination = beside
                     area = visible(beside)
                 } else {
                     done = cycle[(step + 1) % cycle.count]
@@ -166,6 +181,12 @@ enum WindowManager {
         if hasID, action != .restore { last[id] = (done, landed) }
         DebugHooks.log("Window: \(action) → \(done) \(landed) enhanced=\(enhanced)")
         Haptics.align()
+        // Only when the key did more than its plain snap: a plain one shows for itself.
+        if destination != current {
+            ActivityCenter.shared.show(.window(icon: done.icon, label: destination.localizedName), for: 1.2)
+        } else if done != action, let share = done.share {
+            ActivityCenter.shared.show(.window(icon: done.icon, label: share), for: 1.2)
+        }
     }
 
     /// Where a window of `length` starts along one axis: at the edge the target shares with the

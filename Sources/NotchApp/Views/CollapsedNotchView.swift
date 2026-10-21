@@ -191,6 +191,12 @@ struct CollapsedNotchView: View {
             .font(.system(size: 11, weight: .semibold))
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, 12)
+        case let .window(icon, _):
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 14)
         case let .meeting(_, _, color):
             Image(systemName: "calendar")
                 .font(.system(size: 13, weight: .semibold))
@@ -250,6 +256,13 @@ struct CollapsedNotchView: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, 12)
+        case let .window(_, label):
+            Text(label)
+                .font(.system(size: label.count == 1 ? 14 : 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 12)
         case let .meeting(_, minutes, color):
             Text("\(minutes)m")
                 .font(.system(size: 12, weight: .bold).monospacedDigit())

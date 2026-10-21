@@ -1999,7 +1999,7 @@ private struct ShortcutsPane: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
-                .help("Reset to \(action.defaultCombo(s.hotKeyModifiers).display)")
+                .help(action.onByDefault ? "Reset to \(action.defaultCombo(s.hotKeyModifiers).display)" : "Reset (turns it off)")
                 .opacity(s.hotKeyOverrides[action.rawValue] == nil ? 0 : 1)
                 .disabled(s.hotKeyOverrides[action.rawValue] == nil)
             }
@@ -2011,7 +2011,7 @@ private struct ShortcutsPane: View {
             MenuItem("Record New Shortcut", "record.circle") { recording = "hot." + action.rawValue }
             MenuItem("Turn Off", "xmark.circle") { s.hotKeyOverrides[action.rawValue] = HotKeys.Combo.off }
                 .disabled(HotKeys.combo(for: action) == nil)
-            MenuItem("Restore Default (\(action.defaultCombo(s.hotKeyModifiers).display))", "arrow.uturn.backward") {
+            MenuItem("Restore Default (\(action.onByDefault ? action.defaultCombo(s.hotKeyModifiers).display : "Off"))", "arrow.uturn.backward") {
                 s.hotKeyOverrides[action.rawValue] = nil
             }
             .disabled(s.hotKeyOverrides[action.rawValue] == nil)
@@ -2090,7 +2090,7 @@ private enum ShortcutGroup: CaseIterable, Identifiable {
     var note: String? {
         switch self {
         case .tabs: "Opens the notch on that tab; press it again to close."
-        case .windows: "Moves the window in front. Press left or right again to send it on to the display that way, or, with none there, to ⅔ and then ⅓ of the screen."
+        case .windows: "Moves the window in front. Press left or right again to send it on to the display that way, or, with none there, to ⅔ and then ⅓ of the screen. Thirds and quarters start off: record a key to use one."
         default: nil
         }
     }
@@ -2103,7 +2103,9 @@ private enum ShortcutGroup: CaseIterable, Identifiable {
         // Plus any new action not given a group yet, so it can't go missing from the pane.
         case .actions: [.copyText, .askScreen, .ramble] + HotKeys.Action.allCases.filter { a in !Self.listed.contains(a) }
         case .windows: [.windowLeft, .windowRight, .windowTop, .windowBottom, .windowMaximize, .windowCenter,
-                         .windowPreviousDisplay, .windowNextDisplay, .windowRestore]
+                         .windowPreviousDisplay, .windowNextDisplay, .windowRestore,
+                         .windowLeftThird, .windowCenterThird, .windowRightThird, .windowLeftTwoThirds, .windowRightTwoThirds,
+                         .windowTopLeft, .windowTopRight, .windowBottomLeft, .windowBottomRight]
         }
     }
 

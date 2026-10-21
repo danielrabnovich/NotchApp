@@ -22,13 +22,16 @@ enum SneakPeek: Equatable {
     case notice(title: String, detail: String, icon: String, tone: NoticeTone = .success)
     /// Another app's notification (a message), shown in place of the system's banner.
     case message(id: String, app: String, bundleID: String?, sender: String, text: String, replyable: Bool)
+    /// A window key that did more than the plain snap: the layout's symbol, and how much of the
+    /// screen ("⅔") or which display it went to.
+    case window(icon: String, label: String)
 
     enum Kind: Equatable {
-        case volume, brightness, charging, meeting, screenshot, timer, download, assistant, taildrop, notice, message
+        case volume, brightness, charging, meeting, screenshot, timer, download, assistant, taildrop, notice, message, window
 
         func sideWidth(notchHeight h: CGFloat) -> CGFloat {
             switch self {
-            case .volume, .brightness: 92
+            case .volume, .brightness, .window: 92
             case .charging: 78
             case .meeting, .screenshot, .timer, .download, .taildrop, .notice, .message: h + 14
             case .assistant: 72
@@ -50,6 +53,7 @@ enum SneakPeek: Equatable {
         case .taildrop: .taildrop
         case .notice: .notice
         case .message: .message
+        case .window: .window
         }
     }
 }
@@ -62,7 +66,7 @@ extension SneakPeek {
 
     var tier: Tier {
         switch self {
-        case .volume, .brightness, .charging: .flash
+        case .volume, .brightness, .charging, .window: .flash
         case .meeting: .prompt
         case let .notice(_, _, _, tone): tone == .action ? .prompt : .banner
         default: .banner
@@ -79,7 +83,7 @@ extension SneakPeek {
         case let .download(name): ("Downloaded", name)
         case let .assistant(title, detail, _), let .taildrop(title, detail, _), let .notice(title, detail, _, _): (title, detail)
         case let .message(_, _, _, sender, text, _): (sender, text)
-        case .volume, .brightness, .charging: ("", "")
+        case .volume, .brightness, .charging, .window: ("", "")
         }
     }
 }

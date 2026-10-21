@@ -92,9 +92,14 @@ final class HotKeys: ObservableObject {
         case windowLeft, windowRight, windowMaximize, windowCenter, windowNextDisplay, windowRestore
         case ramble
         case windowTop, windowBottom, windowPreviousDisplay
+        case windowLeftThird, windowCenterThird, windowRightThird, windowLeftTwoThirds, windowRightTwoThirds
+        case windowTopLeft, windowTopRight, windowBottomLeft, windowBottomRight
 
-        /// Center starts off: its key is Controls'.
-        var onByDefault: Bool { self != .windowCenter }
+        /// Center and the thirds and quarters start off: their keys (Rectangle's) are tabs' with ⌃⌥.
+        var onByDefault: Bool {
+            ![.windowCenter, .windowLeftThird, .windowCenterThird, .windowRightThird, .windowLeftTwoThirds, .windowRightTwoThirds,
+              .windowTopLeft, .windowTopRight, .windowBottomLeft, .windowBottomRight].contains(self)
+        }
 
         var windowAction: WindowManager.Action? {
             switch self {
@@ -107,6 +112,15 @@ final class HotKeys: ObservableObject {
             case .windowTop: .topHalf
             case .windowBottom: .bottomHalf
             case .windowRestore: .restore
+            case .windowLeftThird: .leftThird
+            case .windowCenterThird: .centerThird
+            case .windowRightThird: .rightThird
+            case .windowLeftTwoThirds: .leftTwoThirds
+            case .windowRightTwoThirds: .rightTwoThirds
+            case .windowTopLeft: .topLeft
+            case .windowTopRight: .topRight
+            case .windowBottomLeft: .bottomLeft
+            case .windowBottomRight: .bottomRight
             default: nil
             }
         }
@@ -141,6 +155,15 @@ final class HotKeys: ObservableObject {
             case .windowBottom: "↓"
             case .windowRestore: "⌫"
             case .ramble: "J"
+            case .windowLeftThird: "D"
+            case .windowCenterThird: "F"
+            case .windowRightThird: "G"
+            case .windowLeftTwoThirds: "E"
+            case .windowRightTwoThirds: "T"
+            case .windowTopLeft: "U"
+            case .windowTopRight: "I"
+            case .windowBottomLeft: "J"
+            case .windowBottomRight: "K"
             }
         }
 
@@ -173,6 +196,9 @@ final class HotKeys: ObservableObject {
             case .windowTop: "Window: top half"
             case .windowBottom: "Window: bottom half"
             case .windowPreviousDisplay: "Window: previous display"
+            case .windowLeftThird, .windowCenterThird, .windowRightThird, .windowLeftTwoThirds, .windowRightTwoThirds,
+                 .windowTopLeft, .windowTopRight, .windowBottomLeft, .windowBottomRight:
+                "Window: " + (windowAction?.title.lowercased() ?? "")
             }
         }
 
@@ -213,6 +239,15 @@ final class HotKeys: ObservableObject {
             case .windowBottom: UInt32(kVK_DownArrow)
             case .windowRestore: UInt32(kVK_Delete)
             case .ramble: UInt32(kVK_ANSI_J)
+            case .windowLeftThird: UInt32(kVK_ANSI_D)
+            case .windowCenterThird: UInt32(kVK_ANSI_F)
+            case .windowRightThird: UInt32(kVK_ANSI_G)
+            case .windowLeftTwoThirds: UInt32(kVK_ANSI_E)
+            case .windowRightTwoThirds: UInt32(kVK_ANSI_T)
+            case .windowTopLeft: UInt32(kVK_ANSI_U)
+            case .windowTopRight: UInt32(kVK_ANSI_I)
+            case .windowBottomLeft: UInt32(kVK_ANSI_J)
+            case .windowBottomRight: UInt32(kVK_ANSI_K)
             }
         }
     }
@@ -386,7 +421,9 @@ final class HotKeys: ObservableObject {
             if vm.isOpen, ramble.active { ramble.close(); vm.close() } else { ramble.open(vm) }
             return
         case .windowLeft, .windowRight, .windowTop, .windowBottom, .windowMaximize, .windowCenter,
-             .windowNextDisplay, .windowPreviousDisplay, .windowRestore:
+             .windowNextDisplay, .windowPreviousDisplay, .windowRestore,
+             .windowLeftThird, .windowCenterThird, .windowRightThird, .windowLeftTwoThirds, .windowRightTwoThirds,
+             .windowTopLeft, .windowTopRight, .windowBottomLeft, .windowBottomRight:
             if let window = action.windowAction { WindowManager.apply(window) }
             return
         }
