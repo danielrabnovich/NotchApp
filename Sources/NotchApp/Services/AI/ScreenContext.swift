@@ -149,7 +149,9 @@ enum AXReader {
     private static let nodeLimit = 6_000
     private static let timeLimit: TimeInterval = 0.4
 
-    static func read(pid: pid_t) -> Result? {
+    /// `visibleOnly` (Recall): a long text area (a terminal's whole scrollback) gives just the part
+    /// on screen, so what was in view isn't cut off by the start of the buffer.
+    static func read(pid: pid_t, visibleOnly: Bool = false) -> Result? {
         guard AXIsProcessTrusted() else { return nil }
         let app = AXUIElementCreateApplication(pid)
         // A hung app shouldn't hang us.
@@ -179,7 +181,7 @@ enum AXReader {
             if role == "AXWebArea", result.location == nil, let url: URL = value(element, "AXURL") {
                 result.location = url.absoluteString
             }
-            if let line = text(of: element, role: role) {
+            if let line = text(of: element, role: role, visibleOnly: visibleOnly) {
                 lines.append(line)
                 chars += line.count
             }
@@ -196,11 +198,12 @@ enum AXReader {
         return result
     }
 
-    private static func text(of element: AXUIElement, role: String) -> String? {
-        let raw: String?
+    private static func text(of element: AXUIElement, role: String, visibleOnly: Bool) -> String? {
+        var raw: String?
         switch role {
         case "AXStaticText", "AXTextArea", "AXTextField", "AXComboBox", "AXCell":
             raw = value(element, kAXValueAttribute)
+            if visibleOnly, role == "AXTextArea", (raw?.count ?? 0) > 2_000, let visible = visibleText(element) { raw = visible }
         case "AXHeading", "AXLink":
             // Their text usually lives in a static-text child, read on the way down.
             raw = nil
@@ -209,6 +212,17 @@ enum AXReader {
         }
         guard let s = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
         return s
+    }
+
+    /// The part of a text area scrolled into view.
+    private static func visibleText(_ element: AXUIElement) -> String? {
+        var rangeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXVisibleCharacterRangeAttribute as CFString, &rangeRef) == .success,
+              let rangeRef, CFGetTypeID(rangeRef) == AXValueGetTypeID() else { return nil }
+        var out: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(element, kAXStringForRangeParameterizedAttribute as CFString,
+                                                         rangeRef, &out) == .success else { return nil }
+        return out as? String
     }
 
     static func value<T>(_ element: AXUIElement, _ attribute: String) -> T? {

@@ -244,6 +244,10 @@ final class AppSettings: ObservableObject {
     @Published var countdownDate: Double { didSet { defaults.set(countdownDate, forKey: "countdownDate") } }
     /// "What's the answer to this question" looks at the screen (captured in memory, never saved).
     @Published var screenQuestions: Bool { didSet { defaults.set(screenQuestions, forKey: "screenQuestions") } }
+    /// Recall: what was on screen is turned into text on this Mac, for Search to find later. Off by default.
+    @Published var recall: Bool { didSet { defaults.set(recall, forKey: "recall") } }
+    /// How long Recall keeps what it saw.
+    @Published var recallKeep: Recall.Keep { didSet { defaults.set(recallKeep.rawValue, forKey: "recallKeep") } }
 
     // Brief & nudges
     @Published var morningBrief: Bool { didSet { defaults.set(morningBrief, forKey: "morningBrief") } }
@@ -358,6 +362,7 @@ final class AppSettings: ObservableObject {
             "countdownTitle": "Launch",
             "countdownDate": 0.0,
             "screenQuestions": true,
+            "recall": false,
             "morningBrief": false,
             "briefHour": 6,
             "dueNudges": true,
@@ -474,6 +479,8 @@ final class AppSettings: ObservableObject {
         countdownTitle = defaults.string(forKey: "countdownTitle") ?? "Launch"
         countdownDate = defaults.double(forKey: "countdownDate")
         screenQuestions = defaults.bool(forKey: "screenQuestions")
+        recall = defaults.bool(forKey: "recall")
+        recallKeep = Recall.Keep(rawValue: defaults.string(forKey: "recallKeep") ?? "") ?? .week
         morningBrief = defaults.bool(forKey: "morningBrief")
         briefHour = defaults.integer(forKey: "briefHour")
         dueNudges = defaults.bool(forKey: "dueNudges")

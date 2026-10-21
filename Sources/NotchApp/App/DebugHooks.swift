@@ -398,6 +398,39 @@ enum DebugHooks {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 DebugHooks.log("SHELF " + ShelfStore.shared.items.suffix(3).map { $0.url.path }.joined(separator: " ; "))
             }
+        case "recallnow": Recall.shared.captureNow("debug", force: true)   // one capture of the window in front, idle or not
+        case "recallstats": Task { await Recall.shared.refreshStats(); log("RECALL on=\(AppSettings.shared.recall) capturing=\(Recall.shared.isCapturing) paused=\(Recall.shared.paused) blocker=\(Recall.shared.blocker() ?? "none") count=\(Recall.shared.count) bytes=\(Recall.shared.bytes)") }
+        case "recallseed": // made-up captures (no pictures) to check the parser and ranking against
+            let now = Date(), cal = Calendar.current
+            let yesterday = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: now))!.addingTimeInterval(15 * 3600)
+            let weekday = cal.component(.weekday, from: now) // 1 = Sunday
+            let tuesday = cal.date(byAdding: .day, value: -((weekday - 3 + 7) % 7 == 0 ? 7 : (weekday - 3 + 7) % 7), to: cal.startOfDay(for: now))!.addingTimeInterval(11 * 3600)
+            let seeds: [RecallStore.Capture] = [
+                .init(time: yesterday, bundleID: "com.apple.Terminal", appName: "Terminal", title: "phil — zsh — 120×40",
+                      text: "$ swift build\nerror: cannot find 'RecallStore' in scope\nerror: build had 1 command failure"),
+                .init(time: yesterday.addingTimeInterval(1800), bundleID: "com.tinyspeck.slackmacgap", appName: "Slack", title: "#design — Slack",
+                      text: "Sam: the new onboarding flow ships Thursday\nAlex: can we move the launch review to 3pm?"),
+                .init(time: tuesday, bundleID: "com.apple.Safari", appName: "Safari", title: "Pricing — Linear", location: "https://linear.app/pricing",
+                      text: "Free $0 Basic $8 per user/month Business $14 per user/month Enterprise contact sales"),
+                .init(time: now.addingTimeInterval(-600), bundleID: "com.apple.Safari", appName: "Safari", title: "Swift Forums", location: "https://forums.swift.org",
+                      text: "Discussion about strict concurrency and Sendable closures"),
+                .init(time: now.addingTimeInterval(-2 * 86_400), bundleID: "com.apple.dt.Xcode", appName: "Xcode", title: "AppDelegate.swift",
+                      location: "/tmp/AppDelegate.swift", text: "func applicationDidFinishLaunching error handling"),
+            ]
+            Task.detached { seeds.forEach { RecallStore.shared.insert($0) }; await Recall.shared.refreshStats(); await MainActor.run { log("RECALL seeded \(seeds.count)") } }
+        case "recallquery": // recallquery <text…>: the filter both ways, whether Search would route it, and the top hits
+            let text = parts.dropFirst().joined(separator: " ")
+            Task {
+                log("RECALLQ \(text) | routes=\(RecallSearch.looksLikeRecall(text)) sentence=\(RecallSearch.wantsSentence(text))")
+                log("RECALLQ heuristic: \(RecallSearch.parseWithoutModel(text))")
+                if AppleModel.isAvailable { log("RECALLQ model: \(await RecallSearch.parseWithModel(text).map(String.init(describing:)) ?? "failed")") }
+                let filter = await RecallSearch.parse(text)
+                let hits = await Task.detached { RecallSearch.search(filter, query: text) }.value
+                for (i, hit) in hits.prefix(5).enumerated() {
+                    log("RECALLQ #\(i + 1) \(String(format: "%.3f", hit.score)) \(hit.time.formatted(date: .abbreviated, time: .shortened)) \(hit.appName ?? "?") “\(hit.title ?? "")” \(hit.location ?? "") | \(hit.snippet.prefix(100))")
+                }
+                if hits.isEmpty { log("RECALLQ no hits") }
+            }
         case "suggest": SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))
         case "suggestlog": // suggestlog <query…>: what the list offers for it
             SearchSuggestions.shared.update(parts.dropFirst().joined(separator: " "))

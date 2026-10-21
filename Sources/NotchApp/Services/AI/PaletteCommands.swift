@@ -58,6 +58,7 @@ enum PaletteCommands {
         .init(title: "Due-soon nudges", pane: .assistant, words: ["nudges", "reminders"], key: \.dueNudges),
         .init(title: "Questions about your screen", pane: .assistant, words: ["screen questions", "ask about screen"], key: \.screenQuestions),
         .init(title: "Search inside pictures", pane: .assistant, words: ["image search", "photo search", "image index"], key: \.imageIndexing),
+        .init(title: "Recall what you've seen", pane: .assistant, words: ["recall", "screen memory", "screen history"], key: \.recall),
         .init(title: "Search the text in screenshots", pane: .assistant, words: ["screenshot search", "ocr"], key: \.screenshotSearch),
         .init(title: "Camera mirror", pane: .controls, words: ["mirror", "camera"], key: \.cameraMirrorEnabled),
         .init(title: "Reverse mouse scrolling", pane: .mouse, words: ["scroll direction", "natural scrolling"], key: \.reverseMouseScroll),

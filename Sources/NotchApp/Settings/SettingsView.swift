@@ -1194,6 +1194,7 @@ private struct AssistantPane: View {
     @ObservedObject private var assistant = AssistantStore.shared
     @ObservedObject private var folders = FolderAccess.shared
     @ObservedObject private var images = ImageIndex.shared
+    @ObservedObject private var recall = Recall.shared
     @State private var customModel = ""
 
     private var folderState: PermissionRow.State {
@@ -1206,6 +1207,14 @@ private struct AssistantPane: View {
             return folders.access.isEmpty ? "So file search can see the files you keep there." : "File search can see these folders."
         }
         return "Can't see \(folders.missing.map(\.name).joined(separator: ", ")). Turn it on under Files & Folders."
+    }
+
+    /// What Recall does, and (once on) how much it holds.
+    private var recallSubtitle: String {
+        let what = "Search for things you saw (“that error in Terminal yesterday”). Windows are read into text on this Mac and never leave it. Skips password managers, private windows and a locked or shared screen."
+        guard s.recall else { return what }
+        let held = recall.count > 0 ? "\(recall.count.formatted()) moments, \(ByteCountFormatter.string(fromByteCount: recall.bytes, countStyle: .file))." : "Nothing saved yet."
+        return recall.paused ? "Paused from Search (“resume recall” turns it back on). \(held)" : "\(what) \(held)"
     }
 
     /// What the picture index is up to, under its toggle.
@@ -1332,6 +1341,22 @@ private struct AssistantPane: View {
                         Button("Open Settings") { ScreenQuestion.openPrivacySettings() }
                     } label: {
                         RowLabel(title: "Screen Recording is off", subtitle: "Needed to see your screen.")
+                    }
+                }
+                ToggleRow("Recall what you've seen", subtitle: recallSubtitle, isOn: $s.recall)
+                if s.recall {
+                    Picker(selection: $s.recallKeep) {
+                        ForEach(Recall.Keep.allCases) { Text($0.label).tag($0) }
+                    } label: {
+                        RowLabel(title: "Keep for", subtitle: "Older moments are deleted. Recall never uses more than about 2 GB.")
+                    }
+                    .pickerStyle(.segmented)
+                    if !ScreenQuestion.hasPermission {
+                        LabeledContent {
+                            Button("Open Settings") { ScreenQuestion.openPrivacySettings() }
+                        } label: {
+                            RowLabel(title: "Screen Recording is off", subtitle: "Recall keeps windows' text without it, but no pictures, and can't read apps that only draw their text.")
+                        }
                     }
                 }
             } header: {
