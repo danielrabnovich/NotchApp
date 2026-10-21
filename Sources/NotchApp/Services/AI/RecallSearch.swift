@@ -61,7 +61,7 @@ enum RecallSearch {
         if l.hasPrefix("recall ") { return true }
         let phrases = ["when did i see", "where did i see", "did i see", "i saw", "have i seen", "i've seen", "i was looking at",
                        "i looked at", "i was reading", "i was on", "was on my screen", "on my screen earlier", "i had open",
-                       "i had up", "what was that", "what was the", "that thing i", "the one i saw"]
+                       "i had up", "what was that", "that thing i", "the one i saw"]
         let hasPhrase = phrases.contains { l.range(of: "\\b\(NSRegularExpression.escapedPattern(for: $0))\\b", options: .regularExpression) != nil }
         // "What was the score yesterday" is for the web: a seeing phrase, or "what was that…" with a
         // time or an app Recall knows.
@@ -84,14 +84,25 @@ enum RecallSearch {
         if query.lowercased().hasPrefix("recall ") { query = String(query.dropFirst(7)) }
         let text = query
         let heuristic = await MainActor.run { parseWithoutModel(text) }
+        let started = Date()
         guard AppleModel.isAvailable, let guided = await parseWithModel(query) else { return heuristic }
-        // Times and apps are resolved here either way; the model's reading of them only fills gaps.
+        DebugHooks.log("Recall: model read the question in \(Int(Date().timeIntervalSince(started) * 1000))ms")
+        // Times and apps are resolved from the words either way. The model only fills a gap, and
+        // only for what was actually said: asked for "when", it tends to answer "today" regardless.
         var filter = guided
-        if heuristic.from != nil || heuristic.to != nil {
+        let lower = query.lowercased()
+        let words = Set(lower.split(whereSeparator: { !$0.isLetter }).map(String.init))
+        if heuristic.from != nil || words.isDisjoint(with: timeWords.subtracting(["an", "this", "other", "few", "couple"])) {
             filter.from = heuristic.from; filter.to = heuristic.to; filter.when = heuristic.when
         }
         if !heuristic.bundleIDs.isEmpty { filter.apps = heuristic.apps; filter.bundleIDs = heuristic.bundleIDs }
+        let appWords = Set(heuristic.apps.flatMap { $0.lowercased().split(separator: " ").map(String.init) })
+        filter.keywords = filter.keywords.filter { !appWords.contains($0) && !timeWords.contains($0) }
         if filter.keywords.isEmpty { filter.keywords = heuristic.keywords }
+        // A description of how it looked only when the question gave one.
+        let appearance = ["looked like", "look like", "looks like", "colou", "color", "dark", "light", "picture", "photo", "image",
+                          "chart", "graph", "diagram", "red", "blue", "green", "yellow", "orange", "purple", "black", "white"]
+        if !appearance.contains(where: lower.contains) { filter.looks = nil }
         return filter
     }
 
@@ -99,12 +110,17 @@ enum RecallSearch {
     @MainActor static func parseWithoutModel(_ query: String) -> Filter {
         let lower = query.lowercased().replacingOccurrences(of: "’", with: "'")
         var filter = Filter()
-        if let time = resolveTime(lower) { (filter.from, filter.to, filter.when) = (time.from, time.to, time.label) }
+        var rest = lower
+        if let time = resolveTime(lower) {
+            (filter.from, filter.to, filter.when) = (time.from, time.to, time.label)
+            // "2 days ago": the 2 isn't something to look for.
+            rest = rest.replacingOccurrences(of: time.label, with: " ")
+        }
         let found = apps(in: lower)
         filter.apps = found.names
         filter.bundleIDs = found.bundleIDs
         let appWords = Set(found.matchedWords)
-        let ordered = lower.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "." && $0 != "-" && $0 != "_" }).map(String.init)
+        let ordered = rest.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "." && $0 != "-" && $0 != "_" }).map(String.init)
         var seen = Set<String>()
         filter.keywords = ordered.filter { word in
             let w = word.trimmingCharacters(in: CharacterSet(charactersIn: ".-_"))

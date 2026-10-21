@@ -414,6 +414,8 @@ final class AssistantStore: ObservableObject {
         if forced == nil {
             let instant = CommandParser.parse(trimmed).filter {
                 if case .template = $0.action { return false }
+                // "recall …" is a search: it's routed below, with its results kept.
+                if case .recall = $0.action { return false }
                 if case .show = $0.action { return $0.title.hasPrefix("Show") }
                 return true
             }

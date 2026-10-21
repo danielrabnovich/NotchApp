@@ -24,6 +24,7 @@ struct RecallResults: View {
                         .font(.system(size: sentence.count > 160 ? 12.5 : 14, weight: .medium))
                         .foregroundStyle(.white.opacity(0.92))
                         .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .transition(.opacity)

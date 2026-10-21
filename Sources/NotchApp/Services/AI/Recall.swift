@@ -267,6 +267,8 @@ final class Recall: ObservableObject {
     struct Frame: Sendable {
         let hash: [UInt64]?
         let text: Int
+        /// The app gave real text (not a canvas that has to be read off the picture).
+        let rich: Bool
         let title: String?
         let time: Date
     }
@@ -289,7 +291,9 @@ final class Recall: ObservableObject {
             if why != "off" { DebugHooks.log("Recall: skip (\(reason)): \(why)") }
             return
         }
-        guard !busy, let app = NSWorkspace.shared.frontmostApplication, FrontmostTracker.isUserApp(app) else { return }
+        // NotchApp in front (Settings, a search) means nothing to capture; a debug capture takes the app behind it.
+        let front = force ? FrontmostTracker.shared.userApp : NSWorkspace.shared.frontmostApplication
+        guard !busy, let app = front, FrontmostTracker.isUserApp(app) else { return }
         if let id = app.bundleIdentifier, Self.excludedApps.contains(id) {
             DebugHooks.log("Recall: skip (\(reason)): excluded app \(id)")
             return
@@ -332,7 +336,7 @@ final class Recall: ObservableObject {
 
         let image = canSee ? try? await windowImage(windowID: ax?.windowID, pid: target.pid) : nil
         let hash = image.flatMap(differenceHash)
-        let frame = Frame(hash: hash, text: axText.hashValue, title: ax?.title, time: Date())
+        let frame = Frame(hash: hash, text: axText.hashValue, rich: axText.count >= 200, title: ax?.title, time: Date())
         if let last = previous[key], last.title == frame.title, isSame(last, frame) { return .same(key) }
         let afterShot = Date()
 
@@ -357,7 +361,7 @@ final class Recall: ObservableObject {
         }
         let afterText = Date()
         text = String(text.prefix(12_000))
-        guard !text.isEmpty || !(ax?.title ?? "").isEmpty || image != nil else { return .skipped("empty") }
+        guard !text.isEmpty || !(ax?.title ?? "").isEmpty || image != nil else { return .skipped("nothing to read in \(target.appName ?? "?")") }
 
         var capture = RecallStore.Capture(time: started, bundleID: target.bundleID, appName: target.appName, title: ax?.title,
                                           location: ax?.location, text: text, labels: labels)
@@ -374,12 +378,15 @@ final class Recall: ObservableObject {
         return .saved(key, frame)
     }
 
-    /// The same window, looking (nearly) the same and reading the same.
+    /// The same window, reading the same and looking (nearly) the same. When the app gives real
+    /// text, unchanged text is the same moment whatever blinked (a cursor, a spinner: in testing a
+    /// terminal's hash moved on every capture while its text didn't); only a new look altogether
+    /// (a video, a picture) counts. Apps without text lean on the picture.
     private nonisolated static func isSame(_ a: Frame, _ b: Frame) -> Bool {
         guard a.text == b.text else { return false }
         guard let x = a.hash, let y = b.hash else { return a.hash == nil && b.hash == nil }
         let distance = zip(x, y).reduce(0) { $0 + ($1.0 ^ $1.1).nonzeroBitCount }
-        return distance <= 6
+        return distance <= (b.rich ? 48 : 6)
     }
 
     /// The window by its ID (else the app's largest), never the whole display: other windows
