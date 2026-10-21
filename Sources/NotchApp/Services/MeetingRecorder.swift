@@ -209,8 +209,9 @@ enum Echo {
     static func repeats(_ you: String, _ them: String) -> Bool {
         let a = words(you), b = words(them)
         guard !a.isEmpty, !b.isEmpty else { return false }
-        // A word or two: only if it's said the same, word for word.
-        if a.count < 3 { return " \(b.joined(separator: " ")) ".contains(" \(a.joined(separator: " ")) ") }
+        // A word or two ("sure", "okay"): only if that's all they said too; a short answer to them
+        // often repeats a word of theirs.
+        if a.count < 3 { return a == b }
         return Double(commonRun(a, b)) / Double(a.count) >= 0.75
     }
 

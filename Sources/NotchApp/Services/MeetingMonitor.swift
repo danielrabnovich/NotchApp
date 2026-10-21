@@ -5,8 +5,9 @@ import SwiftUI
 
 /// Meeting mode: notices a call (a call app or a browser using the microphone for a while), keeps a
 /// timer and a mute button beside the notch while it lasts, and when it ends offers to jot notes
-/// (in Ramble) or a follow-up task. Dictation apps using the microphone aren't calls. Core Audio
-/// says when an app starts or stops using the microphone, so nothing is polled.
+/// (in Ramble) or a follow-up task. Dictation apps using the microphone aren't calls. Core Audio's
+/// notifications say when the microphone may have changed hands (see `MicWatcher`); nothing is
+/// polled, apart from a slow backstop while a call is on.
 @MainActor
 final class MeetingMonitor: ObservableObject {
     static let shared = MeetingMonitor()
@@ -35,6 +36,7 @@ final class MeetingMonitor: ObservableObject {
     private var endWork: DispatchWorkItem?
     private var endingPrompt: UUID?
     private var watcher: MicWatcher?
+    private var backstop: Timer?
     private var cancellables: [Any] = []
 
     /// Twenty seconds on the mic is a call, not a voice message; fifteen off it (a reconnect,
@@ -121,6 +123,13 @@ final class MeetingMonitor: ObservableObject {
         }
         DebugHooks.log("MEETING call started on \(caller.name)")
         if let call { MeetingAssistant.shared.callStarted(call) }
+        // A backstop for the one change Core Audio may not announce: the call app letting go of
+        // the mic while it keeps playing sound, with the mic still open for someone else (the
+        // recording). Only while a call is on.
+        backstop?.invalidate()
+        backstop = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { _ in
+            MainActor.assumeIsolated { MeetingMonitor.shared.evaluate() }
+        }
     }
 
     /// The microphone went quiet but the recording should go on: it's now ended by hand.
@@ -134,7 +143,8 @@ final class MeetingMonitor: ObservableObject {
     /// A meeting in the room, recorded on the microphone (no call app involved).
     func beginInPerson() {
         guard call == nil else { return }
-        let event = Self.currentEvent()
+        // Only an event with people in it (a "Work" block isn't the meeting).
+        let event = Self.currentEvent().flatMap { $0.hasAttendees ? $0 : nil }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
             call = Call(app: "In person", bundleID: nil, started: Date(), event: event?.title, attendees: Self.attendees(event), kept: true)
         }
@@ -149,6 +159,8 @@ final class MeetingMonitor: ObservableObject {
         endWork?.cancel()
         endWork = nil
         if let endingPrompt { NotchPresenter.shared.withdraw(endingPrompt); self.endingPrompt = nil }
+        backstop?.invalidate()
+        backstop = nil
         guard let call else { return }
         let endedAt = quietSince ?? Date()
         let minutes = Int(endedAt.timeIntervalSince(call.started) / 60)
@@ -205,38 +217,55 @@ final class MeetingMonitor: ObservableObject {
     }
 }
 
-/// Which processes have audio input running, as Core Audio announces it: a listener on the list
-/// of audio processes, and one on each process's "running input". `onChange` runs on the main
-/// queue whenever any of it changes.
+/// Which processes have audio input running, as Core Audio announces it. Core Audio doesn't post
+/// changes to a process's "running input" (macOS reads it fine but never notifies), so it's
+/// pieced together from what does: the list of audio processes, each process starting or
+/// stopping any audio at all, and the default microphone starting or stopping for anyone.
+/// `onChange` runs on the main queue after any of them; the caller reads who's on the mic then.
 @MainActor
 final class MicWatcher {
     private let onChange: () -> Void
     private var watched: Set<AudioObjectID> = []
+    private var microphone = AudioObjectID(kAudioObjectUnknown)
     private var listAddress = AudioOutputManager.address(kAudioHardwarePropertyProcessObjectList)
+    private var defaultInputAddress = AudioOutputManager.address(kAudioHardwarePropertyDefaultInputDevice)
+    private var runningAddress = AudioOutputManager.address(kAudioProcessPropertyIsRunning)
     private var inputAddress = AudioOutputManager.address(kAudioProcessPropertyIsRunningInput)
+    private var deviceRunningAddress = AudioOutputManager.address(kAudioDevicePropertyDeviceIsRunningSomewhere)
     private lazy var listChanged: AudioObjectPropertyListenerBlock = { _, _ in
         MainActor.assumeIsolated { [weak self] in self?.refresh() }
     }
-    private lazy var inputChanged: AudioObjectPropertyListenerBlock = { _, _ in
+    private lazy var changed: AudioObjectPropertyListenerBlock = { _, _ in
         MainActor.assumeIsolated { [weak self] in self?.onChange() }
     }
 
     init(onChange: @escaping () -> Void) {
         self.onChange = onChange
-        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &listAddress, .main, listChanged)
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        AudioObjectAddPropertyListenerBlock(system, &listAddress, .main, listChanged)
+        AudioObjectAddPropertyListenerBlock(system, &defaultInputAddress, .main, listChanged)
         refresh()
     }
 
-    /// Follows processes as they come and go.
+    /// Follows processes as they come and go, and the microphone if another becomes the default.
     private func refresh() {
         let now = Set(Self.processes())
         for gone in watched.subtracting(now) {
-            AudioObjectRemovePropertyListenerBlock(gone, &inputAddress, .main, inputChanged)
+            AudioObjectRemovePropertyListenerBlock(gone, &runningAddress, .main, changed)
+            AudioObjectRemovePropertyListenerBlock(gone, &inputAddress, .main, changed)
         }
         for new in now.subtracting(watched) {
-            AudioObjectAddPropertyListenerBlock(new, &inputAddress, .main, inputChanged)
+            AudioObjectAddPropertyListenerBlock(new, &runningAddress, .main, changed)
+            // Never posted today; harmless, and it'd be the precise one if it ever is.
+            AudioObjectAddPropertyListenerBlock(new, &inputAddress, .main, changed)
         }
         watched = now
+        let mic: AudioObjectID = AudioOutputManager.property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice) ?? 0
+        if mic != microphone {
+            if microphone != kAudioObjectUnknown { AudioObjectRemovePropertyListenerBlock(microphone, &deviceRunningAddress, .main, changed) }
+            if mic != kAudioObjectUnknown { AudioObjectAddPropertyListenerBlock(mic, &deviceRunningAddress, .main, changed) }
+            microphone = mic
+        }
         onChange()
     }
 
@@ -251,8 +280,15 @@ final class MicWatcher {
     }
 
     func stop() {
-        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &listAddress, .main, listChanged)
-        for object in watched { AudioObjectRemovePropertyListenerBlock(object, &inputAddress, .main, inputChanged) }
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        AudioObjectRemovePropertyListenerBlock(system, &listAddress, .main, listChanged)
+        AudioObjectRemovePropertyListenerBlock(system, &defaultInputAddress, .main, listChanged)
+        for object in watched {
+            AudioObjectRemovePropertyListenerBlock(object, &runningAddress, .main, changed)
+            AudioObjectRemovePropertyListenerBlock(object, &inputAddress, .main, changed)
+        }
+        if microphone != kAudioObjectUnknown { AudioObjectRemovePropertyListenerBlock(microphone, &deviceRunningAddress, .main, changed) }
         watched = []
+        microphone = AudioObjectID(kAudioObjectUnknown)
     }
 }

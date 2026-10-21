@@ -508,6 +508,17 @@ final class MeetingAssistant: ObservableObject {
 
     private static var debugPlayer: AVAudioPlayer?
 
+    /// For notchdebug: a kept call as it was right after it ended (not yet transcribed again, no
+    /// notes), then its notes opened, to watch the whole way there.
+    func debugRedo(_ id: UUID) {
+        guard var m = meeting(id) else { return }
+        m.refined = nil
+        m.notes = nil
+        m.actions = nil
+        save(m)
+        showNotes(id)
+    }
+
     func debugLog() {
         for m in meetings.prefix(5) {
             let lines = m.lines.prefix(6).map { "[\($0.speaker.rawValue) \($0.offset.map { String(format: "%.1f", $0) } ?? "-")] \($0.text.prefix(60))" }

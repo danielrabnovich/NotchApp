@@ -107,16 +107,20 @@ enum DebugHooks {
         case "record": MeetingAssistant.shared.record()
         case "stoprecord": MeetingAssistant.shared.stopRecording()
         case "meetinglog": MeetingAssistant.shared.debugLog()
-        case "meetingplay", "meetingnotes", "meetingdelete": // <id prefix> [seconds]
+        case "meetingplay", "meetingnotes", "meetingdelete", "meetingredo": // <id prefix> [seconds]
             if let m = MeetingAssistant.shared.meetings.first(where: { $0.id.uuidString.lowercased().hasPrefix((parts[safe: 1] ?? "-").lowercased()) }) {
                 switch verb {
                 case "meetingplay": MeetingPlayer.shared.play(m.id, from: Double(parts[safe: 2] ?? "0") ?? 0)
                 case "meetingnotes": MeetingAssistant.shared.showNotes(m.id)
+                case "meetingredo": MeetingAssistant.shared.debugRedo(m.id)
                 default: MeetingAssistant.shared.delete(m.id)
                 }
             }
         case "meetingpause": MeetingPlayer.shared.pause()
         case "callquiet": MeetingMonitor.shared.debugQuiet()
+        case "callask": // a simulated call, offered for recording as a detected one is
+            MeetingMonitor.shared.debugSimulate(true, minutes: 0)
+            if let call = MeetingMonitor.shared.call { MeetingAssistant.shared.callStarted(call) }
         case "micstatus": log("MIC authorized=\(AVCaptureDevice.authorizationStatus(for: .audio) == .authorized) systemAudio=\(AudioSpectrum.permitted)")
         case "playerlog": log("PLAYER meeting=\(MeetingPlayer.shared.meeting?.uuidString ?? "-") playing=\(MeetingPlayer.shared.playing) position=\(MeetingPlayer.shared.position) duration=\(MeetingPlayer.shared.duration)")
         case "dictate": RambleStore.shared.toggleDictation()
