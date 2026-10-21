@@ -159,8 +159,11 @@ private struct MeetingMenu: View {
                     viewModel.open(tab: .ask, takeKeyboard: false, reason: .click)
                     MeetingAssistant.shared.catchUp("catch me up")
                 }
+                MenuItem("Stop Recording", "stop.circle") { MeetingAssistant.shared.stopRecording() }
             } else {
-                MenuItem("Transcribe This Call", "waveform") { captions.startRecording() }
+                MenuItem(meetings.call?.inPerson == true ? "Record This Meeting" : "Record This Call", "record.circle") {
+                    MeetingAssistant.shared.record()
+                }
             }
         }
         MenuItem("Take Notes", "note.text") {

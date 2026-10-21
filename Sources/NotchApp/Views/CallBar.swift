@@ -22,7 +22,7 @@ struct CallBar: View {
                         HStack(spacing: 4) {
                             // Red only when the call is being kept.
                             Circle().fill(captions.recording ? Color.red : MeetingReading.callBlue).frame(width: 5, height: 5)
-                            Text(elapsed(since: call.started, at: context.date) + (captions.recording ? " · Transcribing" : ""))
+                            Text(elapsed(since: call.started, at: context.date) + (captions.recording ? " · Recording" : ""))
                                 .font(.system(size: 9.5).monospacedDigit())
                                 .foregroundStyle(.white.opacity(0.5))
                         }
@@ -42,6 +42,10 @@ struct CallBar: View {
                 if LiveCaptions.isSupported {
                     control("captions.bubble.fill", on: captions.showing, tint: .blue,
                             help: captions.showing ? "Hide captions" : "Show captions") { captions.toggleCaptions() }
+                    control(captions.recording ? "stop.circle.fill" : "record.circle", on: captions.recording, tint: .red,
+                            help: captions.recording ? "Stop recording and write the notes" : "Record this call") {
+                        if captions.recording { MeetingAssistant.shared.stopRecording() } else { MeetingAssistant.shared.record() }
+                    }
                 }
                 if actions.contains(.leave) {
                     Button { MeetingControls.perform(.leave) } label: {

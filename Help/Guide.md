@@ -84,7 +84,7 @@ Volume and brightness changes show in the notch instead of macOS's overlay (Sett
 The Timer tab has countdowns, Pomodoro and a stopwatch: drag or scroll the ruler, use ← → to set it and Space to start and pause, or type "timer 25m" in Search. A running timer shows beside the notch.
 
 ## Meetings {calendar}
-A heads-up drops down before meetings, with a Join button for Zoom, Meet and Teams links. Meeting mode adds a call timer and mute button beside the notch during calls, and can transcribe the call on this Mac for notes and action items afterwards. Settings → Calendar & Meetings.
+A heads-up drops down before meetings, with a Join button for Zoom, Meet and Teams links. Meeting mode adds a call timer and mute button beside the notch during calls, and can record the call (it asks first) and transcribe it on this Mac for notes and action items afterwards, with the call to play back from any line. Type “record meeting” to record one in the room. Settings → Calendar & Meetings.
 
 ## Controls, Keep Awake and camera {controls}
 The Controls tab holds the quick actions you pick: toggles (dark mode, Wi-Fi, mic, Night Shift), a port viewer, speed test, copy text from the screen, colour picker. Keep Awake stops the Mac sleeping, optionally with the display off or the lid closed. The camera mirror shows a preview of yourself before a call. Settings → Controls & Camera.

@@ -195,6 +195,13 @@ final class ActivityCenter: ObservableObject {
         }
     }
 
+    /// A Prompt that no longer applies: off the screen, out of the queue, and its tab gone.
+    func withdraw(titled title: String) {
+        queue.removeAll { $0.peek.tier == .prompt && $0.peek.bannerText.title == title }
+        if reminder == title { clearReminder() }
+        if let banner, banner.tier == .prompt, banner.bannerText.title == title { dismissBanner() }
+    }
+
     func clearReminder() {
         reminderWork?.cancel()
         guard reminder != nil else { return }

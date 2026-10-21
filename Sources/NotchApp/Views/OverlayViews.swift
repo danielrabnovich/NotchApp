@@ -170,8 +170,10 @@ private struct PromptView: View {
             }
             Spacer(minLength: 10)
             HStack(spacing: 8) {
-                Button("Dismiss") { NotchPresenter.shared.dismissOverlay(close: false) }
-                    .buttonStyle(NotchPillButtonStyle())
+                if let dismiss = prompt.dismissTitle {
+                    Button(dismiss) { NotchPresenter.shared.dismissOverlay(close: false) }
+                        .buttonStyle(NotchPillButtonStyle())
+                }
                 ForEach(Array(prompt.actions.enumerated()), id: \.offset) { _, action in
                     Button(action.title) {
                         action.run()

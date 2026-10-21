@@ -150,7 +150,7 @@ final class Teleprompter: ObservableObject {
                 return
             }
             do {
-                let stream = try await SpeechStream.make { text, _ in
+                let stream = try await SpeechStream.make { text, _, _ in
                     Task { @MainActor in Teleprompter.shared.heard(text) }
                 }
                 guard listening else { await stream.finish(); return }

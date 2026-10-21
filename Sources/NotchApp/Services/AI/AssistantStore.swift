@@ -102,19 +102,21 @@ final class AssistantStore: ObservableObject {
 
     /// Writing done by the model on material it's given (a meeting's notes, catching up on a call),
     /// shown like any answer. `followUp`, once it's done, puts a button under it.
-    func runCustom(query: String, title: String, icon: String, stage: String = "Writing",
+    func runCustom(query: String, title: String, icon: String, stage: String = "Writing", meeting: UUID? = nil,
                    work: @escaping @Sendable (@escaping @Sendable (String) async -> Void) async throws -> String,
                    followUp: (@MainActor (String) -> (title: String, run: () -> Void)?)? = nil) {
         task?.cancel()
         var job = Job(query: query, route: .write)
         job.actionTitle = title
         job.actionIcon = icon
+        job.meeting = meeting
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
         self.followUp = nil
         let id = job.id
         task = Task {
-            guard aiAvailable else {
-                update(id) { $0.state = .failed("This needs an AI model: Apple Intelligence, Ollama, or a cloud model's key, in Settings → Search.") }
+            // A meeting's transcript and sound are there without a model; its notes say what's missing.
+            guard aiAvailable || meeting != nil else {
+                update(id) { $0.state = .failed(Self.needsModel) }
                 return
             }
             update(id) { $0.state = .running(stage: stage) }
@@ -132,6 +134,8 @@ final class AssistantStore: ObservableObject {
             }
         }
     }
+
+    static let needsModel = "This needs an AI model: Apple Intelligence, Ollama, or a cloud model's key, in Settings → Search."
 
     func runFollowUp() { followUp?() }
 
@@ -179,6 +183,8 @@ final class AssistantStore: ObservableObject {
         var appName: String?
         /// A next step offered under the answer ("Add 3 action items…"), run by `runFollowUp()`.
         var followUpTitle: String?
+        /// A kept call's notes: shown beside its transcript, to play from any line.
+        var meeting: UUID?
         let startedAt = Date()
 
         var isRunning: Bool { if case .running = state { true } else { false } }
