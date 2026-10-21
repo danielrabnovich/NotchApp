@@ -91,9 +91,10 @@ final class HotKeys: ObservableObject {
         case toggle, search, home, shelf, downloads, tasks, notes, timer, mixer, controls, camera, stats, tools, agents, clipboard, copyText, askScreen
         case windowLeft, windowRight, windowMaximize, windowCenter, windowNextDisplay, windowRestore
         case ramble
+        case windowTop, windowBottom, windowPreviousDisplay
 
-        /// Window keys that other window tools often claim start turned off; set them in Settings.
-        var onByDefault: Bool { ![.windowCenter, .windowNextDisplay, .windowRestore].contains(self) }
+        /// Center starts off: its key is Controls'.
+        var onByDefault: Bool { self != .windowCenter }
 
         var windowAction: WindowManager.Action? {
             switch self {
@@ -102,6 +103,9 @@ final class HotKeys: ObservableObject {
             case .windowMaximize: .maximize
             case .windowCenter: .center
             case .windowNextDisplay: .nextDisplay
+            case .windowPreviousDisplay: .previousDisplay
+            case .windowTop: .topHalf
+            case .windowBottom: .bottomHalf
             case .windowRestore: .restore
             default: nil
             }
@@ -131,7 +135,10 @@ final class HotKeys: ObservableObject {
             case .windowRight: "→"
             case .windowMaximize: "↩"
             case .windowCenter: "C"
-            case .windowNextDisplay: "N"
+            case .windowNextDisplay: "→"
+            case .windowPreviousDisplay: "←"
+            case .windowTop: "↑"
+            case .windowBottom: "↓"
             case .windowRestore: "⌫"
             case .ramble: "J"
             }
@@ -163,11 +170,18 @@ final class HotKeys: ObservableObject {
             case .windowNextDisplay: "Window: next display"
             case .windowRestore: "Window: restore"
             case .ramble: "Ramble: talk it out, get tasks back"
+            case .windowTop: "Window: top half"
+            case .windowBottom: "Window: bottom half"
+            case .windowPreviousDisplay: "Window: previous display"
             }
         }
 
+        /// The shared modifiers and its key. Window keys are ⌃⌥ whatever those are, as window tools
+        /// have them (the display moves ⌃⌥⌘), so they're where the hands already go.
         func defaultCombo(_ modifiers: Modifiers) -> Combo {
-            Combo(keyCode: keyCode, modifiers: modifiers.carbon, key: key)
+            guard windowAction != nil else { return Combo(keyCode: keyCode, modifiers: modifiers.carbon, key: key) }
+            let display = self == .windowNextDisplay || self == .windowPreviousDisplay
+            return Combo(keyCode: keyCode, modifiers: UInt32(controlKey | optionKey | (display ? cmdKey : 0)), key: key)
         }
 
         var keyCode: UInt32 {
@@ -193,7 +207,10 @@ final class HotKeys: ObservableObject {
             case .windowRight: UInt32(kVK_RightArrow)
             case .windowMaximize: UInt32(kVK_Return)
             case .windowCenter: UInt32(kVK_ANSI_C)
-            case .windowNextDisplay: UInt32(kVK_ANSI_N)
+            case .windowNextDisplay: UInt32(kVK_RightArrow)
+            case .windowPreviousDisplay: UInt32(kVK_LeftArrow)
+            case .windowTop: UInt32(kVK_UpArrow)
+            case .windowBottom: UInt32(kVK_DownArrow)
             case .windowRestore: UInt32(kVK_Delete)
             case .ramble: UInt32(kVK_ANSI_J)
             }
@@ -233,6 +250,47 @@ final class HotKeys: ObservableObject {
         s.$hotKeysEnabled.combineLatest(s.$hotKeyModifiers, s.$hotKeyOverrides)
             .sink { [weak self] _, _, _ in DispatchQueue.main.async { self?.register() } }
             .store(in: &cancellables)
+        // Rectangle starting (at login it can come up after this), or quitting and letting go of its keys.
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            center.publisher(for: name)
+                .filter { ($0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier == Self.rectangle }
+                .sink { [weak self] note in
+                    DispatchQueue.main.async {
+                        if note.name == NSWorkspace.didTerminateApplicationNotification { self?.register() } else { self?.checkRectangle() }
+                    }
+                }
+                .store(in: &cancellables)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in self?.checkRectangle() }
+    }
+
+    // MARK: - Rectangle
+
+    private static let rectangle = "com.knollsoft.Rectangle"
+    private var askedAboutRectangle = false
+
+    /// Rectangle running too, on the same window keys: both can register them, but only one app
+    /// gets each press, so the other's quietly do nothing. Asked once a launch: quit Rectangle, or turn the
+    /// window shortcuts here off. (Its keys are ⌃⌥ or ⌥⌘ unless changed; one of ours that
+    /// couldn't register is taken for certain.)
+    private func checkRectangle() {
+        let windowKeys = Action.allCases.filter { $0.windowAction != nil && Self.combo(for: $0) != nil }
+        let rectangleKeys = [UInt32(controlKey | optionKey), UInt32(optionKey | cmdKey)]
+        let clash = windowKeys.contains { action in
+            failed.contains(action) || rectangleKeys.contains { (Self.combo(for: action)?.modifiers ?? 0) & ~UInt32(cmdKey) == $0 & ~UInt32(cmdKey) }
+        }
+        guard !askedAboutRectangle, AppSettings.shared.hotKeysEnabled, clash,
+              let app = NSRunningApplication.runningApplications(withBundleIdentifier: Self.rectangle).first else { return }
+        askedAboutRectangle = true
+        DebugHooks.log("HotKeys: Rectangle is running on the same window keys; asking")
+        let modifiers = Self.combo(for: .windowLeft)?.modifierSymbols ?? Self.combo(for: windowKeys[0])?.modifierSymbols ?? ""
+        NotchPresenter.shared.offer(Prompt(icon: "rectangle.split.2x1", tint: .systemBlue, title: "Rectangle is running too",
+                                           detail: "Both use \(modifiers) arrows for windows. Only one app gets each key.",
+                                           actions: [.init(title: "Quit Rectangle", primary: true) { app.terminate() },
+                                                     .init(title: "Keep Rectangle") {
+                                                         for action in windowKeys { AppSettings.shared.hotKeyOverrides[action.rawValue] = .off }
+                                                     }]))
     }
 
     private func register() {
@@ -327,7 +385,8 @@ final class HotKeys: ObservableObject {
             let ramble = RambleStore.shared
             if vm.isOpen, ramble.active { ramble.close(); vm.close() } else { ramble.open(vm) }
             return
-        case .windowLeft, .windowRight, .windowMaximize, .windowCenter, .windowNextDisplay, .windowRestore:
+        case .windowLeft, .windowRight, .windowTop, .windowBottom, .windowMaximize, .windowCenter,
+             .windowNextDisplay, .windowPreviousDisplay, .windowRestore:
             if let window = action.windowAction { WindowManager.apply(window) }
             return
         }

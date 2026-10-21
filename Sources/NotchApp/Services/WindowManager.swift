@@ -1,9 +1,10 @@
 import AppKit
 import ApplicationServices
 
-/// Snaps the window in front to halves, thirds, quarters, the full screen, the centre or the next
-/// display, through Accessibility. Each window's frame before its first snap is kept, so Restore
-/// puts it back.
+/// Snaps the window in front to halves, thirds, quarters, the full screen, the centre or another
+/// display, through Accessibility. Left or right again sends the window on to the display that way
+/// (or, with none there, to ⅔ and then ⅓). Each window's frame before it was snapped is kept, so
+/// Restore puts it back.
 @MainActor
 enum WindowManager {
     enum Action: String, CaseIterable, Equatable {
@@ -11,7 +12,7 @@ enum WindowManager {
         case maximize, almostMaximize, center
         case leftThird, centerThird, rightThird, leftTwoThirds, rightTwoThirds
         case topLeft, topRight, bottomLeft, bottomRight
-        case nextDisplay, restore
+        case nextDisplay, previousDisplay, restore
 
         var title: String {
             switch self {
@@ -32,6 +33,7 @@ enum WindowManager {
             case .bottomLeft: "Bottom Left Quarter"
             case .bottomRight: "Bottom Right Quarter"
             case .nextDisplay: "Next Display"
+            case .previousDisplay: "Previous Display"
             case .restore: "Restore"
             }
         }
@@ -56,6 +58,7 @@ enum WindowManager {
             case .bottomLeft: ["bottom left"]
             case .bottomRight: ["bottom right"]
             case .nextDisplay: ["other display", "next screen", "other screen", "move to display"]
+            case .previousDisplay: ["previous screen", "last display", "back a display"]
             case .restore: ["restore window", "undo window", "original size"]
             }
         }
@@ -73,7 +76,7 @@ enum WindowManager {
             case .topRight: "rectangle.inset.topright.filled"
             case .bottomLeft: "rectangle.inset.bottomleft.filled"
             case .bottomRight: "rectangle.inset.bottomright.filled"
-            case .nextDisplay: "display.2"
+            case .nextDisplay, .previousDisplay: "display.2"
             case .restore: "arrow.uturn.backward"
             }
         }
@@ -81,46 +84,107 @@ enum WindowManager {
 
     /// Frames before the first snap, by window, for Restore.
     private static var original: [CGWindowID: CGRect] = [:]
+    /// Each window's last snap and where it ended up: the same key again on a window still there is
+    /// a repeat; a window somewhere else has been moved by hand since.
+    private static var last: [CGWindowID: (action: Action, frame: CGRect)] = [:]
 
-    static func apply(_ action: Action) {
+    /// `pid`: another app's window than the one in front (debug hooks).
+    static func apply(_ action: Action, pid: pid_t? = nil) {
         guard AXIsProcessTrusted() else {
             ActivityCenter.shared.show(.notice(title: "Allow Accessibility", detail: "Needed to move windows", icon: "lock.shield", tone: .warning), for: 3)
             return
         }
-        guard let app = NSWorkspace.shared.frontmostApplication.flatMap({ $0.processIdentifier == getpid() ? FrontmostTracker.shared.lastOther : $0 })
+        guard let app = pid.flatMap(NSRunningApplication.init(processIdentifier:))
+                ?? NSWorkspace.shared.frontmostApplication.flatMap({ $0.processIdentifier == getpid() ? FrontmostTracker.shared.lastOther : $0 })
         else { return }
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(axApp, 0.3)
         guard let window = element(axApp, kAXFocusedWindowAttribute) ?? element(axApp, kAXMainWindowAttribute),
+              AXReader.value(window, "AXFullScreen") != true,
               let frame = frame(of: window) else { return }
         var id: CGWindowID = 0
         let hasID = _AXUIElementGetWindow(window, &id) == .success
+        let previous = hasID ? last[id] : nil
+        let untouched = previous.map { close($0.frame, frame) } ?? false
 
         let screens = NSScreen.screens
-        let current = screens.max { overlap($0, frame) < overlap($1, frame) } ?? NSScreen.main
-        guard let current else { return }
+        guard let current = screens.max(by: { overlap($0, frame) < overlap($1, frame) }) ?? NSScreen.main else { return }
+        var done = action
+        var area = visible(current)
         var target: CGRect
         switch action {
         case .restore:
             guard hasID, let saved = original.removeValue(forKey: id) else { return }
+            last[id] = nil
             target = saved
-        case .nextDisplay:
-            guard screens.count > 1, let i = screens.firstIndex(of: current) else { return }
-            let next = screens[(i + 1) % screens.count]
-            let from = visible(current), to = visible(next)
+        case .nextDisplay, .previousDisplay:
+            let ordered = screens.sorted { ($0.frame.minX, $0.frame.minY) < ($1.frame.minX, $1.frame.minY) }
+            guard ordered.count > 1, let i = ordered.firstIndex(of: current) else { return }
+            let next = ordered[(i + (action == .nextDisplay ? 1 : ordered.count - 1)) % ordered.count]
+            let from = visible(current)
+            area = visible(next)
             // Same place and size relative to the screen, scaled to fit.
-            let scale = min(1, min(to.width / max(frame.width, 1), to.height / max(frame.height, 1)))
+            let scale = min(1, min(area.width / max(frame.width, 1), area.height / max(frame.height, 1)))
             let size = CGSize(width: frame.width * scale, height: frame.height * scale)
             let rel = CGPoint(x: (frame.minX - from.minX) / max(from.width - frame.width, 1),
                               y: (frame.minY - from.minY) / max(from.height - frame.height, 1))
-            target = CGRect(x: to.minX + max(0, min(1, rel.x)) * (to.width - size.width),
-                            y: to.minY + max(0, min(1, rel.y)) * (to.height - size.height), width: size.width, height: size.height)
+            target = CGRect(x: area.minX + max(0, min(1, rel.x)) * (area.width - size.width),
+                            y: area.minY + max(0, min(1, rel.y)) * (area.height - size.height), width: size.width, height: size.height)
+        case .leftHalf, .rightHalf:
+            let left = action == .leftHalf
+            let cycle: [Action] = left ? [.leftHalf, .leftTwoThirds, .leftThird] : [.rightHalf, .rightTwoThirds, .rightThird]
+            if untouched, let previous, let step = cycle.firstIndex(of: previous.action) {
+                if step == 0, let beside = neighbor(of: current, left: left) {
+                    // On to the display that way, against the side it came in from.
+                    done = left ? .rightHalf : .leftHalf
+                    area = visible(beside)
+                } else {
+                    done = cycle[(step + 1) % cycle.count]
+                }
+            }
+            target = rect(for: done, in: area, window: frame)
         default:
-            target = rect(for: action, in: visible(current), window: frame)
+            target = rect(for: action, in: area, window: frame)
         }
-        if hasID, action != .restore, original[id] == nil { original[id] = frame }
+        // Moved by hand since the last snap (or never snapped): this is where Restore goes back to.
+        if hasID, action != .restore, !untouched { original[id] = frame }
+
+        // Chrome and Electron apps animate (and end up the wrong size) while this is on.
+        let enhanced = AXReader.value(axApp, "AXEnhancedUserInterface") == true
+        if enhanced { AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, kCFBooleanFalse) }
         set(window, to: target)
+        // An app that won't take the size (a minimum, or Terminal's character grid) keeps to the
+        // edges it was sent to, rather than hanging off the far side.
+        var landed = Self.frame(of: window) ?? target
+        if action != .restore, !close(landed, target) {
+            var origin = CGPoint(x: aligned(landed.width, target.minX, target.maxX, area.minX, area.maxX),
+                                 y: aligned(landed.height, target.minY, target.maxY, area.minY, area.maxY))
+            if let p = AXValueCreate(.cgPoint, &origin) { AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, p) }
+            landed = Self.frame(of: window) ?? landed
+        }
+        if enhanced { AXUIElementSetAttributeValue(axApp, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) }
+        if hasID, action != .restore { last[id] = (done, landed) }
+        DebugHooks.log("Window: \(action) → \(done) \(landed) enhanced=\(enhanced)")
         Haptics.align()
+    }
+
+    /// Where a window of `length` starts along one axis: at the edge the target shares with the
+    /// screen, else centred on the target, kept on the screen while it fits.
+    private static func aligned(_ length: CGFloat, _ min: CGFloat, _ max: CGFloat, _ lower: CGFloat, _ upper: CGFloat) -> CGFloat {
+        let start: CGFloat = abs(min - lower) < 2 ? lower : abs(max - upper) < 2 ? upper - length : (min + max - length) / 2
+        return length >= upper - lower ? lower : Swift.min(Swift.max(start, lower), upper - length)
+    }
+
+    /// Within a couple of points: apps round sizes to their own steps.
+    private static func close(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.minX - b.minX) < 2 && abs(a.minY - b.minY) < 2 && abs(a.width - b.width) < 2 && abs(a.height - b.height) < 2
+    }
+
+    /// The nearest display that way, as the displays are arranged.
+    private static func neighbor(of screen: NSScreen, left: Bool) -> NSScreen? {
+        NSScreen.screens
+            .filter { left ? $0.frame.maxX <= screen.frame.midX : $0.frame.minX >= screen.frame.midX }
+            .min { abs($0.frame.midX - screen.frame.midX) < abs($1.frame.midX - screen.frame.midX) }
     }
 
     /// The rectangle for an action within a screen's usable area (top-left coordinates).
@@ -145,7 +209,7 @@ enum WindowManager {
         case .topRight: return CGRect(x: r.midX, y: r.minY, width: w / 2, height: h / 2)
         case .bottomLeft: return CGRect(x: r.minX, y: r.midY, width: w / 2, height: h / 2)
         case .bottomRight: return CGRect(x: r.midX, y: r.midY, width: w / 2, height: h / 2)
-        case .nextDisplay, .restore: return window
+        case .nextDisplay, .previousDisplay, .restore: return window
         }
     }
 

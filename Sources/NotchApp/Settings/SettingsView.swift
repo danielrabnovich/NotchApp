@@ -1915,7 +1915,7 @@ private struct ShortcutsPane: View {
                     Picker(selection: $s.hotKeyModifiers) {
                         ForEach(HotKeys.Modifiers.allCases) { Text($0.title).tag($0) }
                     } label: {
-                        RowLabel(title: "Default modifier keys", subtitle: "For every shortcut you haven't changed. ⌥⌘ matches other notch apps but overrides some app shortcuts (⌥⌘D hides the Dock). "
+                        RowLabel(title: "Default modifier keys", subtitle: "For every shortcut you haven't changed, except window keys (always ⌃⌥, as in window tools). ⌥⌘ matches other notch apps but overrides some app shortcuts (⌥⌘D hides the Dock). "
                                  + "✦ Hyper is ⌃⌥⇧⌘ together, for a Caps Lock remapped with Karabiner or Raycast.")
                     }
                     .pickerStyle(.segmented)
@@ -2090,7 +2090,7 @@ private enum ShortcutGroup: CaseIterable, Identifiable {
     var note: String? {
         switch self {
         case .tabs: "Opens the notch on that tab; press it again to close."
-        case .windows: "Moves the window in front. Some start off, since other window tools often use them."
+        case .windows: "Moves the window in front. Press left or right again to send it on to the display that way, or, with none there, to ⅔ and then ⅓ of the screen."
         default: nil
         }
     }
@@ -2102,7 +2102,8 @@ private enum ShortcutGroup: CaseIterable, Identifiable {
         case .tabs: [.home, .shelf, .downloads, .clipboard, .tasks, .notes, .timer, .mixer, .controls, .camera, .stats, .tools, .agents]
         // Plus any new action not given a group yet, so it can't go missing from the pane.
         case .actions: [.copyText, .askScreen, .ramble] + HotKeys.Action.allCases.filter { a in !Self.listed.contains(a) }
-        case .windows: [.windowLeft, .windowRight, .windowMaximize, .windowCenter, .windowNextDisplay, .windowRestore]
+        case .windows: [.windowLeft, .windowRight, .windowTop, .windowBottom, .windowMaximize, .windowCenter,
+                         .windowPreviousDisplay, .windowNextDisplay, .windowRestore]
         }
     }
 
