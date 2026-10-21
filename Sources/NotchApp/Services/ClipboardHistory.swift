@@ -87,7 +87,8 @@ final class ClipboardHistory: ObservableObject {
     }()
     private var indexURL: URL { folder.appendingPathComponent("history.json") }
 
-    private static let skippedApps: Set<String> = [
+    /// Password managers: nothing copied from them is kept, and Recall never captures them.
+    nonisolated static let skippedApps: Set<String> = [
         "com.agilebits.onepassword7", "com.1password.1password", "com.bitwarden.desktop", "com.apple.Passwords",
         "com.apple.keychainaccess", "in.sinew.Enpass-Desktop", "com.lastpass.LastPass", "com.dashlane.Dashlane",
         "org.keepassxc.keepassxc", "com.callpod.keeper.mac",

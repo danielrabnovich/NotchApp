@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentMonitor.shared.start()
         LidSleep.set(disabled: false)   // puts lid sleep back if NotchApp was force quit mid-session
         FrontmostTracker.shared.start()
+        Recall.shared.start()
         AppActions.shared.start()
         ShortcutsApp.shared.refreshIfStale()
         HeatWatcher.shared.start()

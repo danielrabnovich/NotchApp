@@ -7,7 +7,7 @@ import SwiftUI
 final class AssistantStore: ObservableObject {
     static let shared = AssistantStore()
 
-    enum Route: String { case files, web, weather, actions, calendar, notes, screen, write, app, help }
+    enum Route: String { case files, web, weather, actions, calendar, notes, screen, write, app, help, recall }
 
     /// Text work for the model from the command bar.
     enum Writing {
@@ -164,6 +164,8 @@ final class AssistantStore: ObservableObject {
         var weather: WeatherReport?
         var calendar: CalendarAnswer?
         var notes: NotesAnswer?
+        /// What Recall found: moments from the screen's past.
+        var recall: RecallAnswer?
         /// Proposed commands for the user to review (the actions route).
         var plan: CommandPlanner.Plan?
         /// What the screen looked like, for a question about it (a small preview; nothing is saved).
@@ -455,6 +457,11 @@ final class AssistantStore: ObservableObject {
                     chosen = nil
                     update(id) { $0.route = nil; $0.state = .running(stage: "Thinking") }
                 }
+                // "What was that error in Terminal yesterday": what was on screen before.
+                if chosen == .recall || (chosen == nil && RecallSearch.looksLikeRecall(trimmed)) {
+                    try await answerRecall(trimmed, id: id, progress: progress)
+                    throw Finished()
+                }
                 // "What can you do", "where's the setting for…", "what's new": NotchApp's own help.
                 if chosen == .help || (chosen == nil && HelpBrain.isAvailable && Router.isAboutApp(trimmed)) {
                     try await answerHelp(trimmed, id: id, useAI: useAI, progress: progress)
@@ -515,6 +522,8 @@ final class AssistantStore: ObservableObject {
                     try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
                 case .help:
                     try await answerHelp(trimmed, id: id, useAI: useAI, progress: progress)
+                case .recall:
+                    try await answerRecall(trimmed, id: id, progress: progress)
                 case .write, .app:
                     break // writing jobs run through write(_:), app ones above (run() is handed them by route)
                 case .weather:
@@ -582,6 +591,28 @@ final class AssistantStore: ObservableObject {
         if screenContext != nil { contextHistory.append(.init(question: query, answer: answer)) }
     }
 
+    /// Finds moments in Recall, then (for a question, with a model on this Mac) answers it in a sentence
+    /// from their text. The results show while the sentence is written.
+    private func answerRecall(_ query: String, id: UUID, progress: @escaping @Sendable (String) async -> Void) async throws {
+        update(id) { $0.route = .recall }
+        guard AppSettings.shared.recall else {
+            throw OllamaClient.OllamaError(message: "Recall is off. Turn it on in Settings → Search to find things you've seen.")
+        }
+        await progress("Remembering")
+        let filter = await RecallSearch.parse(query)
+        let hits = await Task.detached(priority: .userInitiated) { RecallSearch.search(filter, query: query) }.value
+        try Task.checkCancellation()
+        DebugHooks.log("Recall: \(query) → \(filter) | \(hits.count) hits: \(hits.prefix(3).map { "\($0.appName ?? "?") “\($0.title ?? "")”" })")
+        update(id) { $0.recall = RecallAnswer(filter: filter, hits: hits); $0.state = .done }
+        // A sentence only from a model on this Mac: what was on screen never goes to the cloud.
+        guard !hits.isEmpty, RecallSearch.wantsSentence(query), aiAvailable, !AppSettings.shared.aiProvider.isCloud else { return }
+        let sentence = try? await RecallSearch.answer(query, hits: hits) { soFar in
+            await MainActor.run { AssistantStore.shared.update(id, animated: false) { $0.recall?.sentence = soFar } }
+        }
+        try Task.checkCancellation()
+        if let sentence, !sentence.isEmpty { update(id) { $0.recall?.sentence = sentence } }
+    }
+
     /// Carries out an instruction in the app in front: a sure, harmless pick runs straight away (the
     /// notch steps aside for it); otherwise the picks wait for a click.
     /// Returns false when nothing in the app's menus matches, so Search can try it the usual way.
@@ -629,7 +660,7 @@ final class AssistantStore: ObservableObject {
     func switchRoute() {
         guard let job = current, let route = job.route, route != .actions, route != .calendar, route != .write else { return }
         // Files ↔ web; a weather or screen answer switches to a full web search.
-        run(job.query, route: [.files, .weather, .screen, .help].contains(route) ? .web : .files)
+        run(job.query, route: [.files, .weather, .screen, .help, .recall].contains(route) ? .web : .files)
     }
 
     func clear() {
@@ -668,6 +699,10 @@ final class AssistantStore: ObservableObject {
             title = job.calendar?.headline ?? "Calendar"; detail = job.calendar?.detail ?? job.query
         case (_, .notes?):
             title = "From your notes"; detail = job.notes?.headline ?? job.query
+        case (_, .recall?):
+            let first = job.recall?.hits.first
+            title = first == nil ? "Nothing in Recall" : "Found in Recall"
+            detail = first.map { [$0.appName, $0.title].compactMap { $0 }.joined(separator: " — ") } ?? job.query
         default:
             title = "Answer ready"; detail = job.query
         }

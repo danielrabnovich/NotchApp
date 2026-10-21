@@ -47,6 +47,9 @@ Ask "what's on today", "am I free friday at 3", "when is my dentist appointment"
 ## Questions about your screen {assistant}
 Ask "what's the right answer to this question", "explain this error", "summarize this page" or "what am I looking at": NotchApp captures the screen behind the notch (in memory only, never saved), reads its text and answers, searching the web when it needs facts. Press ⌃⌥S ("Ask about this") to capture the window in front first and then ask about it. Needs Screen Recording permission (System Settings → Privacy & Security → Screen & System Audio Recording; it's a different list from Accessibility). Turn it off in Settings → Search → Your screen.
 
+## Recall: finding what you saw {assistant}
+Recall remembers what was on your screen so Search can find it later: "what was that error in Terminal yesterday", "the pricing page I looked at Tuesday", "yesterday in Slack…", or type "recall" and what you're after. It's off until you turn it on in Settings → Search → Your screen, where you also choose how long it keeps things (a day, a week or a month; it never uses more than about 2 GB). When you switch apps, a window's title changes, or every 30 seconds while you're using the Mac, the window in front is read into text on this Mac (its text through Accessibility, or read off the picture when the app shows none) with a small picture. Search reads only that text, so it works with local models. It never captures NotchApp, password managers, private or incognito browser windows, a locked or idle Mac, or a screen being shared through Screen Sharing, and it waits on low battery, in Low Power Mode and when the Mac is hot. Type "pause recall" to stop it for a while ("resume recall" starts it again), "forget the last hour" to delete the past hour, or "erase recall" to delete everything. Results open the page or document again (or the app), and ⌘Y shows the moment's picture. A one-line answer is written only by a model on this Mac, never a cloud one.
+
 ## Doing things in the app in front {assistant}
 Type an instruction for the app you're using ("export as pdf", "new private window", "zoom in", "bold"): NotchApp looks through that app's own menus and runs the best match, or shows a few to choose from. It needs Accessibility permission. If nothing in the app's menus matches, Search treats it as a normal search.
 
@@ -99,7 +102,7 @@ Settings → Permissions lists what NotchApp can use and what each permission un
 NotchApp's actions are in the Shortcuts app and Siri: start timers, add tasks, put files on the Shelf, show banners, captions and Glances. Your own shortcuts can run from the search bar and as Glance tiles.
 
 ## Privacy
-Everything runs on your Mac unless you choose a cloud model. Web searches send only the search words. Screen questions capture the screen in memory and never save it; with a local model the picture never leaves the Mac. Clipboard history and transcripts are kept on this Mac only.
+Everything runs on your Mac unless you choose a cloud model. Web searches send only the search words. Screen questions capture the screen in memory and never save it; with a local model the picture never leaves the Mac. Clipboard history, transcripts and Recall are kept on this Mac only.
 
 ## Troubleshooting
 - "Couldn't reach Ollama": start Ollama from Settings → Search, or run `ollama serve`, and check a model is downloaded.

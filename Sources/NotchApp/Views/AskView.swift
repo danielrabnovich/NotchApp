@@ -267,12 +267,15 @@ struct AskView: View {
         guard job.state == .done || streaming else { return [] }
         switch job.route {
         case .files?: return job.files.map(\.url)
+        // Each moment's picture (for Quick Look); ↩ goes back to the page or app instead.
+        case .recall?: return (job.recall?.hits ?? []).map { $0.thumbnail ?? URL(fileURLWithPath: "/") }
         case .weather?, .calendar?, .actions?, .help?: return []
         default: return (job.answer ?? "").isEmpty ? job.sources.map(\.url) : job.sources.prefix(5).map(\.url)
         }
     }
 
     private var showsFiles: Bool { assistant.current?.route == .files }
+    private var showsRecall: Bool { assistant.current?.route == .recall }
 
     /// The local file under the selection, in results or suggestions.
     private var selectedFile: URL? {
@@ -293,7 +296,7 @@ struct AskView: View {
             let count = job.route == .app ? job.appPicks.count : browsable.count
             guard count > 0 else { return }
             resultIndex = min(max(resultIndex + delta, 0), count - 1)
-            if showsFiles { QuickLook.shared.follow(browsable, at: resultIndex) }
+            if showsFiles || showsRecall { QuickLook.shared.follow(browsable, at: resultIndex) }
         } else {
             suggestions.move(delta)
             let files = suggestionFiles
@@ -305,6 +308,11 @@ struct AskView: View {
     private func openSelected() -> Bool {
         guard assistant.current != nil, browsable.indices.contains(resultIndex) else { return false }
         QuickLook.shared.close()
+        if showsRecall, let hits = assistant.current?.recall?.hits, hits.indices.contains(resultIndex) {
+            RecallSearch.open(hits[resultIndex])
+            finish()
+            return true
+        }
         let url = browsable[resultIndex]
         if !HelpBrain.open(url) { NSWorkspace.shared.open(url) }
         if showsFiles { finish() }
@@ -325,7 +333,7 @@ struct AskView: View {
     private func quickLookSelected() -> KeyPress.Result {
         if QuickLook.shared.isVisible { QuickLook.shared.close(); return .handled }
         if assistant.current != nil {
-            guard showsFiles, browsable.indices.contains(resultIndex) else { return .ignored }
+            guard showsFiles || showsRecall, browsable.indices.contains(resultIndex) else { return .ignored }
             QuickLook.shared.show(browsable, at: resultIndex)
         } else {
             let files = suggestionFiles
@@ -525,6 +533,7 @@ struct AskView: View {
         case .notes?: "note.text"
         case .screen?: "macwindow"
         case .help?: "questionmark.circle"
+        case .recall?: "clock.arrow.circlepath"
         case .write?: "character.bubble"
         case .app?: "wand.and.stars"
         case nil: "magnifyingglass"
@@ -807,6 +816,7 @@ private struct ResultView: View {
                      : job.route == .notes ? "Looking in your notes"
                      : job.route == .screen ? ScreenQuestion.privacyLine
                      : job.route == .help ? "From NotchApp's guide, settings and changelog"
+                     : job.route == .recall ? "Looking through what you've seen, on this Mac"
                      : "Working out where to look")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.3))
@@ -842,6 +852,7 @@ private struct ResultView: View {
                 case .notes?: if let answer = job.notes { NotesResult(answer: answer) }
                 case .screen?: ScreenResults(job: job, accent: accent, selection: $selection)
                 case .help?: HelpResults(job: job, accent: accent, selection: $selection)
+                case .recall?: if let answer = job.recall { RecallResults(answer: answer, selection: $selection) }
                 default: WebResults(job: job, accent: accent, selection: $selection)
                 }
                 RouteFooter(job: job)
@@ -917,6 +928,7 @@ private struct RouteFooter: View {
         case .notes?: ("note.text", "Your notes and tasks")
         case .screen?: ("macwindow", job.sources.isEmpty ? "Looked at your screen" : "Your screen and the web")
         case .help?: ("questionmark.circle", "NotchApp help")
+        case .recall?: ("clock.arrow.circlepath", "Recall, on this Mac")
         case .write?: ("character.bubble", "Written by \(!AppSettings.shared.aiProvider.isCloud ? "the model on this Mac" : AppSettings.shared.aiProvider.shortName)")
         default: ("globe", "Searched the web")
         }
@@ -957,9 +969,11 @@ private struct RouteFooter: View {
                 .padding(.leading, job.followUpTitle == nil || job.state != .done ? 4 : 0)
             }
             Spacer()
-            if !assistant.aiAvailable && job.route != .weather && assistant.pullingModel == nil {
+            if !assistant.aiAvailable && job.route != .weather && job.route != .recall && assistant.pullingModel == nil {
                 Text(job.route == .web ? "AI writes answers from these ·" : "AI picks the best match ·")
                 if case .modelMissing = assistant.status { DownloadModelMenu() }
+            } else if job.route == .recall, !(job.recall?.hits.isEmpty ?? true) {
+                KeyHints(hints: [("↑↓", nil), ("↩", "open"), ("⌘Y", "preview")])
             } else if job.route == .files, !job.files.isEmpty {
                 KeyHints(hints: job.files.count > 1 ? [("↑↓", nil), ("↩", "open"), ("⌘Y", "preview")]
                                                     : [("↩", "open"), ("⌘Y", "preview")])

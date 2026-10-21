@@ -67,6 +67,8 @@ struct Command: Identifiable, Equatable {
         case askCall(String)
         /// A kept call's notes (written now if they haven't been).
         case meetingNotes(UUID)
+        /// Look for something seen on screen before, in Recall.
+        case recall(String)
     }
 
     /// Code to run for an action, compared by its id.
@@ -153,6 +155,7 @@ enum CommandParser {
         if let c = utility(lower) ?? transform(lower) { return [c] }
         if let c = captions(lower) ?? callQuestion(q, lower) { return [c] }
         if let c = meetings(q, lower) { return c }
+        if let c = recall(q, lower) { return c }
         if ["ramble", "brain dump", "braindump", "brain-dump", "dump"].contains(lower) {
             return [Command(action: .ramble, title: "Ramble", subtitle: "Talk or type it all out, get tasks back", icon: "waveform", verb: "Open")]
         }
@@ -399,6 +402,45 @@ enum CommandParser {
             Command(action: .meetingNotes(m.id), title: m.title, subtitle: "\(m.when) · \(m.minutes) min\(m.notes == nil ? "" : " · notes")",
                     icon: "waveform.and.magnifyingglass", verb: "Notes")
         }
+    }
+
+    // MARK: - Recall
+
+    /// "recall …" searches it; "pause recall", "resume recall" and "forget the last hour" look after it.
+    private static func recall(_ q: String, _ lower: String) -> [Command]? {
+        let recall = Recall.shared
+        guard AppSettings.shared.recall else {
+            guard lower == "recall" || lower.hasPrefix("recall ") else { return nil }
+            return [Command(action: .settingsPane(.assistant), title: "Turn on Recall", subtitle: "Settings → Search · find things you've seen on screen",
+                            icon: "clock.arrow.circlepath", verb: "Open")]
+        }
+        let pause = Command(action: .perform(.init(id: "recallPause") { Recall.shared.pause(); return "Recall paused" }),
+                            title: "Pause Recall", subtitle: "Stops saving what's on screen until you resume it",
+                            icon: "pause.circle", verb: "Pause")
+        let resume = Command(action: .perform(.init(id: "recallResume") { Recall.shared.resume(); return "Recall is on again" }),
+                             title: "Resume Recall", subtitle: "Saves what's on screen again", icon: "play.circle", verb: "Resume")
+        let forget = Command(action: .perform(.init(id: "recallForgetHour") { Recall.shared.forget(last: 3600); return "Forgot the last hour" }),
+                             title: "Forget the last hour", subtitle: "Deletes what Recall saved in the past 60 minutes",
+                             icon: "clock.badge.xmark", verb: "Forget")
+        let toggle = recall.paused ? resume : pause
+        switch lower {
+        case "pause recall", "recall pause", "stop recall", "recall stop", "recall off": return [pause]
+        case "resume recall", "recall resume", "unpause recall", "start recall", "recall on": return [resume]
+        case "forget the last hour", "forget last hour", "forget the past hour", "forget past hour", "forget the hour",
+             "recall forget", "forget that", "delete the last hour":
+            return [forget]
+        case "forget everything recall saw", "erase recall", "clear recall", "delete recall", "forget everything":
+            return [Command(action: .perform(.init(id: "recallForgetAll") { Recall.shared.forgetAll(); return "Recall forgot everything" }),
+                            title: "Forget everything Recall saved", subtitle: "Deletes every capture. Can't be undone",
+                            icon: "trash", verb: "Erase")]
+        case "recall": return [toggle, forget]
+        default: break
+        }
+        guard lower.hasPrefix("recall ") else { return nil }
+        let rest = String(q.dropFirst(7)).trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return [toggle, forget] }
+        return [Command(action: .recall(q), title: "Recall “\(rest)”", subtitle: recall.paused ? "What you've seen · paused" : "What you've seen on screen",
+                        icon: "clock.arrow.circlepath", verb: "Search")]
     }
 
     private static func utility(_ lower: String) -> Command? {
@@ -922,6 +964,9 @@ final class CommandCenter: ObservableObject {
             // Through a captured window: the plan is made from what's in it, and shown for review.
             AssistantStore.shared.captureContext()
             AssistantStore.shared.run(request, action: (command.title, command.icon))
+            return nil
+        case .recall(let query):
+            AssistantStore.shared.run(query, route: .recall)
             return nil
         case .addTasks, .completeTask, .appendNote, .template, .createEvent, .moveEvent, .deleteEvent, .media: return nil
         }
