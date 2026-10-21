@@ -151,7 +151,7 @@ enum CommandParser {
         if let c = PaletteCommands.translate(q, lower) ?? PaletteCommands.define(lower) ?? PaletteCommands.web(q, lower)
             ?? PaletteCommands.power(lower) ?? PaletteCommands.window(lower) { return [c] }
         if let c = utility(lower) ?? transform(lower) { return [c] }
-        if let c = captions(lower) ?? callQuestion(q, lower) { return [c] }
+        if let c = captions(lower) ?? recording(lower) ?? callQuestion(q, lower) { return [c] }
         if let c = meetings(q, lower) { return c }
         if ["ramble", "brain dump", "braindump", "brain-dump", "dump"].contains(lower) {
             return [Command(action: .ramble, title: "Ramble", subtitle: "Talk or type it all out, get tasks back", icon: "waveform", verb: "Open")]
@@ -373,6 +373,32 @@ enum CommandParser {
                        icon: "captions.bubble.fill", verb: on ? "Stop" : "Start")
     }
 
+    /// "record meeting": the call that's on, both sides, or a meeting in the room on the microphone;
+    /// "stop recording" while one is kept.
+    private static func recording(_ lower: String) -> Command? {
+        guard LiveCaptions.isSupported else { return nil }
+        let start = ["record", "record meeting", "record this meeting", "record call", "record this call", "record the call",
+                     "start recording", "transcribe meeting", "transcribe this meeting", "transcribe call", "transcribe this call",
+                     "meeting recorder", "record in person", "voice memo meeting"]
+        let stop = ["stop recording", "end recording", "stop recording meeting", "stop recording call", "stop meeting recording",
+                    "stop transcribing", "end meeting"]
+        if LiveCaptions.shared.recording {
+            guard stop.contains(lower) || start.contains(lower) else { return nil }
+            return Command(action: .perform(.init(id: "stopRecording") {
+                MeetingAssistant.shared.stopRecording()
+                return nil
+            }), title: "Stop recording", subtitle: "Keep it and write the notes · on this Mac", icon: "stop.circle.fill", verb: "Stop")
+        }
+        guard start.contains(lower) else { return nil }
+        let call = MeetingMonitor.shared.call
+        return Command(action: .perform(.init(id: "record") {
+            MeetingAssistant.shared.record()
+            return nil
+        }), title: call.map { "Record \($0.title)" } ?? "Record a meeting",
+                       subtitle: call == nil ? "In the room, on the microphone · transcribed on this Mac" : "Both sides · transcribed and kept on this Mac",
+                       icon: "record.circle", verb: "Record")
+    }
+
     /// During a transcribed call: "catch me up", "what did they say about pricing", "what did sam say".
     private static func callQuestion(_ q: String, _ lower: String) -> Command? {
         guard MeetingAssistant.shared.inCall else { return nil }
@@ -391,8 +417,8 @@ enum CommandParser {
         let found = MeetingAssistant.shared.search(String(q.dropFirst(prefix.count)), limit: 6)
         guard !found.isEmpty else {
             return MeetingAssistant.shared.meetings.isEmpty
-                ? [Command(action: .settingsPane(.calendar), title: "No transcribed calls yet",
-                           subtitle: "Turn on Transcribe calls in Settings → Calendar", icon: "waveform", verb: "Open")]
+                ? [Command(action: .settingsPane(.calendar), title: "No recorded calls yet",
+                           subtitle: "Turn on Record calls in Settings → Calendar, or type “record meeting”", icon: "waveform", verb: "Open")]
                 : [Command(action: .template(prefix + " "), title: "No call matches", icon: "waveform", verb: "Edit")]
         }
         return found.map { m in

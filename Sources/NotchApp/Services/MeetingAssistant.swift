@@ -1,10 +1,11 @@
+import AVFoundation
 import AppKit
 import SwiftUI
 
 /// What a transcribed call is good for: a heads-up when someone says your name while you're in
 /// another window, "catch me up" in the middle of it, notes when it ends (a summary, decisions,
-/// action items to review into Tasks, a follow-up to send), and every call kept on this Mac to
-/// find again from the search bar.
+/// action items to review into Tasks, a follow-up to send), and every call kept on this Mac, its
+/// sound too, to find again from the search bar and play back from any line.
 @MainActor
 final class MeetingAssistant: ObservableObject {
     static let shared = MeetingAssistant()
@@ -15,18 +16,45 @@ final class MeetingAssistant: ObservableObject {
         let app: String
         let started: Date
         let ended: Date
-        let lines: [LiveCaptions.Line]
+        var lines: [LiveCaptions.Line]
         var notes: String?
+        /// When its sound begins (lines' offsets count from here); none for calls kept as text only.
+        var recorded: Date?
+        /// Transcribed again from the recording, after the call.
+        var refined: Bool?
+        /// The action items, as the model listed them ("Owner: task (when)").
+        var actions: [String]?
+        /// In a room, on the microphone alone: nobody's marked as who.
+        var inPerson: Bool?
+        var attendees: [String]?
 
-        var transcript: String { lines.map { "\($0.speaker == .you ? "You" : "Them"): \($0.text)" }.joined(separator: "\n") }
+        var transcript: String {
+            if inPerson == true { return lines.map(\.text).joined(separator: "\n") }
+            return lines.map { "\($0.speaker == .you ? "You" : "Them"): \($0.text)" }.joined(separator: "\n")
+        }
         var minutes: Int { max(1, Int(ended.timeIntervalSince(started) / 60)) }
         var when: String { started.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()) }
     }
 
+    /// Where a kept call is up to after it ends.
+    enum Stage: Equatable {
+        /// Listening to the recording again, 0…1.
+        case transcribing(Double)
+        /// The notes so far.
+        case writing(String)
+    }
+
     /// Saved calls, newest first.
     @Published private(set) var meetings: [Meeting] = []
+    @Published private(set) var stage: [UUID: Stage] = [:]
     private var call: MeetingMonitor.Call?
+    private var recording: MeetingRecording?
+    private var askPrompt: UUID?
     private var lastNameAlert = Date.distantPast
+    private var pipelines: [UUID: Task<Void, Never>] = [:]
+    /// Notes asked for (the rest are written on their own only with a model on this Mac).
+    private var wantsNotes: Set<UUID> = []
+    private var failures: [UUID: String] = [:]
 
     private static var folder: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -35,35 +63,226 @@ final class MeetingAssistant: ObservableObject {
         return dir
     }
 
-    private init() { load() }
+    /// A call's sound: Meetings/<id>/them.aac and you.aac.
+    static func folder(for id: UUID) -> URL { folder.appendingPathComponent(id.uuidString, isDirectory: true) }
+
+    func meeting(_ id: UUID) -> Meeting? { meetings.first { $0.id == id } }
+
+    /// The tracks a meeting has on disk.
+    func tracks(_ id: UUID) -> [LiveCaptions.Speaker: URL] {
+        var found: [LiveCaptions.Speaker: URL] = [:]
+        for side in [LiveCaptions.Speaker.them, .you] {
+            let url = MeetingRecording.trackURL(side, in: Self.folder(for: id))
+            if FileManager.default.fileExists(atPath: url.path) { found[side] = url }
+        }
+        return found
+    }
+
+    private init() {
+        load()
+        recover()
+    }
 
     // MARK: - The call
 
+    /// A call started. Recording it is asked first: some places need everyone's consent.
     func callStarted(_ call: MeetingMonitor.Call) {
         self.call = call
-        guard AppSettings.shared.transcribeCalls, LiveCaptions.isSupported else { return }
-        LiveCaptions.shared.startRecording()
+        guard AppSettings.shared.transcribeCalls, LiveCaptions.isSupported, !LiveCaptions.shared.recording else { return }
+        let prompt = Prompt(icon: "record.circle", tint: .systemRed, title: "Record this call?",
+                            detail: "\(call.title): both sides, transcribed and kept on this Mac. Tell the others.",
+                            actions: [.init(title: "Record", primary: true) { MeetingAssistant.shared.record() }],
+                            dismissTitle: "Not Now")
+        askPrompt = prompt.id
+        NotchPresenter.shared.offer(prompt, peekFor: 8)
     }
 
-    /// Returns true when it took over the end of the call (there's a transcript to make notes from).
+    /// Starts keeping the call that's on, both sides; with no call, a meeting in the room, on the
+    /// microphone alone.
+    func record() {
+        guard LiveCaptions.isSupported, !LiveCaptions.shared.recording else { return }
+        if let askPrompt { NotchPresenter.shared.withdraw(askPrompt) }
+        askPrompt = nil
+        if MeetingMonitor.shared.call == nil { MeetingMonitor.shared.beginInPerson() }
+        guard let call = MeetingMonitor.shared.call else { return }
+        start(call, tracks: call.inPerson ? [.you] : [.them, .you], listen: call.inPerson ? [.you] : [.them, .you])
+    }
+
+    private func start(_ call: MeetingMonitor.Call, tracks: [LiveCaptions.Speaker], listen: [LiveCaptions.Speaker]) {
+        self.call = call
+        let id = UUID()
+        let session = MeetingRecording(id: id, folder: Self.folder(for: id), title: call.title, app: call.app, started: call.started,
+                                       sides: tracks, inPerson: call.inPerson, attendees: call.attendees)
+        recording = session
+        LiveCaptions.shared.startRecording(session, sides: listen, vocabulary: Self.vocabulary(title: call.title, attendees: call.attendees))
+        DebugHooks.log("MEETING recording \(id) tracks=\(tracks) listen=\(listen)")
+    }
+
+    /// Stops keeping it: an in-person meeting (or one kept past its call) ends there; a call goes on.
+    func stopRecording() {
+        guard LiveCaptions.shared.recording, let call = MeetingMonitor.shared.call ?? self.call else { return }
+        if call.inPerson || call.kept { MeetingMonitor.shared.endCall(); return }
+        finish(call, at: Date())
+    }
+
+    /// Returns true when it took over the end of the call (there's a recording to make notes from).
     func callEnded(_ call: MeetingMonitor.Call, at end: Date) -> Bool {
         self.call = nil
+        if let askPrompt { NotchPresenter.shared.withdraw(askPrompt) }
+        askPrompt = nil
         guard LiveCaptions.shared.recording else { return false }
+        finish(call, at: end)
+        return true
+    }
+
+    private func finish(_ call: MeetingMonitor.Call, at end: Date) {
+        guard let session = recording else { return }
+        recording = nil
         Task {
             let lines = await LiveCaptions.shared.stopRecording()
-            // A few words aren't a meeting.
-            guard lines.map(\.text.count).reduce(0, +) > 200 else { return }
-            let meeting = Meeting(title: call.title, app: call.app, started: call.started, ended: end, lines: lines)
+            guard Self.worthKeeping(lines, length: end.timeIntervalSince(session.start)) else {
+                try? FileManager.default.removeItem(at: session.folder)
+                return
+            }
+            let meeting = Meeting(id: session.id, title: call.title, app: call.app, started: call.started, ended: end, lines: lines,
+                                  recorded: session.start, inPerson: call.inPerson ? true : nil,
+                                  attendees: call.attendees.isEmpty ? nil : call.attendees)
             save(meeting)
+            try? FileManager.default.removeItem(at: MeetingRecording.journalURL(in: session.folder))
+            process(meeting.id)
             NotchPresenter.shared.offer(Prompt(icon: "waveform.and.magnifyingglass", tint: .systemGreen,
                                                title: "\(call.title) ended",
-                                               detail: "\(meeting.minutes) min, transcribed on this Mac. Notes and action items?",
+                                               detail: "\(meeting.minutes) min, recorded on this Mac. Notes and action items?",
                                                actions: [.init(title: "Write Notes", primary: true) {
                                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { MeetingAssistant.shared.showNotes(meeting.id) }
                                                }]),
                                         peek: true)
         }
-        return true
+    }
+
+    /// A few words aren't a meeting; two minutes of sound may be, even if the live words missed it.
+    private static func worthKeeping(_ lines: [LiveCaptions.Line], length: TimeInterval) -> Bool {
+        lines.map(\.text.count).reduce(0, +) > 200 || length >= 120
+    }
+
+    /// Calls cut off by a crash or a forced quit: their journal and sound are still there, so
+    /// they're kept like any other (and transcribed again from the sound).
+    private func recover() {
+        let fm = FileManager.default
+        let dirs = (try? fm.contentsOfDirectory(at: Self.folder, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        for dir in dirs {
+            guard let id = UUID(uuidString: dir.lastPathComponent), meeting(id) == nil,
+                  let data = try? Data(contentsOf: MeetingRecording.journalURL(in: dir)),
+                  let journal = try? decoder.decode(MeetingRecording.Journal.self, from: data) else { continue }
+            // It ended about when its sound did.
+            let ended = tracks(id).values.compactMap { (try? fm.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date }.max()
+                ?? journal.recordingStarted
+            guard Self.worthKeeping(journal.lines, length: ended.timeIntervalSince(journal.recordingStarted)) else {
+                try? fm.removeItem(at: dir)
+                continue
+            }
+            let meeting = Meeting(id: id, title: journal.title, app: journal.app, started: journal.started, ended: ended,
+                                  lines: journal.lines, recorded: journal.recordingStarted, inPerson: journal.inPerson,
+                                  attendees: journal.attendees)
+            save(meeting)
+            try? fm.removeItem(at: MeetingRecording.journalURL(in: dir))
+            DebugHooks.log("MEETING recovered \(id) lines=\(journal.lines.count)")
+            // Once launch has settled.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { MeetingAssistant.shared.process(id) }
+        }
+    }
+
+    // MARK: - After the call
+
+    /// Transcribes the recording again (finished results are steadier than the live stream's),
+    /// then writes the notes: on its own with a model on this Mac, or once they're asked for.
+    func process(_ id: UUID, notes asked: Bool = false) {
+        if asked { wantsNotes.insert(id) }
+        guard pipelines[id] == nil else { return }
+        failures[id] = nil
+        pipelines[id] = Task(priority: .utility) {
+            await refine(id)
+            if let m = meeting(id), m.notes == nil {
+                let ai = AssistantStore.shared.aiAvailable
+                if m.lines.isEmpty {
+                    failures[id] = "Nothing was heard on this call"
+                } else if !ai, wantsNotes.contains(id) {
+                    failures[id] = AssistantStore.needsModel
+                } else if ai, wantsNotes.contains(id) || !AppSettings.shared.aiProvider.isCloud {
+                    await writeNotes(id)
+                }
+            }
+            stage[id] = nil
+            pipelines[id] = nil
+            wantsNotes.remove(id)
+        }
+    }
+
+    private func refine(_ id: UUID) async {
+        guard let m = meeting(id), m.refined != true, LiveCaptions.isSupported else { return }
+        let found = tracks(id)
+        guard !found.isEmpty, #available(macOS 26, *) else { return }
+        stage[id] = .transcribing(0)
+        let vocabulary = Self.vocabulary(title: m.title, attendees: m.attendees ?? [])
+        let sides = [LiveCaptions.Speaker.them, .you].filter { found[$0] != nil }
+        let began = m.recorded ?? m.started
+        var lines: [LiveCaptions.Line] = []
+        for (i, side) in sides.enumerated() {
+            do {
+                let parts = try await SpeechStream.transcribe(file: found[side]!, context: vocabulary) { p in
+                    Task { @MainActor in MeetingAssistant.shared.stage[id] = .transcribing((Double(i) + p) / Double(sides.count)) }
+                }
+                lines += parts.map { LiveCaptions.Line(speaker: side, text: $0.text, at: began.addingTimeInterval($0.start), offset: $0.start, end: $0.end) }
+            } catch {
+                DebugHooks.log("MEETING refine \(id) \(side) failed: \(error)")
+                return // the live transcript stays
+            }
+        }
+        guard var meeting = meeting(id) else { return }
+        // Nothing heard at all: the live lines are all there is.
+        if !lines.isEmpty {
+            meeting.lines = Echo.removed(from: lines.sorted { ($0.offset ?? 0) < ($1.offset ?? 0) })
+        }
+        meeting.refined = true
+        save(meeting)
+        DebugHooks.log("MEETING refined \(id) lines=\(meeting.lines.count) (live \(m.lines.count))")
+    }
+
+    private func writeNotes(_ id: UUID) async {
+        guard let meeting = meeting(id) else { return }
+        stage[id] = .writing("")
+        do {
+            let written = try await Self.notes(for: meeting) { soFar in
+                await MainActor.run { MeetingAssistant.shared.stage[id] = .writing(soFar) }
+            }
+            setNotes(written.notes, actions: written.actions, for: id)
+        } catch {
+            failures[id] = error.localizedDescription
+            DebugHooks.log("MEETING notes \(id) failed: \(error)")
+        }
+    }
+
+    /// The notes, once they're written (after the second listen, if it's running).
+    func awaitNotes(_ id: UUID) async throws -> String {
+        await pipelines[id]?.value
+        if let notes = meeting(id)?.notes { return notes }
+        throw NSError(domain: "NotchApp", code: 2, userInfo: [NSLocalizedDescriptionKey: failures[id] ?? "Couldn't write the notes"])
+    }
+
+    /// Names it should expect to hear: the meeting's, the people in it, the user, the projects
+    /// they're working on.
+    static func vocabulary(title: String, attendees: [String]) -> [String] {
+        let projects = AgentMonitor.shared.sessions.map(\.project)
+        // People are mostly called by their first names.
+        let people = attendees + [NSFullUserName()]
+        let first = people.compactMap { $0.split(separator: " ").first.map(String.init) }.filter { $0.count >= 2 }
+        var seen = Set<String>()
+        return ([title] + people + first + projects)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !$0.contains("@") && $0.count <= 60 && seen.insert($0.lowercased()).inserted }
+            .prefix(60).map { $0 }
     }
 
     // MARK: - Your name
@@ -114,8 +333,13 @@ final class MeetingAssistant: ObservableObject {
     /// "The user is Phil": so "Phil, can you…" is theirs, and "get it to Phil" isn't.
     private static var who: String { firstName.map { " The user's name is \($0)." } ?? "" }
 
-    private static var notesInstructions: String { """
-    You write meeting notes from a call's transcript (lines marked You are the user; Them is everyone else; speech-to-text, \
+    private nonisolated static func speakers(_ inPerson: Bool) -> String {
+        inPerson ? "an in-person meeting recorded on one microphone, so lines aren't marked by speaker"
+                 : "lines marked You are the user; Them is everyone else"
+    }
+
+    private static func notesInstructions(inPerson: Bool) -> String { """
+    You write meeting notes from a call's transcript (\(speakers(inPerson)); speech-to-text, \
     so fix obvious mishearings).\(who) Markdown, in this order:
     **Summary**: two or three sentences.
     **Decisions**: bullets, or "None".
@@ -128,41 +352,62 @@ final class MeetingAssistant: ObservableObject {
         guard let meeting = meetings.first(where: { $0.id == id }) else { return }
         NotchPresenter.shared.primary?.open(tab: .ask, takeKeyboard: false, reason: .click)
         let followUp: @MainActor (String) -> (title: String, run: () -> Void)? = { notes in
-            let items = Self.actionItems(in: notes)
+            let latest = MeetingAssistant.shared.meeting(id) ?? meeting
+            let items = latest.actions ?? Self.actionItems(in: notes)
             guard !items.isEmpty else { return nil }
             return ("Add \(items.count == 1 ? "the action item" : "\(items.count) action items")…", {
-                MeetingAssistant.shared.planTasks(items, from: meeting)
+                MeetingAssistant.shared.planTasks(items, from: latest)
             })
         }
-        if let notes = meeting.notes {
+        if let notes = meeting.notes, pipelines[id] == nil {
             AssistantStore.shared.runCustom(query: meeting.title, title: "Notes · \(meeting.title)", icon: "waveform.and.magnifyingglass",
-                                            work: { onText in await onText(notes); return notes }, followUp: followUp)
+                                            meeting: id, work: { onText in await onText(notes); return notes }, followUp: followUp)
             return
         }
-        let transcript = meeting.transcript
-        let header = "Call: \(meeting.title) on \(meeting.app), \(meeting.when), \(meeting.minutes) min.\n\n"
+        process(id, notes: true)
         AssistantStore.shared.runCustom(query: meeting.title, title: "Notes · \(meeting.title)", icon: "waveform.and.magnifyingglass",
-                                        stage: "Writing notes", work: { onText in
-            let notes: String
-            if await Self.fitsAtOnce(transcript) {
-                notes = try await OllamaClient.chatStream(system: Self.notesInstructions, user: header + transcript, onText: onText)
-            } else {
-                notes = try await Self.chunkedNotes(header: header, transcript: transcript)
-                await onText(notes)
-            }
-            await MainActor.run { MeetingAssistant.shared.setNotes(notes, for: meeting.id) }
+                                        stage: "Writing notes", meeting: id, work: { onText in
+            let notes = try await MeetingAssistant.shared.awaitNotes(id)
+            await onText(notes)
             return notes
         }, followUp: followUp)
     }
 
+    /// The notes for a meeting, and its action items when the model listed them on their own.
+    /// Apple's model fills in a form for them (guided generation); the others write Markdown.
+    private nonisolated static func notes(for meeting: Meeting,
+                                          onText: @escaping @Sendable (String) async -> Void) async throws -> (notes: String, actions: [String]?) {
+        let transcript = meeting.transcript
+        let inPerson = meeting.inPerson == true
+        let header = "Call: \(meeting.title) on \(meeting.app), \(meeting.when), \(meeting.minutes) min.\n\n"
+        let instructions = await MainActor.run { notesInstructions(inPerson: inPerson) }
+        let fits = await fitsAtOnce(transcript)
+        if await AppSettings.shared.aiProvider == .apple, AppleModel.isAvailable {
+            let source = fits ? header + transcript
+                : header + "Notes on each part of the call, in order:\n\n" + (try await partNotes(transcript, inPerson: inPerson))
+            if let form = try? await AppleModel.meetingNotes(source, instructions: instructions) {
+                let notes = form.markdown
+                await onText(notes)
+                return (notes, form.actionItems)
+            }
+        }
+        if fits {
+            return (try await OllamaClient.chatStream(system: instructions, user: header + transcript, onText: onText), nil)
+        }
+        let notes = try await OllamaClient.chat(system: instructions, user: header + "Notes on each part of the call, in order:\n\n"
+                                                + (try await partNotes(transcript, inPerson: inPerson)))
+        await onText(notes)
+        return (notes, nil)
+    }
+
     /// Apple's model holds about 8,000 tokens; the rest take a long call at once.
-    private static func fitsAtOnce(_ transcript: String) async -> Bool {
+    private nonisolated static func fitsAtOnce(_ transcript: String) async -> Bool {
         let provider = await AppSettings.shared.aiProvider
         return transcript.count < (provider == .apple ? 10_000 : 40_000)
     }
 
-    /// A long call in pieces: notes on each, then the notes on the notes.
-    private nonisolated static func chunkedNotes(header: String, transcript: String) async throws -> String {
+    /// A long call in pieces: notes on each, for the notes on the notes.
+    private nonisolated static func partNotes(_ transcript: String, inPerson: Bool) async throws -> String {
         let piece = await AppSettings.shared.aiProvider == .apple ? 9_000 : 36_000
         var parts: [String] = []
         var current = ""
@@ -174,12 +419,12 @@ final class MeetingAssistant: ObservableObject {
         var partNotes: [String] = []
         for (i, part) in parts.enumerated() {
             let note = try await OllamaClient.chat(system: """
-            Part \(i + 1) of \(parts.count) of a call's transcript (You is the user; Them everyone else).\(await MainActor.run { who }) Write terse notes: \
+            Part \(i + 1) of \(parts.count) of a call's transcript (\(speakers(inPerson))).\(await MainActor.run { who }) Write terse notes: \
             what was discussed, decisions, and action items with owner and when. Nothing invented.
             """, user: part)
             partNotes.append("Part \(i + 1):\n\(note)")
         }
-        return try await OllamaClient.chat(system: notesInstructions, user: header + "Notes on each part of the call, in order:\n\n" + partNotes.joined(separator: "\n\n"))
+        return partNotes.joined(separator: "\n\n")
     }
 
     /// "You: send the checklist (today)" stays the user's; "Priya: get the copy to Phil (Wednesday)"
@@ -242,6 +487,34 @@ final class MeetingAssistant: ObservableObject {
         showNotes(meeting.id)
     }
 
+    /// For notchdebug: a call made of a sound file. With `play`, the file plays through the Mac's
+    /// speakers and the real system-audio tap hears it; without, it's fed straight in as the
+    /// other side. The microphone isn't used either way. `nd call 0` ends it.
+    func debugRecordFile(_ url: URL, play: Bool) {
+        guard !LiveCaptions.shared.recording else { return }
+        MeetingMonitor.shared.debugSimulate(true, minutes: 0)
+        guard let call = MeetingMonitor.shared.call else { return }
+        start(call, tracks: [.them], listen: play ? [.them] : [])
+        if play {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                Self.debugPlayer = try? AVAudioPlayer(contentsOf: url)
+                Self.debugPlayer?.volume = 0.3
+                Self.debugPlayer?.play()
+            }
+        } else {
+            LiveCaptions.shared.debugFeed(url)
+        }
+    }
+
+    private static var debugPlayer: AVAudioPlayer?
+
+    func debugLog() {
+        for m in meetings.prefix(5) {
+            let lines = m.lines.prefix(6).map { "[\($0.speaker.rawValue) \($0.offset.map { String(format: "%.1f", $0) } ?? "-")] \($0.text.prefix(60))" }
+            DebugHooks.log("MEETING \(m.id) \(m.title) refined=\(m.refined ?? false) notes=\(m.notes != nil) actions=\(m.actions ?? []) tracks=\(tracks(m.id).keys.map(\.rawValue)) stage=\(String(describing: stage[m.id])) lines=\(m.lines.count) \(lines)")
+        }
+    }
+
     // MARK: - Kept calls
 
     /// Calls whose title or words match, newest first.
@@ -254,14 +527,19 @@ final class MeetingAssistant: ObservableObject {
         }.prefix(limit).map { $0 }
     }
 
+    /// Its transcript, notes and sound.
     func delete(_ id: UUID) {
+        pipelines[id]?.cancel()
+        if MeetingPlayer.shared.meeting == id { MeetingPlayer.shared.stop() }
         meetings.removeAll { $0.id == id }
         try? FileManager.default.removeItem(at: Self.folder.appendingPathComponent("\(id.uuidString).json"))
+        try? FileManager.default.removeItem(at: Self.folder(for: id))
     }
 
-    private func setNotes(_ notes: String, for id: UUID) {
+    private func setNotes(_ notes: String, actions: [String]? = nil, for id: UUID) {
         guard let i = meetings.firstIndex(where: { $0.id == id }) else { return }
         meetings[i].notes = notes
+        meetings[i].actions = actions
         save(meetings[i])
     }
 

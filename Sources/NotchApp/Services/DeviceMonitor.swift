@@ -173,8 +173,6 @@ final class PrivacyMonitor: ObservableObject {
     var isActive: Bool { micInUse || cameraInUse }
 
     private var liveDemand = false
-    /// Meeting mode watches the microphone for calls.
-    var meetingDemand = false { didSet { if meetingDemand != oldValue { update() } } }
 
     func start() { update() }
 
@@ -189,7 +187,7 @@ final class PrivacyMonitor: ObservableObject {
     private static var alerts: Bool { AppSettings.shared.privacyAlerts && AppSettings.shared.toolsEnabled }
 
     func update() {
-        let enabled = Self.alerts || liveDemand || meetingDemand
+        let enabled = Self.alerts || liveDemand
         guard enabled != (timer != nil) else { return }
         timer?.invalidate()
         timer = nil
@@ -227,7 +225,7 @@ final class PrivacyMonitor: ObservableObject {
     }
 
     /// Processes with audio input running, grouped by the app responsible for them.
-    private static func appsUsingMic() -> [UsingApp] {
+    static func appsUsingMic() -> [UsingApp] {
         let system = AudioObjectID(kAudioObjectSystemObject)
         var addr = AudioOutputManager.address(kAudioHardwarePropertyProcessObjectList)
         var size: UInt32 = 0

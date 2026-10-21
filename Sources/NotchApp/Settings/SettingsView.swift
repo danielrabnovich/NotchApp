@@ -1593,8 +1593,8 @@ private struct CalendarPane: View {
                     ToggleRow("Meeting mode", subtitle: "During a call (Zoom, Teams, FaceTime, Meet in a browser…), its time and a mute button beside the notch; after it, jot notes or a follow-up.",
                               isOn: $s.meetingMode)
                     if s.meetingMode, LiveCaptions.isSupported {
-                        ToggleRow("Transcribe calls",
-                                  subtitle: "Both sides of a call turned into text on this Mac, never sent anywhere (the mic's orange dot shows while it listens). Ask “catch me up” during it, hear when someone says your name, and get notes and action items after. Tell the people on the call.",
+                        ToggleRow("Record calls",
+                                  subtitle: "When a call starts, asks whether to record it: both sides kept and turned into text on this Mac, never sent anywhere. Ask “catch me up” during it, hear when someone says your name, and get notes and action items after, with the call to play back from any line. Some places need everyone's consent: tell the people on the call. “Record meeting” in the search bar records one in the room.",
                                   isOn: $s.transcribeCalls)
                     }
                     if s.meetingAlerts {

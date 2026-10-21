@@ -65,7 +65,7 @@ final class RambleStore: ObservableObject {
                 return
             }
             do {
-                let stream = try await SpeechStream.make { text, final in
+                let stream = try await SpeechStream.make { text, final, _ in
                     Task { @MainActor in RambleStore.shared.heard(text, final: final) }
                 }
                 guard dictating else { await stream.finish(); return }

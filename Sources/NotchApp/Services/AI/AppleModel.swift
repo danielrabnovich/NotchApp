@@ -57,8 +57,43 @@ enum AppleModel {
         #endif
     }
 
+    /// A meeting's notes as a filled-in form (guided generation), so the action items come out as
+    /// items rather than lines to pick out of prose.
+    struct MeetingNotes {
+        struct Item { let owner: String; let task: String; let when: String }
+        let summary: String
+        let decisions: [String]
+        let items: [Item]
+        let followUp: String
+
+        /// "Owner: task (when)", as the review into Tasks reads them.
+        var actionItems: [String] {
+            items.map { item in
+                let owner = item.owner.trimmingCharacters(in: .whitespaces)
+                let when = item.when.trimmingCharacters(in: .whitespaces)
+                return (owner.isEmpty ? "" : owner + ": ") + item.task + (when.isEmpty ? "" : " (\(when))")
+            }
+        }
+
+        /// The same Markdown the other models write.
+        var markdown: String {
+            let decided = decisions.isEmpty ? "None" : decisions.map { "- \($0)" }.joined(separator: "\n")
+            let actions = actionItems.isEmpty ? "None" : actionItems.map { "- \($0)" }.joined(separator: "\n")
+            return "**Summary**: \(summary)\n\n**Decisions**:\n\(decided)\n\n**Action items**:\n\(actions)\n\n**Follow-up**:\n\(followUp)"
+        }
+    }
+
+    static func meetingNotes(_ text: String, instructions: String) async throws -> MeetingNotes {
+        #if canImport(FoundationModels)
+        guard #available(macOS 26, *) else { throw Unavailable() }
+        return try await fitting(text) { try await Engine.meetingNotes(instructions: instructions, text: $0) }
+        #else
+        throw Unavailable()
+        #endif
+    }
+
     /// Runs `body` on the text cut to the budget; if the model still finds it too long, on half as much.
-    private static func fitting(_ user: String, _ body: (String) async throws -> String) async throws -> String {
+    private static func fitting<T>(_ user: String, _ body: (String) async throws -> T) async throws -> T {
         var text = user.count > inputBudget ? String(user.prefix(inputBudget)) + "\n[…cut to fit]" : user
         for _ in 0..<3 {
             do {
@@ -116,6 +151,36 @@ private enum Engine {
     static func respond(instructions: String, text: String, temperature: Double) async throws -> String {
         let session = LanguageModelSession(model: model, instructions: instructions)
         return try await session.respond(to: text, options: GenerationOptions(temperature: temperature)).content
+    }
+
+    @Generable
+    struct NotesForm {
+        @Guide(description: "Two or three sentences: what the call was about and where it ended up.")
+        let summary: String
+        @Guide(description: "Each decision that was made, one short sentence each. Empty if none were made.")
+        let decisions: [String]
+        @Guide(description: "Each thing someone said they'd do. Empty if nobody committed to anything.")
+        let actionItems: [ActionItem]
+        @Guide(description: "A short, friendly follow-up email the user could send to everyone afterwards.")
+        let followUp: String
+    }
+
+    @Generable
+    struct ActionItem {
+        @Guide(description: "Who will do it: \"You\" for the user, otherwise the person's name as said.")
+        let owner: String
+        @Guide(description: "What they'll do, as a short task starting with a verb.")
+        let task: String
+        @Guide(description: "When it's due as it was said (\"Wednesday morning\", \"today\"), or empty if no time was said.")
+        let when: String
+    }
+
+    static func meetingNotes(instructions: String, text: String) async throws -> AppleModel.MeetingNotes {
+        let session = LanguageModelSession(model: model, instructions: instructions)
+        let form = try await session.respond(to: text, generating: NotesForm.self, options: GenerationOptions(temperature: 0.2)).content
+        return AppleModel.MeetingNotes(summary: form.summary, decisions: form.decisions,
+                                       items: form.actionItems.map { .init(owner: $0.owner, task: $0.task, when: $0.when) },
+                                       followUp: form.followUp)
     }
 
     static func stream(instructions: String, text: String, temperature: Double,

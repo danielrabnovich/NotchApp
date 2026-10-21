@@ -28,6 +28,8 @@ struct Prompt: Equatable, Identifiable {
     let title: String
     let detail: String
     let actions: [Action]
+    /// The button that leaves it be ("Not Now"); none when an action already does.
+    var dismissTitle: String? = "Dismiss"
     var created = Date()
 
     static func == (a: Prompt, b: Prompt) -> Bool { a.id == b.id }
@@ -98,6 +100,20 @@ final class NotchPresenter {
         if let vm = primary, vm.isOpen, vm.overlay == nil {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { vm.overlay = .prompt(prompt) }
         }
+    }
+
+    /// Takes back a prompt that no longer applies (the call it asked about ended), wherever it's showing.
+    func withdraw(_ id: UUID) {
+        var title: String?
+        if let p = pendingPrompt, p.id == id {
+            title = p.title
+            pendingPrompt = nil
+        }
+        if case .prompt(let p)? = primary?.overlay, p.id == id {
+            title = p.title
+            dismissOverlay(close: false)
+        }
+        if let title { ActivityCenter.shared.withdraw(titled: title) }
     }
 
     /// How long an unanswered prompt stays on offer from the tab under the notch.

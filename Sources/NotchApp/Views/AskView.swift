@@ -787,6 +787,8 @@ private struct ResultView: View {
 
     var body: some View {
         switch job.state {
+        case _ where job.meeting != nil:
+            MeetingResults(job: job, id: job.meeting!, accent: accent)
         case .running where job.route == .web && !(job.answer ?? "").isEmpty:
             // The answer streams in as it's written.
             WebResults(job: job, accent: accent, selection: $selection)
@@ -847,6 +849,136 @@ private struct ResultView: View {
                 RouteFooter(job: job)
             }
         }
+    }
+}
+
+/// A kept call's notes, and beside them its transcript: click a line to hear the call from there.
+/// While the call is being transcribed again or written up, that shows here as it goes.
+private struct MeetingResults: View {
+    let job: AssistantStore.Job
+    let id: UUID
+    let accent: Color
+    @ObservedObject private var meetings = MeetingAssistant.shared
+    @ObservedObject private var player = MeetingPlayer.shared
+
+    var body: some View {
+        let stage = meetings.stage[id]
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                notes(stage)
+                if job.state == .done { RouteFooter(job: job) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            if let meeting = meetings.meeting(id) {
+                transcript(meeting, stage: stage).frame(width: 280)
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder private func notes(_ stage: MeetingAssistant.Stage?) -> some View {
+        let text: String = {
+            if let answer = job.answer, !answer.isEmpty { return answer }
+            if case .writing(let soFar)? = stage { return soFar }
+            return ""
+        }()
+        if case .failed(let message) = job.state {
+            VStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle").font(.system(size: 18))
+                Text(message).font(.system(size: 12)).multilineTextAlignment(.center)
+            }
+            .foregroundStyle(.white.opacity(0.6))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if text.isEmpty {
+            VStack(spacing: 10) {
+                Spacer(minLength: 0)
+                ThinkingRing(size: 40)
+                ShimmerText(text: label(stage))
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView(.vertical, showsIndicators: false) {
+                AnswerText(text: text, accent: accent).frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func label(_ stage: MeetingAssistant.Stage?) -> String {
+        switch stage {
+        case .transcribing?: "Listening to the call again"
+        case .writing?: "Writing notes"
+        case nil: if case .running(let s) = job.state { s } else { "Writing notes" }
+        }
+    }
+
+    private func transcript(_ meeting: MeetingAssistant.Meeting, stage: MeetingAssistant.Stage?) -> some View {
+        let audio = !meetings.tracks(id).isEmpty
+        let here = player.meeting == id
+        let current = here ? meeting.lines.last(where: { ($0.offset ?? .infinity) <= player.position + 0.3 })?.id : nil
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                if audio {
+                    Button { player.toggle(id) } label: {
+                        Image(systemName: here && player.playing ? "pause.fill" : "play.fill").font(.system(size: 10, weight: .semibold))
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .buttonStyle(NotchIconButtonStyle(size: 22))
+                    .help(here && player.playing ? "Pause" : "Play the call")
+                }
+                Text(here ? clock(player.position) : "Transcript")
+                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.4))
+                Spacer()
+                if case .transcribing(let p)? = stage {
+                    Text("Improving \(Int(p * 100))%")
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.4))
+                    ProgressView(value: p).progressViewStyle(.linear).frame(width: 46).tint(accent)
+                }
+            }
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(meeting.lines) { line in
+                            row(line, inPerson: meeting.inPerson == true, current: line.id == current, playable: audio && line.offset != nil)
+                                .id(line.id)
+                        }
+                    }
+                }
+                .onChange(of: current) { _, new in
+                    guard let new, player.playing else { return }
+                    withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(new, anchor: .center) }
+                }
+            }
+        }
+    }
+
+    private func row(_ line: LiveCaptions.Line, inPerson: Bool, current: Bool, playable: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            if !inPerson {
+                Text(line.speaker == .you ? "You" : "Them")
+                    .font(.system(size: 9.5, weight: .bold))
+                    .foregroundStyle(line.speaker == .you ? accent.opacity(0.9) : .white.opacity(0.4))
+                    .frame(width: 30, alignment: .leading)
+            }
+            Text(line.text)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.white.opacity(current ? 0.95 : 0.72))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.white.opacity(current ? 0.1 : 0)))
+        .contentShape(Rectangle())
+        .onTapGesture { if playable, let offset = line.offset { player.play(id, from: max(0, offset - 0.4)) } }
+        .help(playable ? "Play from here" : "")
+    }
+
+    private func clock(_ t: TimeInterval) -> String {
+        let s = max(0, Int(t))
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s % 3600 / 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
     }
 }
 
