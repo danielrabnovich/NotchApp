@@ -27,6 +27,7 @@ struct AgentsView: View {
                     if !agents.waiting.isEmpty { Badge(text: "\(agents.waiting.count) waiting", color: .orange) }
                 }
                 Spacer()
+                LimitsStrip()
                 if pane == .usage {
                     if store.scanning { ProgressView().controlSize(.mini).tint(.white) }
                     PeriodPicker(period: $period)
@@ -51,6 +52,39 @@ struct AgentsView: View {
         }
         .onAppear { agents.viewerAppeared() }
         .onDisappear { agents.viewerDisappeared() }
+    }
+}
+
+/// Plan windows in progress: Claude Code's 5-hour block, and Codex's rate limits when it logs them.
+private struct LimitsStrip: View {
+    @ObservedObject private var store = AgentUsageStore.shared
+
+    var body: some View {
+        TimelineView(.everyMinute) { context in
+            let now = context.date
+            HStack(spacing: 10) {
+                if let block = store.claudeBlock(now: now) {
+                    item(.claude, "5-hour block resets in \(formatTimeLeft(until: block.end, now: now))", detail: formatDollars(block.cost))
+                        .help("\(formatTokens(block.tokens.total)) tokens and \(formatDollars(block.cost)) of API value since "
+                            + "\(block.start.formatted(date: .omitted, time: .shortened)), when this block began")
+                }
+                let windows = store.codexWindows(now: now)
+                if let w = windows.first {
+                    item(.codex, "\(w.name) \(Int(w.usedPercent.rounded()))% used", detail: "resets in \(formatTimeLeft(until: w.resets, now: now))")
+                        .help(windows.map { "\($0.name): \(Int($0.usedPercent.rounded()))% used, resets in \(formatTimeLeft(until: $0.resets, now: now))" }
+                            .joined(separator: "\n"))
+                }
+            }
+        }
+    }
+
+    private func item(_ tool: AgentMonitor.Tool, _ text: String, detail: String) -> some View {
+        HStack(spacing: 5) {
+            AgentGlyph(tool: tool, size: 13)
+            Text(text).font(.system(size: 10, weight: .medium).monospacedDigit()).foregroundStyle(.white.opacity(0.6))
+            Text(detail).font(.system(size: 10, weight: .semibold).monospacedDigit()).foregroundStyle(.white.opacity(0.4))
+        }
+        .lineLimit(1)
     }
 }
 
@@ -115,15 +149,15 @@ private struct Badge: View {
     }
 }
 
-/// The tool's mark: its glyph on its color.
+/// The tool's mark on its color.
 struct AgentGlyph: View {
     let tool: AgentMonitor.Tool
     var size: CGFloat = 22
 
     var body: some View {
-        Image(systemName: tool.glyph)
-            .font(.system(size: size * 0.5, weight: .bold))
-            .foregroundStyle(tool == .opencode ? Color.black : .white)
+        let mark = AgentMark(tool: tool)
+        mark.fill(tool == .opencode ? Color.black : .white, style: FillStyle(eoFill: mark.evenOdd))
+            .frame(width: size * 0.62, height: size * 0.62)
             .frame(width: size, height: size)
             .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(tool.tint.gradient))
     }
