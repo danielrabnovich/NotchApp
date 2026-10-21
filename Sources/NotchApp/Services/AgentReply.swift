@@ -11,7 +11,10 @@ enum AgentReply {
     // MARK: - What it said
 
     /// The last thing the session said, or the tool it's waiting to use, in a line or two.
-    nonisolated static func lastWords(sessionID: String, cwd: String) -> String? {
+    /// What it last said, and whether that's a tool waiting for permission (answered only in the terminal).
+    struct Words { let text: String; let permission: Bool }
+
+    nonisolated static func lastWords(sessionID: String, cwd: String) -> Words? {
         // Claude Code names the folder after the path with everything but letters and digits as "-".
         let folder = String(cwd.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
         let url = FileManager.default.homeDirectoryForCurrentUser
@@ -29,15 +32,93 @@ enum AgentReply {
                       let content = (obj["message"] as? [String: Any])?["content"] as? [[String: Any]] else { continue }
                 // A tool waiting for permission is what it needs you for.
                 if let tool = content.last(where: { $0["type"] as? String == "tool_use" }) {
-                    let name = tool["name"] as? String ?? "a tool"
-                    let input = tool["input"] as? [String: Any] ?? [:]
-                    let what = (input["command"] ?? input["file_path"] ?? input["url"] ?? input["description"]) as? String
-                    return "Wants to use \(name)" + (what.map { ": " + String($0.prefix(160)) } ?? "")
+                    return Words(text: describe(tool["name"] as? String ?? "", tool["input"] as? [String: Any] ?? [:]), permission: true)
                 }
                 let text = content.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined(separator: " ")
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { return String(trimmed.suffix(300)) }
+                if !trimmed.isEmpty { return Words(text: String(trimmed.suffix(300)), permission: false) }
             }
+            return nil
+        }
+    }
+
+    /// What a tool call would do, in a line: the command, the file, the page.
+    nonisolated static func describe(_ tool: String, _ input: [String: Any]) -> String {
+        func file(_ key: String) -> String? { (input[key] as? String).map { ($0 as NSString).lastPathComponent } }
+        let text: String
+        switch tool {
+        case "Bash": text = (input["command"] as? String).map { "Run: \($0)" } ?? "Run a command"
+        case "Edit", "MultiEdit": text = "Edit \(file("file_path") ?? "a file")"
+        case "Write": text = "Write \(file("file_path") ?? "a file")"
+        case "NotebookEdit": text = "Edit \(file("notebook_path") ?? "a notebook")"
+        case "WebFetch": text = "Open \((input["url"] as? String).flatMap { URL(string: $0)?.host } ?? "a page")"
+        case "WebSearch": text = (input["query"] as? String).map { "Search the web: \($0)" } ?? "Search the web"
+        case "": text = "Use a tool"
+        default:
+            // mcp__server__tool reads as "server: tool".
+            let parts = tool.components(separatedBy: "__")
+            text = parts.count == 3 && parts[0] == "mcp" ? "Use \(parts[1]): \(parts[2])" : "Use \(tool)"
+        }
+        return String(text.replacingOccurrences(of: "\n", with: " ").prefix(160))
+    }
+
+    // MARK: - Going there
+
+    /// Brings the session's own pane forward: cmux's by its ID, Terminal's or iTerm2's tab by its
+    /// TTY. False when it can't tell which, and the caller brings the app forward instead.
+    @MainActor static func reveal(_ session: AgentMonitor.Session) -> Bool {
+        guard let pid = session.pid else { return false }
+        if let cmux = cmuxTarget(pid: pid) {
+            if let workspace = cmux.workspace { _ = Shell.runSync(cmux.cli, ["select-workspace", "--workspace", workspace], timeout: 3) }
+            guard Shell.runSync(cmux.cli, ["focus-panel", "--panel", cmux.panel] + (cmux.workspace.map { ["--workspace", $0] } ?? []), timeout: 3).ok else { return false }
+            NSRunningApplication(processIdentifier: AppIdentity.responsiblePID(for: pid))?.activate()
+            return true
+        }
+        guard let tty = tty(of: pid), let terminal = terminalApp(for: pid), let script = revealScript(for: terminal, tty: tty) else { return false }
+        var error: NSDictionary?
+        let result = NSAppleScript(source: script)?.executeAndReturnError(&error)
+        return error == nil && result?.stringValue == "ok"
+    }
+
+    private static func revealScript(for bundleID: String, tty: String) -> String? {
+        guard tty.range(of: #"^/dev/ttys?[0-9]{1,4}$"#, options: .regularExpression) != nil else { return nil }
+        switch bundleID {
+        case "com.apple.Terminal":
+            return """
+            tell application "Terminal"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        if tty of t is "\(tty)" then
+                            set selected of t to true
+                            set index of w to 1
+                            activate
+                            return "ok"
+                        end if
+                    end repeat
+                end repeat
+            end tell
+            return "missing"
+            """
+        case "com.googlecode.iterm2":
+            return """
+            tell application "iTerm2"
+                repeat with w in windows
+                    repeat with t in tabs of w
+                        repeat with s in sessions of t
+                            if tty of s is "\(tty)" then
+                                select w
+                                tell t to select
+                                tell s to select
+                                activate
+                                return "ok"
+                            end if
+                        end repeat
+                    end repeat
+                end repeat
+            end tell
+            return "missing"
+            """
+        default:
             return nil
         }
     }
@@ -68,19 +149,26 @@ enum AgentReply {
     /// cmux gives every process in a pane CMUX_PANEL_ID (and its workspace); its CLI types into
     /// exactly that pane, and refuses to type over a half-written draft or into an open dialog.
     private static func sendViaCmux(_ text: String, pid: pid_t) -> Bool {
-        let env = environment(of: pid)
-        guard let panel = env["CMUX_PANEL_ID"], !panel.isEmpty else { return false }
-        // The path comes from the agent's environment, which anything in that terminal can set:
-        // only a cmux CLI inside a cmux.app in Applications runs (NotchApp's children share its
-        // privacy permissions, so an arbitrary program must never be one of them).
-        let cli = Self.trustedCmux(env["CMUX_BUNDLED_CLI_PATH"]) ?? "/Applications/cmux.app/Contents/Resources/bin/cmux"
-        guard Self.trustedCmux(cli) != nil, FileManager.default.isExecutableFile(atPath: cli) else { return false }
-        var target = ["--panel", panel]
-        if let workspace = env["CMUX_WORKSPACE_ID"], !workspace.isEmpty { target += ["--workspace", workspace] }
+        guard let cmux = cmuxTarget(pid: pid) else { return false }
+        let cli = cmux.cli
+        let target = ["--panel", cmux.panel] + (cmux.workspace.map { ["--workspace", $0] } ?? [])
         // "\" stays literal: the CLI reads \n and \r as Enter.
         let literal = text.replacingOccurrences(of: "\\", with: "\\\\")
         guard Shell.runSync(cli, ["send-panel"] + target + ["--", literal], timeout: 5).ok else { return false }
         return Shell.runSync(cli, ["send-key-panel"] + target + ["enter"], timeout: 5).ok
+    }
+
+    /// The cmux pane a process runs in, and the CLI to reach it.
+    private static func cmuxTarget(pid: pid_t) -> (cli: String, panel: String, workspace: String?)? {
+        let env = environment(of: pid)
+        guard let panel = env["CMUX_PANEL_ID"], !panel.isEmpty else { return nil }
+        // The path comes from the agent's environment, which anything in that terminal can set:
+        // only a cmux CLI inside a cmux.app in Applications runs (NotchApp's children share its
+        // privacy permissions, so an arbitrary program must never be one of them).
+        let cli = Self.trustedCmux(env["CMUX_BUNDLED_CLI_PATH"]) ?? "/Applications/cmux.app/Contents/Resources/bin/cmux"
+        guard Self.trustedCmux(cli) != nil, FileManager.default.isExecutableFile(atPath: cli) else { return nil }
+        let workspace = env["CMUX_WORKSPACE_ID"].flatMap { $0.isEmpty ? nil : $0 }
+        return (cli, panel, workspace)
     }
 
     private static func trustedCmux(_ path: String?) -> String? {

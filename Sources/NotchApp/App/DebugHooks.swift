@@ -256,7 +256,8 @@ enum DebugHooks {
             for url in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] where url.pathExtension == "json" {
                 guard let data = try? Data(contentsOf: url), let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let id = obj["sessionId"] as? String, let cwd = obj["cwd"] as? String else { continue }
-                log("WORDS \((cwd as NSString).lastPathComponent): \(AgentReply.lastWords(sessionID: id, cwd: cwd)?.prefix(140) ?? "nil")")
+                let words = AgentReply.lastWords(sessionID: id, cwd: cwd)
+                log("WORDS \((cwd as NSString).lastPathComponent) permission=\(words?.permission ?? false): \(words?.text.prefix(140) ?? "nil")")
             }
         case "energychannels": // every channel in IOReport's Energy Model group, with watts over 1s
             Task.detached {

@@ -54,6 +54,8 @@ final class AgentMonitor: ObservableObject {
         var model: String?
         /// While waiting: what it last said, or the tool it wants to use (Claude Code).
         var lastWords: String?
+        /// What it's waiting on is a tool's permission, answered only in the terminal.
+        var asksPermission = false
 
         var project: String { directory.map { ($0 as NSString).lastPathComponent } ?? title }
     }
@@ -166,16 +168,17 @@ final class AgentMonitor: ObservableObject {
         for session in all {
             guard let before = lastStates[session.id], before != session.state else { continue }
             if session.state == .waiting {
-                // A Prompt: what it said, with Reply (in the Agents tab) and Go to Terminal.
+                // A Prompt: what it said, with Reply (in the Agents tab) and Go to Terminal. A
+                // permission is answered only in the terminal, so that's the one button.
                 let words = session.lastWords.map { String($0.prefix(120)) }
                 NotchPresenter.shared.offer(Prompt(
                     icon: "hand.raised.fill", tint: .systemOrange,
-                    title: "\(session.tool.name) needs you · \(session.project)",
+                    title: session.asksPermission ? "\(session.tool.name) asks permission · \(session.project)" : "\(session.tool.name) needs you · \(session.project)",
                     detail: words ?? "It's waiting for your answer.",
-                    actions: [
-                        .init(title: "Reply", primary: true) { NotchPresenter.shared.open(tab: .agents) },
-                        .init(title: "Go to Terminal") { AgentMonitor.shared.focus(session) },
-                    ]))
+                    actions: session.asksPermission
+                        ? [.init(title: "Answer in Terminal", primary: true) { AgentMonitor.shared.focus(session) }]
+                        : [.init(title: "Reply", primary: true) { NotchPresenter.shared.open(tab: .agents) },
+                           .init(title: "Go to Terminal") { AgentMonitor.shared.focus(session) }]))
             } else if before == .working, session.state == .idle {
                 ActivityCenter.shared.show(.notice(title: "\(session.tool.name) finished", detail: session.project, icon: "sparkles.rectangle.stack.fill"), for: 4)
             }
@@ -214,7 +217,9 @@ final class AgentMonitor: ObservableObject {
                                   title: string(obj["name"]) ?? cwd.map { ($0 as NSString).lastPathComponent } ?? "Claude Code",
                                   directory: cwd, state: state, updated: Date(timeIntervalSince1970: updated), pid: pid)
             if state == .waiting, let sessionID, let cwd {
-                session.lastWords = AgentReply.lastWords(sessionID: sessionID, cwd: cwd)
+                let words = AgentReply.lastWords(sessionID: sessionID, cwd: cwd)
+                session.lastWords = words?.text
+                session.asksPermission = words?.permission ?? false
             }
             return session
         }
@@ -289,8 +294,10 @@ final class AgentMonitor: ObservableObject {
 
     // MARK: - Actions
 
-    /// Brings the session forward: the terminal it runs in, or the tool's own app.
+    /// Brings the session forward: its own pane where that can be found, else the terminal it runs
+    /// in, or the tool's own app.
     func focus(_ session: Session) {
+        if AgentReply.reveal(session) { return }
         if let pid = session.pid {
             let owner = AppIdentity.responsiblePID(for: pid)
             if let app = NSRunningApplication(processIdentifier: owner), app.activationPolicy == .regular {
