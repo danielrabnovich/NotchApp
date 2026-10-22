@@ -163,6 +163,9 @@ final class NotchWindowController {
         return rect(width: n.width + 260, height: n.height + 90)
     }
 
+    /// Over the notch where a drag opens its drop bins.
+    func takesDrag(at p: NSPoint) -> Bool { hotRect.contains(p) || dragHotRect.contains(p) }
+
     // MARK: - Mouse handling
 
     /// A menu of ours (a right-click) is open.

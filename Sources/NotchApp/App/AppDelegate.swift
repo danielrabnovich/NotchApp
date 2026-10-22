@@ -101,8 +101,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .sink { [weak self] show in self?.updateStatusItem(show) }
             .store(in: &cancellables)
 
+        mouse.onShake = { p in ShelfTray.shared.shaken(at: p) }
+        ShelfTray.shared.isOverNotch = { [weak self] p in self?.controllers.contains { $0.takesDrag(at: p) } ?? false }
         mouse.start { [weak self] kind in
             self?.controllers.forEach { $0.handleMouse(kind) }
+            ShelfTray.shared.handleMouse()
         }
 
         DebugHooks.install { [weak self] in self?.controllers ?? [] }

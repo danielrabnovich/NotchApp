@@ -67,19 +67,21 @@ struct ShelfStackRow: View {
     }
 }
 
-/// Up to three thumbnails piled up with a slight fan, like a stack of papers.
-private struct StackPile: View {
+/// Up to three thumbnails piled up with a slight fan, like a stack of papers (under the notch, and
+/// bigger in the shake-summoned tray).
+struct StackPile: View {
     let items: [ShelfItem]
+    var size: CGFloat = 20
 
     var body: some View {
         ZStack {
             ForEach(Array(items.enumerated().reversed()), id: \.element.id) { i, item in
-                StackThumb(item: item, size: 20)
+                StackThumb(item: item, size: size)
                     .rotationEffect(.degrees([0, -8, 8][i]))
-                    .offset(x: CGFloat(i) * 3)
+                    .offset(x: CGFloat(i) * 3 * size / 20)
             }
         }
-        .frame(width: 28, height: 24)
+        .frame(width: size * 1.4, height: size * 1.2)
     }
 }
 
