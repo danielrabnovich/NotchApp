@@ -536,6 +536,19 @@ enum DebugHooks {
                     NSApp.postEvent(e, atStart: false)
                 }
             }
+        case "shaketest": ShakeDetector.runSynthetic().forEach { log("SHAKE " + $0) }
+        case "tray": // tray [x y]: the shake tray at that point (screen points from the top-left), or mid-screen
+            let screen = NSScreen.main?.frame ?? .zero
+            let x = Double(parts[safe: 1] ?? "").map { screen.minX + $0 } ?? screen.midX
+            let y = Double(parts[safe: 2] ?? "").map { screen.maxY - $0 } ?? screen.midY
+            ShelfTray.shared.show(at: NSPoint(x: x, y: y))
+        case "trayshake": ShelfTray.shared.shaken(at: NSEvent.mouseLocation) // what a shake does (needs a drag's files)
+        case "trayadd": ShelfTray.shared.debugAdd(parts.dropFirst().map { URL(fileURLWithPath: $0) }) // trayadd <path…>
+        case "traytarget": ShelfTray.shared.targeted = parts[safe: 1] != "0"
+        case "trayhover": ShelfTray.shared.hovered = parts[safe: 1] != "0" // hold it with `pin 1`
+        case "trayclose": ShelfTray.shared.close()
+        case "traystate": log(ShelfTray.shared.debugState())
+        case "traysnap": ShelfTray.shared.debugSnapshot(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/tray.png"))
         case "snapshot":
             let path = parts[safe: 1] ?? "/tmp/notch.png"
             c.snapshot(to: URL(fileURLWithPath: path))

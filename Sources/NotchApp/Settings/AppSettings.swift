@@ -141,6 +141,8 @@ final class AppSettings: ObservableObject {
     @Published var airDropZone: Bool { didSet { defaults.set(airDropZone, forKey: "airDropZone") } }
     /// Fresh drops wait in a stack under the collapsed notch, to drag straight out.
     @Published var shelfStack: Bool { didSet { defaults.set(shelfStack, forKey: "shelfStack") } }
+    /// Shaking a file mid-drag brings up a small Shelf tray right at the pointer.
+    @Published var shakeTray: Bool { didSet { defaults.set(shakeTray, forKey: "shakeTray") } }
     /// Whatever was just added to the shelf goes on the clipboard too, ready to paste.
     @Published var copyShelfAdds: Bool { didSet { defaults.set(copyShelfAdds, forKey: "copyShelfAdds") } }
     /// Files on the shelf go by a made-up name, and leave under it (a copy; the original keeps its own).
@@ -312,6 +314,7 @@ final class AppSettings: ObservableObject {
             "screenshotCatcher": true,
             "airDropZone": true,
             "shelfStack": true,
+            "shakeTray": true,
             "copyShelfAdds": true,
             "shelfRandomNames": false,
             "cleanLinks": true,
@@ -421,6 +424,7 @@ final class AppSettings: ObservableObject {
         screenshotCatcher = defaults.bool(forKey: "screenshotCatcher")
         airDropZone = defaults.bool(forKey: "airDropZone")
         shelfStack = defaults.bool(forKey: "shelfStack")
+        shakeTray = defaults.bool(forKey: "shakeTray")
         copyShelfAdds = defaults.bool(forKey: "copyShelfAdds")
         shelfRandomNames = defaults.bool(forKey: "shelfRandomNames")
         cleanLinks = defaults.bool(forKey: "cleanLinks")

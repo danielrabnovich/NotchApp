@@ -610,6 +610,9 @@ private struct ShelfSettingsPane: View {
                     ToggleRow("Stack under the notch",
                               subtitle: "Dropped files wait under the notch: drag them straight into another app without opening it. Once dropped, they leave the shelf (hold ⌥ to keep them).",
                               isOn: $s.shelfStack)
+                    ToggleRow("Shake to summon a tray while dragging",
+                              subtitle: "Shake a file from side to side as you drag it, and a small Shelf appears right at the pointer to drop it in. Gather files from several places there, then drag them all out together.",
+                              isOn: $s.shakeTray)
                     Picker(selection: $s.shelfExpiry) {
                         ForEach(AppSettings.ShelfExpiry.allCases) { Text($0.label).tag($0) }
                     } label: {

@@ -12,6 +12,10 @@ final class MouseTracker {
     private var timer: Timer?
     private var dragChangeCount = 0
     private var dragStartedInNotch = false
+    private var shake = ShakeDetector()
+
+    /// The pointer was shaken mid-drag (a drag from another app): where it is now.
+    var onShake: ((NSPoint) -> Void)?
 
     /// True while the user drags something (text, links, files, emails) from another app.
     private(set) static var isExternalDrag = false {
@@ -30,7 +34,8 @@ final class MouseTracker {
             case .leftMouseDown:
                 self.dragChangeCount = NSPasteboard(name: .drag).changeCount
                 // Local events carry our window; drags out of the shelf shouldn't reopen drop bins.
-                self.dragStartedInNotch = event.window is NotchPanel
+                self.dragStartedInNotch = event.window is NotchPanel || event.window is ShelfTrayPanel
+                self.shake.reset()
                 Self.isExternalDrag = false
                 kind = .down
             case .leftMouseUp:
@@ -43,6 +48,11 @@ final class MouseTracker {
                         Self.isExternalDrag = true
                         Self.dragGeneration += 1
                     }
+                }
+                // Only another app's drags: a local event (one in our own windows) carries its window.
+                if Self.isExternalDrag, event.window == nil, let onShake {
+                    let p = NSEvent.mouseLocation
+                    if self.shake.add(t: event.timestamp, x: p.x, y: p.y) { onShake(p) }
                 }
                 kind = .dragged
             default:
