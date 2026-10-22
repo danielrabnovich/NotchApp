@@ -226,6 +226,7 @@ enum DebugHooks {
         case "overrides": log("OVERRIDES \(AppSettings.shared.hotKeyOverrides.mapValues(\.display))")
         case "window": // window <action> [pid]: snaps that app's focused window (default: the one in front)
             if let action = WindowManager.Action(rawValue: parts[safe: 1] ?? "") { WindowManager.apply(action, pid: parts[safe: 2].flatMap { pid_t($0) }) }
+        case "fakeupgrade": UpdateChecker.shared.debugUpgrading(Array(parts.dropFirst())) // fakeupgrade [names…]; none clears
         case "hotkeys": log("HOTKEYS failed=\(HotKeys.shared.failed.map(\.rawValue).sorted()) window=\(HotKeys.Action.allCases.filter { $0.windowAction != nil }.map { "\($0.rawValue)=\(HotKeys.combo(for: $0)?.display ?? "off")" })")
         case "settingsshot": // settingsshot <path> <pane title…>
             SettingsWindowController.shared.show(pane: SettingsPane(rawValue: parts.dropFirst(2).joined(separator: " ")))

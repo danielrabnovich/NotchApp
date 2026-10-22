@@ -358,6 +358,22 @@ final class ShelfStore: ObservableObject {
                                            icon: "folder.fill", tone: .success), for: 2.5)
     }
 
+    /// Files a drag moved somewhere else (Finder took the originals): the shelf follows each to its
+    /// new place, or lets it go when it can't be found (moved to another disk). A screenshot put
+    /// somewhere on purpose is no longer one to clean up.
+    func follow(_ moved: [(ShelfItem, URL?)]) {
+        let replacements = moved.compactMap { item, url in
+            url.map { ShelfItem(url: $0, added: item.added, pinned: item.pinned) }
+        }
+        let ids = Set(moved.map(\.0.id))
+        withAnimation(Motion.pane.animation) {
+            items.removeAll { ids.contains($0.id) }
+            items.append(contentsOf: replacements)
+        }
+        selection.subtract(ids)
+        save()
+    }
+
     /// Asks where to move them.
     func chooseFolderAndMove(_ moving: [ShelfItem]) {
         let panel = NSOpenPanel()

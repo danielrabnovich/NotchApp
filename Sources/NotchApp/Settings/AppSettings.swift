@@ -31,6 +31,14 @@ final class AppSettings: ObservableObject {
     }
 
     /// When unpinned shelf files (quick drops on their way to another app) leave the shelf.
+    /// What dragging a file off the shelf does to the original: copies it (⌘ moves), or what Finder
+    /// would do (moves on the same disk, copies to another; ⌥ copies).
+    enum ShelfDragOut: String, CaseIterable, Identifiable {
+        case copy, finder
+        var id: String { rawValue }
+        var label: String { self == .copy ? "Copy" : "Like Finder" }
+    }
+
     enum ShelfExpiry: String, CaseIterable, Identifiable {
         case hour, endOfDay, never
         var id: String { rawValue }
@@ -142,6 +150,7 @@ final class AppSettings: ObservableObject {
     /// Caught screenshots are thrown away 15 minutes after they're taken, or a minute after a paste.
     @Published var screenshotCleanup: Bool { didSet { defaults.set(screenshotCleanup, forKey: "screenshotCleanup") } }
     @Published var shelfExpiry: ShelfExpiry { didSet { defaults.set(shelfExpiry.rawValue, forKey: "shelfExpiry") } }
+    @Published var shelfDragOut: ShelfDragOut { didSet { defaults.set(shelfDragOut.rawValue, forKey: "shelfDragOut") } }
 
     // Tasks
     @Published var tasksEnabled: Bool { didSet { defaults.set(tasksEnabled, forKey: "tasksEnabled") } }
@@ -417,6 +426,7 @@ final class AppSettings: ObservableObject {
         cleanLinks = defaults.bool(forKey: "cleanLinks")
         screenshotCleanup = defaults.bool(forKey: "screenshotCleanup")
         shelfExpiry = ShelfExpiry(rawValue: defaults.string(forKey: "shelfExpiry") ?? "") ?? .hour
+        shelfDragOut = ShelfDragOut(rawValue: defaults.string(forKey: "shelfDragOut") ?? "") ?? .copy
         tasksEnabled = defaults.bool(forKey: "tasksEnabled")
         showTaskCount = defaults.bool(forKey: "showTaskCount")
         timerEnabled = defaults.bool(forKey: "timerEnabled")

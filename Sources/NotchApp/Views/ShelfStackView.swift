@@ -172,20 +172,50 @@ final class DragSourceView: NSView, NSDraggingSource {
         if let onClickEvent { onClickEvent(event) } else { onClick() }
     }
 
-    // Copy only: dropping into a Finder folder must never move the original file away.
-    // Inside the app (back onto the notch) there's nothing to do.
+    /// Where each file was when the drag began, by a bookmark that follows it if Finder moves it.
+    private var bookmarks: [UUID: Data] = [:]
+
+    func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
+        bookmarks = Dictionary(uniqueKeysWithValues: items.compactMap { item in (try? item.url.bookmarkData()).map { (item.id, $0) } })
+    }
+
+    // A copy unless asked otherwise, so a drop into a Finder folder never takes the original away by
+    // surprise: ⌘ moves it (Finder's own key), or "Like Finder" lets Finder decide. Files leaving
+    // under a made-up name are copies already, and links have nothing to move. Inside the app (back
+    // onto the notch) there's nothing to do.
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        context == .outsideApplication ? .copy : []
+        guard context == .outsideApplication else { return [] }
+        let movable = MainActor.assumeIsolated {
+            items.allSatisfy { $0.url.isFileURL && ShelfStore.webLink(in: $0.url) == nil && !ShelfNames.isOn(for: $0.url) }
+                && (AppSettings.shared.shelfDragOut == .finder || NSEvent.modifierFlags.contains(.command))
+        }
+        return movable ? [.copy, .move, .generic] : .copy
     }
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        // Delivered: it's done its job, so it leaves the shelf, unless ⌥ is held to keep it.
-        guard removesDelivered, operation != [], !NSEvent.modifierFlags.contains(.option) else { return }
+        guard operation != [] else { return }
+        let keep = NSEvent.modifierFlags.contains(.option)
+        let items = items, bookmarks = bookmarks
         MainActor.assumeIsolated {
-            let gone = items.filter { !$0.pinned }
-            guard !gone.isEmpty else { return }
-            withAnimation(Motion.pane.animation) { ShelfStore.shared.remove(gone) }
-            Haptics.level()
+            // Delivered: a quick drop has done its job, so it leaves the shelf, unless ⌥ is held to keep it.
+            if removesDelivered, !keep {
+                let gone = items.filter { !$0.pinned }
+                if !gone.isEmpty {
+                    withAnimation(Motion.pane.animation) { ShelfStore.shared.remove(gone) }
+                    Haptics.level()
+                }
+            }
+            guard operation.contains(.move) || operation.contains(.generic) else { return }
+            // Finder moves the files in its own time: then the shelf follows each one to where it went.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                let moved = items.filter { item in ShelfStore.shared.items.contains { $0.id == item.id } && !FileManager.default.fileExists(atPath: item.url.path) }
+                guard !moved.isEmpty else { return }
+                ShelfStore.shared.follow(moved.map { item in
+                    var stale = false
+                    let url = bookmarks[item.id].flatMap { try? URL(resolvingBookmarkData: $0, bookmarkDataIsStale: &stale) }
+                    return (item, url)
+                })
+            }
         }
     }
 }

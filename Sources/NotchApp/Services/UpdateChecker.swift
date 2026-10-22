@@ -100,6 +100,9 @@ final class UpdateChecker: ObservableObject {
         }
     }
 
+    /// Debug hooks: shows packages as updating, without running anything.
+    func debugUpgrading(_ names: [String]) { upgrading = Set(names) }
+
     func upgradeAllHomebrew() {
         runUpgrade(updates.filter { $0.source == .formula || $0.source == .cask })
     }

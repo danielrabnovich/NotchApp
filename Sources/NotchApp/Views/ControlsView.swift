@@ -408,9 +408,11 @@ private struct UpdatesCard: View {
     var body: some View {
         Button(action: action) {
             NotchRow(title: title, detail: subtitle) {
-                IconBadge(symbol: updates.updates.isEmpty ? "checkmark" : "arrow.down", tint: updates.updates.isEmpty ? .green : .blue, size: 26)
+                let busy = !updates.upgrading.isEmpty
+                IconBadge(symbol: updates.updates.isEmpty && !busy ? "checkmark" : "arrow.down", tint: updates.updates.isEmpty && !busy ? .green : .blue, size: 26)
+                    .symbolEffect(.pulse, options: .repeating, isActive: busy)
             } trailing: {
-                if updates.checking { ProgressView().controlSize(.mini).tint(.white) }
+                if updates.checking || !updates.upgrading.isEmpty { ProgressView().controlSize(.mini).tint(.white) }
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold)).foregroundStyle(.white.opacity(0.35))
             }
         }
@@ -418,11 +420,14 @@ private struct UpdatesCard: View {
     }
 
     private var title: String {
+        // Still going after you've stepped back out of the list.
+        if !updates.upgrading.isEmpty { return "Updating…" }
         if updates.updates.isEmpty { return updates.lastChecked == nil ? "Software updates" : "Everything's up to date" }
         return updates.updates.count == 1 ? "1 update available" : "\(updates.updates.count) updates available"
     }
 
     private var subtitle: String {
+        if !updates.upgrading.isEmpty { return updates.upgrading.sorted().prefix(3).joined(separator: ", ") + (updates.upgrading.count > 3 ? " +\(updates.upgrading.count - 3)" : "") }
         if updates.checking { return "Checking…" }
         guard let last = updates.lastChecked else { return "Homebrew and apps" }
         return "Checked " + last.formatted(.relative(presentation: .named))
@@ -448,8 +453,10 @@ private struct UpdatesList: View {
                     .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.55))
                     .disabled(updates.checking)
                 if updates.updates.contains(where: { $0.appURL == nil }) {
-                    Button("Update All Homebrew") { updates.upgradeAllHomebrew() }
-                        .buttonStyle(.plain).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
+                    let busy = updates.updates.contains { $0.appURL == nil && updates.upgrading.contains($0.name) }
+                    Button(busy ? "Updating…" : "Update All Homebrew") { updates.upgradeAllHomebrew() }
+                        .buttonStyle(.plain).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(busy ? 0.45 : 0.85))
+                        .disabled(busy)
                 }
             }
             if let error = updates.lastError {
