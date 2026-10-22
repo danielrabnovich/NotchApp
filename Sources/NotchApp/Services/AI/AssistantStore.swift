@@ -439,7 +439,9 @@ final class AssistantStore: ObservableObject {
         // "Add this to my calendar" about a captured window: plan actions from it rather than answer.
         let actOnScreen = hasContext && ScreenQuestion.isAction(trimmed)
         let forced = actOnScreen ? .actions : forced
-        let aboutScreen = !actOnScreen && (forced == .screen || hasContext
+        // "What was in that script I just looked at" is about the screen's past: Recall, not what's on it now.
+        let past = forced == nil && !hasContext && RecallSearch.looksLikeRecall(trimmed)
+        let aboutScreen = !actOnScreen && !past && (forced == .screen || hasContext
             || (forced == nil && AppSettings.shared.screenQuestions && Router.isAboutScreen(trimmed)))
         var job = Job(query: trimmed, route: aboutScreen ? .screen : forced)
         job.actionTitle = action?.title

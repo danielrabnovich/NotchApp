@@ -62,7 +62,12 @@ enum RecallSearch {
         let phrases = ["when did i see", "where did i see", "did i see", "i saw", "have i seen", "i've seen", "i was looking at",
                        "i looked at", "i was reading", "i was on", "was on my screen", "on my screen earlier", "i had open",
                        "i had up", "what was that", "that thing i", "the one i saw"]
+        // "I just looked at", "I was just reading", "I recently saw": a word in between still counts.
+        // Past tense only: "what am I looking at" is about the screen now.
+        let looked = #"\bi(?:'ve| had)?(?: just| recently| earlier| briefly)? (?:saw|seen|looked at|read|opened|had open|had up|came across|skimmed)\b"#
+            + #"|\bi was(?: just| recently| earlier)? (?:looking at|reading|on|watching)\b"#
         let hasPhrase = phrases.contains { l.range(of: "\\b\(NSRegularExpression.escapedPattern(for: $0))\\b", options: .regularExpression) != nil }
+            || l.range(of: looked, options: .regularExpression) != nil
         // "What was the score yesterday" is for the web: a seeing phrase, or "what was that…" with a
         // time or an app Recall knows.
         let seeing = ["see", "saw", "seen", "looked", "looking", "reading", "open", "screen", "had"]
@@ -136,7 +141,8 @@ enum RecallSearch {
         "see", "saw", "seen", "look", "looked", "looking", "read", "reading", "open", "opened", "had", "have", "up", "on",
         "in", "at", "from", "of", "for", "to", "about", "with", "and", "or", "again", "thing", "stuff", "something",
         "screen", "window", "show", "find", "remind", "one", "some", "back", "ago", "around", "last", "past", "earlier",
-        "before", "just", "while", "find", "again", "was", "can", "you", "tell", "please",
+        "before", "just", "while", "find", "again", "was", "can", "you", "tell", "please", "recently", "now", "moment",
+        "moments", "minute", "bit", "briefly", "came", "across", "skimmed", "watching",
     ]
 
     private static let timeWords: Set<String> = [
@@ -163,6 +169,10 @@ enum RecallSearch {
             let center = now.addingTimeInterval(-Double(n) * seconds)
             let spread = max(seconds * Double(n) * 0.5, unit.hasPrefix("m") ? 600 : 1800)
             return (center.addingTimeInterval(-spread), min(center.addingTimeInterval(spread), now), String(lower[m]))
+        }
+        // "I just looked at", "a minute ago", "recently": the last half hour.
+        if has("(just now|just|a (moment|minute|second|sec) ago|moments ago|recently|a bit ago)") {
+            return (now.addingTimeInterval(-1800), now, "just now")
         }
         if has("(last|past) (hour|hr)") || has("an hour ago") { return (now.addingTimeInterval(-3600), now, "in the last hour") }
         if has("(last|past) (\\d+) hours") , let m = lower.range(of: #"\d+(?= hours)"#, options: .regularExpression), let n = Int(lower[m]) {
@@ -295,11 +305,27 @@ enum RecallSearch {
             // Only what looks clearly like it joins from outside the word matches.
             pool += recent.filter { !known.contains($0.id) && (visual[$0.id] ?? 0) >= 0.24 }
         }
-        if filter.keywords.isEmpty, visual.isEmpty {
+        // Nothing to go on but when (and where): the newest captures then. Also when no capture holds
+        // the words and they only say what kind of thing it was ("that script", "the page"), which a
+        // script's own text rarely says, or when a time was given.
+        let onlyKinds = !filter.keywords.isEmpty && filter.keywords.allSatisfy { kindWords.contains($0) }
+        if (filter.keywords.isEmpty && visual.isEmpty) || (pool.isEmpty && (onlyKinds || filter.from != nil)) {
             pool = store.search(words: [], from: filter.from, to: filter.to, bundleIDs: filter.bundleIDs, limit: 300)
+            visual = [:]
+            return rank(pool, filter: filter, visual: visual, byRecency: true, limit: limit)
         }
         guard !pool.isEmpty else { return [] }
+        return rank(pool, filter: filter, visual: visual, byRecency: filter.keywords.isEmpty && visual.isEmpty, limit: limit)
+    }
 
+    /// Words that say what kind of thing it was, not what was in it.
+    private static let kindWords: Set<String> = [
+        "script", "file", "files", "page", "pages", "doc", "document", "code", "article", "post", "message", "messages",
+        "email", "mail", "tab", "site", "website", "link", "video", "image", "picture", "photo", "screenshot", "pdf",
+        "chat", "thread", "note", "notes", "text", "list", "table", "chart", "diagram", "repo", "function", "snippet",
+    ]
+
+    private static func rank(_ pool: [RecallStore.Hit], filter: Filter, visual: [Int64: Float], byRecency: Bool, limit: Int) -> [Hit] {
         let best = pool.map { -$0.bm25 }.max() ?? 0
         let now = Date()
         // With a time given, nearness to it matters less than the words.
@@ -308,7 +334,7 @@ enum RecallSearch {
             let words = best > 0 ? -hit.bm25 / best : 0
             let looks = visual[hit.id].map { Double(min(max(($0 - 0.15) / 0.15, 0), 1)) } ?? 0
             let recency = pow(0.5, now.timeIntervalSince(hit.time) / halfLife)
-            let score = filter.keywords.isEmpty && visual.isEmpty ? recency
+            let score = byRecency ? recency
                 : 0.6 * words + (visual.isEmpty ? 0 : 0.25) * looks + 0.15 * recency
             return Hit(id: hit.id, time: hit.time, bundleID: hit.bundleID, appName: hit.appName, title: hit.title,
                        location: hit.location, snippet: hit.snippet, thumbnail: hit.thumbnail, score: score)
