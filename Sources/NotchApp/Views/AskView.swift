@@ -871,6 +871,10 @@ private struct MeetingResults: View {
     let accent: Color
     @ObservedObject private var meetings = MeetingAssistant.shared
     @ObservedObject private var player = MeetingPlayer.shared
+    /// The voice being named by hand, and the name so far.
+    @State private var renaming: Int?
+    @State private var draft = ""
+    @FocusState private var naming: Bool
 
     var body: some View {
         let stage = meetings.stage[id]
@@ -918,6 +922,8 @@ private struct MeetingResults: View {
     private func label(_ stage: MeetingAssistant.Stage?) -> String {
         switch stage {
         case .transcribing?: "Listening to the call again"
+        case .downloadingVoices?: "Getting the voice model"
+        case .voices?: "Telling voices apart"
         case .writing?: "Writing notes"
         case nil: if case .running(let s) = job.state { s } else { "Writing notes" }
         }
@@ -937,22 +943,26 @@ private struct MeetingResults: View {
                     .buttonStyle(NotchIconButtonStyle(size: 22))
                     .help(here && player.playing ? "Pause" : "Play the call")
                 }
-                Text(here ? clock(player.position) : "Transcript")
-                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.4))
-                Spacer()
-                if case .transcribing(let p)? = stage {
-                    Text("Improving \(Int(p * 100))%")
-                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                if let renaming {
+                    renameField(renaming, in: meeting)
+                } else {
+                    Text(here ? clock(player.position) : "Transcript")
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.4))
-                    ProgressView(value: p).progressViewStyle(.linear).frame(width: 46).tint(accent)
+                    Spacer()
+                    if let (title, p) = progress(stage) {
+                        Text("\(title) \(Int(p * 100))%")
+                            .font(.system(size: 10, weight: .medium).monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.4))
+                        ProgressView(value: p).progressViewStyle(.linear).frame(width: 46).tint(accent)
+                    }
                 }
             }
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(meeting.lines) { line in
-                            row(line, inPerson: meeting.inPerson == true, current: line.id == current, playable: audio && line.offset != nil)
+                            row(line, in: meeting, current: line.id == current, playable: audio && line.offset != nil)
                                 .id(line.id)
                         }
                     }
@@ -965,13 +975,22 @@ private struct MeetingResults: View {
         }
     }
 
-    private func row(_ line: LiveCaptions.Line, inPerson: Bool, current: Bool, playable: Bool) -> some View {
+    /// What the transcript's header shows as the call's worked on after it ends.
+    private func progress(_ stage: MeetingAssistant.Stage?) -> (String, Double)? {
+        switch stage {
+        case .transcribing(let p)?: ("Improving", p)
+        case .downloadingVoices(let p)?: ("Voice model", p)
+        case .voices(let p)?: ("Voices", p)
+        default: nil
+        }
+    }
+
+    private func row(_ line: LiveCaptions.Line, in meeting: MeetingAssistant.Meeting, current: Bool, playable: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            if !inPerson {
-                Text(line.speaker == .you ? "You" : "Them")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundStyle(line.speaker == .you ? accent.opacity(0.9) : .white.opacity(0.4))
-                    .frame(width: 30, alignment: .leading)
+            if meeting.inPerson != true {
+                speaker(line, in: meeting)
+                    // Room for names once voices are told apart.
+                    .frame(width: meeting.voices?.isEmpty == false ? 52 : 30, alignment: .leading)
             }
             Text(line.text)
                 .font(.system(size: 11.5))
@@ -985,6 +1004,84 @@ private struct MeetingResults: View {
         .contentShape(Rectangle())
         .onTapGesture { if playable, let offset = line.offset { player.play(id, from: max(0, offset - 0.4)) } }
         .help(playable ? "Play from here" : "")
+    }
+
+    /// Who said it. Once voices are told apart, a voice's label is a menu to name it: the people
+    /// invited, someone heard before, another name, or not sure. Its lines all follow.
+    @ViewBuilder private func speaker(_ line: LiveCaptions.Line, in meeting: MeetingAssistant.Meeting) -> some View {
+        let label = Text(meeting.label(line))
+            .font(.system(size: 9.5, weight: .bold))
+            .foregroundStyle(line.speaker == .you ? accent.opacity(0.9) : .white.opacity(0.4))
+            .lineLimit(1)
+        if let n = line.voice, let voice = meeting.voices?.first(where: { $0.number == n }) {
+            Menu {
+                let names = names(for: meeting)
+                ForEach(names, id: \.self) { name in
+                    MenuItem(name, name == voice.name ? "checkmark" : "person") { meetings.nameVoice(n, in: id, as: name) }
+                }
+                if !names.isEmpty { Divider() }
+                MenuItem("Other Name…", "pencil") { beginRename(n, from: voice.name) }
+                if voice.name != nil {
+                    MenuItem("Not Sure", "questionmark.circle") { meetings.nameVoice(n, in: id, as: nil) }
+                }
+            } label: { label }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .foregroundStyle(.white.opacity(0.4))
+            .help("Who's this?")
+        } else {
+            label
+        }
+    }
+
+    /// Who a voice could be: the people invited (by first name, as they're spoken to), then
+    /// people named in earlier calls.
+    private func names(for meeting: MeetingAssistant.Meeting) -> [String] {
+        let you = NSFullUserName().split(separator: " ").first.map { $0.lowercased() }
+        var seen = Set<String>()
+        let invited = (meeting.attendees ?? []).compactMap { $0.split(separator: " ").first.map(String.init) }
+        let known = VoicePrints.shared.people.map(\.name)
+        return (invited + known).filter { $0.lowercased() != you && seen.insert($0.lowercased()).inserted }.prefix(12).map { $0 }
+    }
+
+    private func beginRename(_ number: Int, from name: String?) {
+        draft = name ?? ""
+        renaming = number
+        NotchPresenter.shared.primary?.isEditing = true
+        NotchPresenter.shared.primary?.takeKeyFocus()
+        // The panel has to be key before the field can take focus.
+        DispatchQueue.main.async { naming = true }
+    }
+
+    private func endRename(saving: Bool) {
+        guard let number = renaming else { return }
+        if saving { meetings.nameVoice(number, in: id, as: draft) }
+        renaming = nil
+        NotchPresenter.shared.primary?.isEditing = false
+    }
+
+    /// Naming a voice by hand, in the transcript's header.
+    private func renameField(_ number: Int, in meeting: MeetingAssistant.Meeting) -> some View {
+        HStack(spacing: 6) {
+            Text("Speaker \(number):")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.4))
+            TextField("Name", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .focused($naming)
+                .onSubmit { endRename(saving: true) }
+                .onExitCommand { endRename(saving: false) }
+                .onChange(of: naming) { _, focused in if !focused { endRename(saving: !draft.isEmpty) } }
+            Button { endRename(saving: true) } label: {
+                Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
+            }
+            .buttonStyle(NotchIconButtonStyle(size: 20))
+            .help("Name this voice")
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 22)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.white.opacity(0.08)))
     }
 
     private func clock(_ t: TimeInterval) -> String {

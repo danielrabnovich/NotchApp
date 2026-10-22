@@ -1,12 +1,18 @@
-// swift-tools-version:5.10
+// swift-tools-version:6.2
 import PackageDescription
 
 let package = Package(
     name: "NotchApp",
     platforms: [.macOS("14.2")],
+    dependencies: [
+        // Tells the voices on the other side of a call apart (speaker diarization), on this Mac.
+        // Apache-2.0. No traits: without its text-normalisation engine, which only text-to-speech uses.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7", traits: []),
+    ],
     targets: [
         .executableTarget(
             name: "NotchApp",
+            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
             path: "Sources/NotchApp",
             swiftSettings: [
                 .unsafeFlags(["-Onone"], .when(configuration: .debug)),
@@ -16,5 +22,6 @@ let package = Package(
             ],
             linkerSettings: [.linkedLibrary("IOReport")]
         )
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )

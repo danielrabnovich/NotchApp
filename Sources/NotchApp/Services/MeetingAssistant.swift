@@ -27,19 +27,46 @@ final class MeetingAssistant: ObservableObject {
         /// In a room, on the microphone alone: nobody's marked as who.
         var inPerson: Bool?
         var attendees: [String]?
+        /// The other side's voices, told apart after the call (none for calls kept before).
+        var voices: [Voice]?
 
         var transcript: String {
             if inPerson == true { return lines.map(\.text).joined(separator: "\n") }
-            return lines.map { "\($0.speaker == .you ? "You" : "Them"): \($0.text)" }.joined(separator: "\n")
+            return lines.map { "\(label($0)): \($0.text)" }.joined(separator: "\n")
         }
+
+        /// Who said a line: You, the voice's name, "Speaker 2", or Them (one voice, or not told apart).
+        func label(_ line: LiveCaptions.Line) -> String {
+            guard line.speaker == .them else { return "You" }
+            guard let n = line.voice, let voice = voices?.first(where: { $0.number == n }) else { return "Them" }
+            if let name = voice.name { return name }
+            return (voices?.count ?? 0) > 1 ? "Speaker \(n)" : "Them"
+        }
+
         var minutes: Int { max(1, Int(ended.timeIntervalSince(started) / 60)) }
         var when: String { started.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()) }
+    }
+
+    /// One of the other side's voices in a call.
+    struct Voice: Codable, Equatable {
+        let number: Int
+        var name: String?
+        /// How it got its name: from what was said, from a voice heard before, or by the user.
+        var namedBy: NamedBy?
+        /// What it sounds like, to know it again in later calls.
+        var print: [Float]?
+
+        enum NamedBy: String, Codable { case said, heardBefore, user }
     }
 
     /// Where a kept call is up to after it ends.
     enum Stage: Equatable {
         /// Listening to the recording again, 0…1.
         case transcribing(Double)
+        /// Getting the model that tells voices apart (once), 0…1.
+        case downloadingVoices(Double)
+        /// Telling the other side's voices apart, 0…1.
+        case voices(Double)
         /// The notes so far.
         case writing(String)
     }
@@ -204,6 +231,7 @@ final class MeetingAssistant: ObservableObject {
         failures[id] = nil
         pipelines[id] = Task(priority: .utility) {
             await refine(id)
+            await tellVoicesApart(id)
             if let m = meeting(id), m.notes == nil {
                 let ai = AssistantStore.shared.aiAvailable
                 if m.lines.isEmpty {
@@ -248,6 +276,63 @@ final class MeetingAssistant: ObservableObject {
         meeting.refined = true
         save(meeting)
         DebugHooks.log("MEETING refined \(id) lines=\(meeting.lines.count) (live \(m.lines.count))")
+    }
+
+    /// Which of the other side's voices said each line (from them.aac, timed by the second
+    /// listen), and their names where it's clear: a voice heard before, then what was said. When
+    /// it can't (no model, offline, macOS 14), the lines stay "Them".
+    private func tellVoicesApart(_ id: UUID) async {
+        guard let m = meeting(id), m.voices == nil, m.inPerson != true, let track = tracks(id)[.them],
+              m.lines.contains(where: { $0.speaker == .them && $0.offset != nil }) else { return }
+        let began = Date()
+        stage[id] = .voices(0)
+        let heard = await Voices.listen(to: track) { p in
+            Task { @MainActor in
+                let assistant = MeetingAssistant.shared
+                // Only while it's still this step (a late update mustn't cover the notes).
+                switch assistant.stage[id] {
+                case .voices?, .downloadingVoices?: break
+                default: return
+                }
+                switch p {
+                case .downloading(let f): assistant.stage[id] = .downloadingVoices(f)
+                case .listening(let f): assistant.stage[id] = .voices(f)
+                }
+            }
+        }
+        guard let heard, var meeting = meeting(id) else { return }
+        let assigned = Voices.assign(heard, to: meeting.lines)
+        let lines = assigned.lines
+        var voices = assigned.voices
+        for i in voices.indices {
+            if let print = voices[i].print, let name = VoicePrints.shared.match(print), !voices.contains(where: { $0.name == name }) {
+                voices[i].name = name
+                voices[i].namedBy = .heardBefore
+            }
+        }
+        let open = voices.filter { $0.name == nil }.map(\.number)
+        let taken = Set(voices.compactMap(\.name))
+        let attendees = (meeting.attendees ?? []).filter { person in !taken.contains { person.lowercased().hasPrefix($0.lowercased()) } }
+        for (number, name) in await VoiceNames.guess(lines, attendees: attendees) where open.contains(number) {
+            voices[number - 1].name = name
+            voices[number - 1].namedBy = .said
+        }
+        meeting.lines = lines
+        meeting.voices = voices
+        save(meeting)
+        DebugHooks.log(String(format: "MEETING voices %@ %.1fs turns=%d voices=%@", id.uuidString, Date().timeIntervalSince(began),
+                              heard.turns.count, voices.map { "\($0.number)=\($0.name ?? "?")(\($0.namedBy?.rawValue ?? "-"))" }.joined(separator: " ")))
+    }
+
+    /// The user named one of a call's voices (nil: back to "Speaker 2"). Its lines all follow,
+    /// and the name is kept with what the voice sounds like, to know it in later calls.
+    func nameVoice(_ number: Int, in id: UUID, as name: String?) {
+        guard var meeting = meeting(id), let i = meeting.voices?.firstIndex(where: { $0.number == number }) else { return }
+        let name = name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        meeting.voices?[i].name = name
+        meeting.voices?[i].namedBy = name == nil ? nil : .user
+        save(meeting)
+        VoicePrints.shared.learn(name, print: meeting.voices?[i].print, meeting: id, voice: number)
     }
 
     private func writeNotes(_ id: UUID) async {
@@ -335,7 +420,7 @@ final class MeetingAssistant: ObservableObject {
 
     private nonisolated static func speakers(_ inPerson: Bool) -> String {
         inPerson ? "an in-person meeting recorded on one microphone, so lines aren't marked by speaker"
-                 : "lines marked You are the user; Them is everyone else"
+                 : "lines marked You are the user; the others are marked by name, as Speaker 1, 2… when their name isn't known, or as Them"
     }
 
     private static func notesInstructions(inPerson: Bool) -> String { """
@@ -513,10 +598,28 @@ final class MeetingAssistant: ObservableObject {
     func debugRedo(_ id: UUID) {
         guard var m = meeting(id) else { return }
         m.refined = nil
+        m.voices = nil
         m.notes = nil
         m.actions = nil
         save(m)
         showNotes(id)
+    }
+
+    /// For notchdebug: a kept call's voices, and who said each line.
+    func debugVoices(_ id: UUID) {
+        guard let m = meeting(id) else { return }
+        let voices = (m.voices ?? []).map { "\($0.number)=\($0.name ?? "-")(\($0.namedBy?.rawValue ?? "-"), print \($0.print?.count ?? 0))" }
+        DebugHooks.log("VOICES \(id) \(m.voices == nil ? "none" : voices.joined(separator: " ")) prints=\(VoicePrints.shared.people.map { "\($0.name)×\($0.samples.count)" })")
+        for line in m.lines {
+            DebugHooks.log(String(format: "  %@ [%.1f-%.1f] %@: %@", line.voice.map(String.init) ?? "-", line.offset ?? -1, line.end ?? -1, m.label(line), String(line.text.prefix(70))))
+        }
+    }
+
+    /// For notchdebug: who was invited, as the calendar would have said.
+    func debugAttendees(_ id: UUID, _ names: [String]) {
+        guard var m = meeting(id) else { return }
+        m.attendees = names
+        save(m)
     }
 
     func debugLog() {
@@ -543,6 +646,7 @@ final class MeetingAssistant: ObservableObject {
         pipelines[id]?.cancel()
         if MeetingPlayer.shared.meeting == id { MeetingPlayer.shared.stop() }
         meetings.removeAll { $0.id == id }
+        VoicePrints.shared.forget(id)
         try? FileManager.default.removeItem(at: Self.folder.appendingPathComponent("\(id.uuidString).json"))
         try? FileManager.default.removeItem(at: Self.folder(for: id))
     }
