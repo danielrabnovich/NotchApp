@@ -23,18 +23,9 @@ struct TodayPanel: View {
             let now = context.date
             VStack(alignment: .leading, spacing: 10) {
                 header(now: now)
-                // Someone's birthday: a line of its own, first thing.
-                if !birthdays.today.isEmpty {
-                    HStack(spacing: 6) {
-                        Image(systemName: "birthday.cake.fill").foregroundStyle(.pink)
-                        Text(birthdays.today.map { p in p.turning.map { "\(p.name) turns \($0)" } ?? "\(p.name)'s birthday" }.joined(separator: " · "))
-                            .lineLimit(1)
-                    }
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
-                }
                 if settings.calendarEnabled, !calendar.hasAccess {
                     VStack(alignment: .leading, spacing: 8) {
+                        birthdayLine
                         Text("See today's events here.")
                             .font(.system(size: 11))
                             .foregroundStyle(.white.opacity(0.55))
@@ -49,6 +40,7 @@ struct TodayPanel: View {
                             if let picked, !Calendar.current.isDate(picked, inSameDayAs: now) {
                                 dayList(picked, now: now)
                             } else {
+                                birthdayLine
                                 content(now: now)
                             }
                         }
@@ -60,6 +52,7 @@ struct TodayPanel: View {
                                 .transition(.opacity)
                         }
                     }
+                    .frame(maxHeight: .infinity, alignment: .top)
                 }
             }
         }
@@ -67,6 +60,20 @@ struct TodayPanel: View {
         .onAppear {
             weather.refreshIfStale()
             birthdays.refreshIfStale()
+        }
+    }
+
+    /// Someone's birthday: the first line of today's column, never a row across the whole panel (that
+    /// pushed the forecast below it out of the notch).
+    @ViewBuilder private var birthdayLine: some View {
+        if !birthdays.today.isEmpty {
+            HStack(spacing: 6) {
+                Image(systemName: "birthday.cake.fill").foregroundStyle(.pink)
+                Text(birthdays.today.map { p in p.turning.map { "\(p.name) turns \($0)" } ?? "\(p.name)'s birthday" }.joined(separator: " · "))
+                    .lineLimit(1)
+            }
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundStyle(.white.opacity(0.85))
         }
     }
 
@@ -143,7 +150,7 @@ struct TodayPanel: View {
                 if !shownTasks.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         SectionTitle(text: due.isEmpty ? "Tasks" : "Due today")
-                        taskList(shownTasks, now: now)
+                        ScrollView(.vertical, showsIndicators: false) { taskList(shownTasks, now: now) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -212,6 +219,16 @@ private struct Forecast: View {
     let report: WeatherReport
 
     var body: some View {
+        // As many days as fit under the header (a call bar above Home takes some of the height).
+        ViewThatFits(in: .vertical) {
+            column(days: 3)
+            column(days: 2)
+            column(days: 1)
+            column(days: 0)
+        }
+    }
+
+    private func column(days: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(WeatherReport.describe(report.currentCode))
@@ -223,7 +240,7 @@ private struct Forecast: View {
                     .lineLimit(1)
             }
             .padding(.bottom, 2)
-            ForEach(report.days.dropFirst().prefix(3)) { day in
+            ForEach(report.days.dropFirst().prefix(days)) { day in
                 HStack(spacing: 6) {
                     Text(day.date, format: .dateTime.weekday(.abbreviated))
                         .font(.system(size: 11, weight: .medium))
