@@ -18,12 +18,14 @@ struct RecallResults: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             let index = min(selection, answer.hits.count - 1)
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 if let sentence = answer.sentence, !sentence.isEmpty {
+                    // Two lines at most, so the moments and the footer keep their room; all of it on hover.
                     Text(sentence)
-                        .font(.system(size: sentence.count > 160 ? 12.5 : 14, weight: .medium))
+                        .font(.system(size: sentence.count > 110 ? 13 : 14, weight: .medium))
                         .foregroundStyle(.white.opacity(0.92))
-                        .lineLimit(3)
+                        .lineLimit(2)
+                        .help(sentence)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -55,6 +57,10 @@ struct RecallResults: View {
                                 .onChange(of: index) { _, i in
                                     withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(i) }
                                 }
+                                // More below: the last row fades rather than being cut through.
+                                .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.82),
+                                                             .init(color: .black.opacity(0), location: 1)],
+                                                     startPoint: .top, endPoint: .bottom))
                             }
                         }
                         .frame(width: 230, alignment: .leading)
@@ -62,6 +68,7 @@ struct RecallResults: View {
                 }
             }
             .frame(maxHeight: .infinity, alignment: .top)
+            .clipped()
         }
     }
 
@@ -126,8 +133,8 @@ private struct RecallMoment: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(.white.opacity(picture == nil ? 0 : 0.12), lineWidth: 1))
-            .frame(maxWidth: 170, maxHeight: 108)
-            .frame(width: 170, height: 108, alignment: .top)
+            .frame(maxWidth: 160, maxHeight: 96)
+            .frame(width: 160, height: 96, alignment: .top)
             .contentShape(Rectangle())
             .onTapGesture { quickLook() }
             .id(hit.id)
@@ -139,7 +146,7 @@ private struct RecallMoment: View {
                 Text(hit.title?.isEmpty == false ? hit.title! : hit.appName ?? "Window")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
-                    .lineLimit(2)
+                    .lineLimit(1)
                 HStack(spacing: 5) {
                     Image(nsImage: RecallResults.appIcon(hit.bundleID)).resizable().frame(width: 13, height: 13)
                     Text([hit.appName, RecallResults.when(hit.time)].compactMap { $0 }.joined(separator: " · "))
@@ -151,7 +158,7 @@ private struct RecallMoment: View {
                     Text(hit.snippet)
                         .font(.system(size: 11.5))
                         .foregroundStyle(.white.opacity(0.6))
-                        .lineLimit(2)
+                        .lineLimit(1)
                         .padding(.top, 2)
                 }
                 HStack(spacing: 6) {
@@ -163,7 +170,7 @@ private struct RecallMoment: View {
                             .help("⌘Y")
                     }
                 }
-                .padding(.top, 6)
+                .padding(.top, 4)
             }
         }
         .task(id: hit.id) {
@@ -175,8 +182,8 @@ private struct RecallMoment: View {
 
     /// "Open Page", "Open Document", else "Open Slack".
     private var openTitle: String {
-        guard let location = hit.location else { return "Open \(hit.appName ?? "App")" }
-        return location.hasPrefix("http") ? "Open Page" : "Open Document"
+        guard let location = hit.location, !location.isEmpty else { return "Open \(hit.appName ?? "App")" }
+        return RecallSearch.webURL(location) != nil ? "Open Page" : "Open Document"
     }
 
     private func quickLook() {

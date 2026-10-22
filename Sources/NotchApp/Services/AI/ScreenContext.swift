@@ -161,7 +161,8 @@ enum AXReader {
         var id: CGWindowID = 0
         if _AXUIElementGetWindow(window, &id) == .success { result.windowID = id }
         result.title = value(window, kAXTitleAttribute)
-        if let document: String = value(window, kAXDocumentAttribute) {
+        // Chromium browsers give an empty one: then the page's own address is looked for below.
+        if let document: String = value(window, kAXDocumentAttribute), !document.isEmpty {
             result.location = URL(string: document).map { $0.isFileURL ? $0.path : $0.absoluteString } ?? document
         }
         if let focused: AXUIElement = value(app, kAXFocusedUIElementAttribute),
@@ -177,8 +178,9 @@ enum AXReader {
             guard depth < 60, nodes < nodeLimit, chars < charLimit, Date() < deadline else { return }
             nodes += 1
             let role: String = value(element, kAXRoleAttribute) ?? ""
-            // A browser's page: its address.
-            if role == "AXWebArea", result.location == nil, let url: URL = value(element, "AXURL") {
+            // A browser's page: its address. (Vivaldi's own toolbar is a web page too, at chrome-extension://.)
+            if role == "AXWebArea", result.location == nil, let url: URL = value(element, "AXURL"),
+               ["http", "https", "file"].contains(url.scheme?.lowercased() ?? "") {
                 result.location = url.absoluteString
             }
             if let line = text(of: element, role: role, visibleOnly: visibleOnly) {

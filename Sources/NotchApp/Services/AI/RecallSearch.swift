@@ -364,23 +364,43 @@ enum RecallSearch {
         let context = hits.prefix(5).enumerated().map { i, hit in
             let text = RecallStore.shared.text(of: hit.id)
             let head = [hit.appName, hit.title, hit.location].compactMap { $0 }.joined(separator: " · ")
-            return "[\(i + 1)] \(hit.time.formatted(date: .abbreviated, time: .shortened)) — \(head)\n\(text.prefix(1500))"
+            return "[\(i + 1)] \(spoken(hit.time)) — \(head)\n\(text.prefix(1500))"
         }.joined(separator: "\n\n")
         let system = """
         You answer a question about what the user saw on their Mac's screen, from text read off their windows at the time. \
-        Reply in one or two plain sentences: the answer itself (quote an error or a number exactly), and when and where it \
-        was seen. If the text doesn't answer it, say which window looks closest. No preamble, no markdown.
+        Reply in one short sentence, two at most and under 35 words: the answer itself (quote an error or a number \
+        exactly), and briefly when and where, the way a person says it ("at 11:20 PM in Vivaldi", "yesterday afternoon"), \
+        never a full date. For several things, name the two or three that matter most. If the text doesn't answer it, say \
+        which window looks closest. No preamble, no markdown.
         """
         return try await OllamaClient.chatStream(system: system, user: "Question: \(query)\n\nWhat was on screen:\n\(context)",
                                                  allowCloud: false, onText: onText)
+    }
+
+    /// "today at 11:18 PM", "yesterday at 9:10 AM", "Tuesday at 3:42 PM": how the model should say it too.
+    private static func spoken(_ date: Date) -> String {
+        let cal = Calendar.current
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if cal.isDateInToday(date) { return "today at \(time)" }
+        if cal.isDateInYesterday(date) { return "yesterday at \(time)" }
+        return "\(date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())) at \(time)"
+    }
+
+    /// The page a browser was on: a full address, or one shown without its scheme ("youtube.com/shorts/…").
+    static func webURL(_ location: String) -> URL? {
+        if let url = URL(string: location), let scheme = url.scheme?.lowercased() { return ["http", "https"].contains(scheme) ? url : nil }
+        guard !location.hasPrefix("/"), !location.contains(" "),
+              let host = location.split(separator: "/").first, host.contains("."), host.last?.isLetter == true else { return nil }
+        return URL(string: "https://" + location)
     }
 
     // MARK: - Opening
 
     /// Back to where it was: the page or document when known, else the app.
     @MainActor static func open(_ hit: Hit) {
-        if let location = hit.location {
-            if let url = URL(string: location), let scheme = url.scheme?.lowercased(), ["http", "https", "file"].contains(scheme) {
+        if let location = hit.location, !location.isEmpty {
+            if let url = webURL(location) ?? URL(string: location).flatMap({ $0.scheme?.lowercased() == "file" ? $0 : nil }),
+               let scheme = url.scheme?.lowercased() {
                 if let id = hit.bundleID, let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id), scheme != "file" {
                     NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
                 } else {
