@@ -215,7 +215,10 @@ struct ShelfView: View {
             if !conversions.isEmpty {
                 headerButton("Convert…") { withAnimation(Motion.pane.animation) { shelf.convertPicker = urls } }
             }
+            // Click for a zip on the shelf, or drag it out to make one where it's dropped.
             headerButton("Zip") { shelf.compress(picked) }
+                .overlay(FileDragSource(items: picked, onClick: { shelf.compress(picked) }, removesDelivered: false, asZip: true))
+                .help("Click to zip onto the shelf, or drag to drop a zip anywhere")
             headerButton("AirDrop") { ShelfStore.airDrop(urls) }
             headerButton("Remove") { withAnimation(Motion.small.animation) { shelf.remove(picked) } }
             headerButton("Done") { withAnimation(.easeOut(duration: 0.12)) { shelf.selection = [] } }

@@ -191,7 +191,7 @@ final class NotchWindowController {
             }
         }
 
-        let onStack = !dragging && (stackRect?.contains(p) ?? false)
+        let onStack = DebugHooks.holdStack || (!dragging && (stackRect?.contains(p) ?? false))
         if NotchPresenter.shared.primary === viewModel {
             ActivityCenter.shared.hold(inside && onBanner(p))
         }

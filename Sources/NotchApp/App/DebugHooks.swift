@@ -25,6 +25,9 @@ enum DebugHooks {
         .appendingPathComponent("Library/Application Support/NotchApp/debug-token")
 
     /// Appends a line to the debug log when debug hooks are enabled.
+    /// The quick-drop stack stays fanned out as if hovered (`stackhover`).
+    static var holdStack = false
+
     nonisolated static func log(_ line: String) {
         guard UserDefaults.standard.bool(forKey: "debugHooks") else { return }
         let data = Data((line + "\n").utf8)
@@ -238,6 +241,10 @@ enum DebugHooks {
         case "overrides": log("OVERRIDES \(AppSettings.shared.hotKeyOverrides.mapValues(\.display))")
         case "window": // window <action> [pid]: snaps that app's focused window (default: the one in front)
             if let action = WindowManager.Action(rawValue: parts[safe: 1] ?? "") { WindowManager.apply(action, pid: parts[safe: 2].flatMap { pid_t($0) }) }
+        case "zipto": // zipto <output.zip> <files…>: the zip a drag would make
+            let out = URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/test.zip")
+            let files = parts.dropFirst(2).map { URL(fileURLWithPath: $0) }
+            Task.detached { log("ZIP \(ShelfStore.makeZip(files, to: out)) \(ShelfStore.zipName(for: files))") }
         case "fakeupgrade": UpdateChecker.shared.debugUpgrading(Array(parts.dropFirst())) // fakeupgrade [names…]; none clears
         case "hotkeys": log("HOTKEYS failed=\(HotKeys.shared.failed.map(\.rawValue).sorted()) window=\(HotKeys.Action.allCases.filter { $0.windowAction != nil }.map { "\($0.rawValue)=\(HotKeys.combo(for: $0)?.display ?? "off")" })")
         case "settingsshot": // settingsshot <path> <pane title…>
@@ -406,7 +413,7 @@ enum DebugHooks {
         case "convertall": // convertall <operation> [path…]: those files (else every file on the shelf), as one batch
             let files = parts.count > 2 ? parts.dropFirst(2).map { URL(fileURLWithPath: $0) } : ShelfStore.shared.items.map(\.url)
             if let op = MediaConverter.Operation(rawValue: parts[safe: 1] ?? "") { MediaConverter.shared.convert(files, op) }
-        case "stackhover": c.viewModel.stackHovered = parts[safe: 1] != "0"
+        case "stackhover": holdStack = parts[safe: 1] != "0"; c.viewModel.stackHovered = holdStack // stackhover 1|0: held, as if hovered
         case "glancepeek": // glancepeek <item> (none: ends it): what resting the pointer on a Glance shows
             if let item = LiveItem(rawValue: parts[safe: 1] ?? "") { c.viewModel.hoverGlance(item, true) } else { c.viewModel.endGlancePeek() }
             log("GLANCEMIDX \(c.viewModel.glanceMidX.map { "\($0.key.rawValue)=\(Int($0.value))" }.sorted())")

@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Quick drops waiting under the collapsed notch. Drag the pile to take every file at once, or rest
-/// the pointer on it to fan the files out and take one. A file dropped into another app leaves the
-/// shelf (hold ⌥ to keep it); a click opens the shelf.
+/// the pointer on it to fan the files out and take one, or all of them as a zip. A file dropped
+/// into another app leaves the shelf (hold ⌥ to keep it); a click opens the shelf.
 struct ShelfStackRow: View {
     @ObservedObject var viewModel: NotchViewModel
     @EnvironmentObject private var shelf: ShelfStore
@@ -43,6 +44,15 @@ struct ShelfStackRow: View {
                         .font(.system(size: 10, weight: .semibold).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.5))
                 }
+                // All of them as one zip, made where it's dropped.
+                Image(systemName: "doc.zipper")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .frame(width: 22, height: 20)
+                    .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(.white.opacity(0.12)))
+                    .overlay(FileDragSource(items: items, onClick: openShelf, asZip: true))
+                    .help("Drag all \(items.count) files as one zip · ⌥ keeps them on the shelf")
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
         }
         .padding(.horizontal, 12)
@@ -103,6 +113,8 @@ struct FileDragSource: NSViewRepresentable {
     let onClick: () -> Void
     var onClickEvent: ((NSEvent) -> Void)? = nil
     var removesDelivered = true
+    /// Leaves as one zip, made where it's dropped, instead of the files themselves.
+    var asZip = false
 
     func makeNSView(context: Context) -> DragSourceView {
         let view = DragSourceView()
@@ -115,7 +127,31 @@ struct FileDragSource: NSViewRepresentable {
         view.onClick = onClick
         view.onClickEvent = onClickEvent
         view.removesDelivered = removesDelivered
+        view.asZip = asZip
     }
+}
+
+/// The zip a drag hands over: a promise, made in the folder (or app) it's dropped into, under the
+/// files' shelf names.
+final class ZipPromise: NSObject, NSFilePromiseProviderDelegate {
+    let files: [URL]
+    private let queue: OperationQueue = {
+        let q = OperationQueue()
+        q.qualityOfService = .userInitiated
+        return q
+    }()
+
+    init(files: [URL]) { self.files = files }
+
+    func filePromiseProvider(_ provider: NSFilePromiseProvider, fileNameForType fileType: String) -> String {
+        ShelfStore.zipName(for: files)
+    }
+
+    func filePromiseProvider(_ provider: NSFilePromiseProvider, writePromiseTo url: URL, completionHandler: @escaping (Error?) -> Void) {
+        completionHandler(ShelfStore.makeZip(files, to: url) ? nil : CocoaError(.fileWriteUnknown))
+    }
+
+    func operationQueue(for provider: NSFilePromiseProvider) -> OperationQueue { queue }
 }
 
 final class DragSourceView: NSView, NSDraggingSource {
@@ -125,7 +161,9 @@ final class DragSourceView: NSView, NSDraggingSource {
     var onClickEvent: ((NSEvent) -> Void)?
     /// Delivered files leave the shelf (the stack's quick drops); the shelf's own tiles stay put.
     var removesDelivered = true
+    var asZip = false
     private var mouseDown: NSEvent?
+    private var promise: ZipPromise?
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -150,6 +188,17 @@ final class DragSourceView: NSView, NSDraggingSource {
         mouseDown = nil
 
         let origin = convert(down.locationInWindow, from: nil)
+        if asZip {
+            let files = MainActor.assumeIsolated { items.filter { $0.url.isFileURL && ShelfStore.webLink(in: $0.url) == nil }.map { ShelfNames.outgoing($0.url) } }
+            guard !files.isEmpty else { return }
+            let promise = ZipPromise(files: files)
+            self.promise = promise
+            let item = NSDraggingItem(pasteboardWriter: NSFilePromiseProvider(fileType: UTType.zip.identifier, delegate: promise))
+            item.setDraggingFrame(NSRect(x: origin.x - 24, y: origin.y - 24, width: 48, height: 48),
+                                  contents: NSWorkspace.shared.icon(for: .zip))
+            beginDraggingSession(with: [item], event: down, source: self).animatesToStartingPositionsOnCancelOrFail = true
+            return
+        }
         let dragItems = items.enumerated().map { i, item -> NSDraggingItem in
             // A saved web link drops as the link itself (into a browser, Messages, a doc…).
             let writer: NSPasteboardWriting = ShelfStore.webLink(in: item.url).map { $0 as NSURL }
@@ -185,6 +234,7 @@ final class DragSourceView: NSView, NSDraggingSource {
     // onto the notch) there's nothing to do.
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         guard context == .outsideApplication else { return [] }
+        if asZip { return .copy }
         let movable = MainActor.assumeIsolated {
             items.allSatisfy { $0.url.isFileURL && ShelfStore.webLink(in: $0.url) == nil && !ShelfNames.isOn(for: $0.url) }
                 && (AppSettings.shared.shelfDragOut == .finder || NSEvent.modifierFlags.contains(.command))
@@ -205,7 +255,7 @@ final class DragSourceView: NSView, NSDraggingSource {
                     Haptics.level()
                 }
             }
-            guard operation.contains(.move) || operation.contains(.generic) else { return }
+            guard !asZip, operation.contains(.move) || operation.contains(.generic) else { return }
             // Finder moves the files in its own time: then the shelf follows each one to where it went.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                 let moved = items.filter { item in ShelfStore.shared.items.contains { $0.id == item.id } && !FileManager.default.fileExists(atPath: item.url.path) }

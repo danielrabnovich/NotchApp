@@ -393,26 +393,38 @@ final class ShelfStore: ObservableObject {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { remove(gone) }
     }
 
+    /// "Report.zip" for one file, "Archive.zip" for several.
+    nonisolated static func zipName(for urls: [URL]) -> String {
+        (urls.count == 1 ? urls[0].deletingPathExtension().lastPathComponent : "Archive") + ".zip"
+    }
+
+    /// Zips the files into `output` (Finder's kind of zip, through ditto). Slow for big files: off
+    /// the main thread.
+    nonisolated static func makeZip(_ urls: [URL], to output: URL) -> Bool {
+        guard let first = urls.first else { return false }
+        if urls.count == 1 {
+            return Shell.runSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", first.path, output.path], timeout: 600).ok
+        }
+        // ditto zips one folder: gather clones of the files in one (instant on APFS).
+        let staging = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NotchApp Zip \(UUID().uuidString)/\(output.deletingPathExtension().lastPathComponent)")
+        try? FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        for url in urls { try? FileManager.default.copyItem(at: url, to: staging.appendingPathComponent(url.lastPathComponent)) }
+        let ok = Shell.runSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", staging.path, output.path], timeout: 600).ok
+        try? FileManager.default.removeItem(at: staging.deletingLastPathComponent())
+        return ok
+    }
+
     /// A zip of the files, next to the first one (or in Downloads), put on the shelf.
     func compress(_ files: [ShelfItem]) {
         let urls = files.map(\.url)
         guard let first = urls.first else { return }
         let folder = FileManager.default.isWritableFile(atPath: first.deletingLastPathComponent().path)
             ? first.deletingLastPathComponent() : FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-        let name = urls.count == 1 ? first.deletingPathExtension().lastPathComponent : "Archive"
-        let output = Self.free(folder.appendingPathComponent(name).appendingPathExtension("zip"))
+        let name = Self.zipName(for: urls)
+        let output = Self.free(folder.appendingPathComponent(name))
         Task.detached {
-            let ok: Bool
-            if urls.count == 1 {
-                ok = Shell.runSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", first.path, output.path], timeout: 600).ok
-            } else {
-                // ditto zips one folder: gather clones of the files in one (instant on APFS).
-                let staging = FileManager.default.temporaryDirectory.appendingPathComponent("NotchApp Zip \(UUID().uuidString)/\(name)")
-                try? FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-                for url in urls { try? FileManager.default.copyItem(at: url, to: staging.appendingPathComponent(url.lastPathComponent)) }
-                ok = Shell.runSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", staging.path, output.path], timeout: 600).ok
-                try? FileManager.default.removeItem(at: staging.deletingLastPathComponent())
-            }
+            let ok = Self.makeZip(urls, to: output)
             await MainActor.run {
                 if ok {
                     ShelfStore.shared.add([output])
