@@ -81,7 +81,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   </dict></array>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSCameraUsageDescription</key><string>NotchApp's camera mirror shows a preview of yourself before a call.</string>
-  <key>NSAppleEventsUsageDescription</key><string>NotchApp's Controls switch Dark Mode and empty the Trash, its app actions read the files selected in Finder and copy the song playing in Spotify, and replies to a coding agent are typed into its own Terminal or iTerm2 tab.</string>
+  <key>NSAppleEventsUsageDescription</key><string>NotchApp's Controls switch Dark Mode and empty the Trash, its app actions read the files selected in Finder and copy the song playing in Spotify, replies to a coding agent are typed into its own Terminal or iTerm2 tab, and Recall (when it's on) asks your browser which page is open.</string>
   <key>NSAudioCaptureUsageDescription</key><string>NotchApp's sound mixer adjusts each app's volume by routing its audio through NotchApp, and live captions turn what's playing into text on this Mac.</string>
   <key>NSMicrophoneUsageDescription</key><string>NotchApp turns your side of a call into text on this Mac when you've asked it to transcribe calls, and listens for sounds like a doorbell while you wear headphones if you've turned sound alerts on.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Live captions and call transcripts are turned into text on this Mac.</string>

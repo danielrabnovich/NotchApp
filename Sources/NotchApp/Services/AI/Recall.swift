@@ -330,6 +330,12 @@ final class Recall: ObservableObject {
         let ax = AXReader.read(pid: target.pid, visibleOnly: true)
         guard ax != nil || canSee else { return .skipped("nothing readable") }
         if isPrivateWindow(pid: target.pid, bundleID: target.bundleID, title: ax?.title) { return .skipped("private window") }
+        // Browsers that keep the address from Accessibility say it when asked (and whether it's incognito).
+        var location = ax?.location
+        if (location ?? "").isEmpty, let id = target.bundleID, let tab = BrowserTab.front(id) {
+            if tab.isPrivate { return .skipped("private window") }
+            location = tab.url
+        }
         let key = "\(target.bundleID ?? "?")#\(ax?.windowID ?? 0)"
         let axText = ax?.text ?? ""
         let afterAX = Date()
@@ -364,7 +370,7 @@ final class Recall: ObservableObject {
         guard !text.isEmpty || !(ax?.title ?? "").isEmpty || image != nil else { return .skipped("nothing to read in \(target.appName ?? "?")") }
 
         var capture = RecallStore.Capture(time: started, bundleID: target.bundleID, appName: target.appName, title: ax?.title,
-                                          location: ax?.location, text: text, labels: labels)
+                                          location: location, text: text, labels: labels)
         capture.bytes = Int64(text.utf8.count)
         // Makes the folder (readable by this user only) before the picture goes in it.
         guard RecallStore.shared.open(create: true) else { return .skipped("no database") }
