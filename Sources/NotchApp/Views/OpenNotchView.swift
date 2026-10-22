@@ -262,6 +262,7 @@ struct HomeView: View {
     @State private var musicLarge = true
     @ObservedObject private var meetings = MeetingMonitor.shared
     @ObservedObject private var weather = TodayWeather.shared
+    @ObservedObject private var birthdays = Birthdays.shared
     /// Debug (`homeshot`): music's size and a call, instead of what's going on.
     var shot: HomeShot?
 
@@ -279,6 +280,7 @@ struct HomeView: View {
     private var content: some View {
         GeometryReader { geo in
             let placed = HomeTiler.tile(settings.homeCards, width: geo.size.width, wanted: wanted)
+            let fit = HomeFit.fitting(height: geo.size.height, birthday: !birthdays.today.isEmpty)
             if placed.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "sparkles")
@@ -295,9 +297,9 @@ struct HomeView: View {
                 HStack(spacing: 18) {
                     ForEach(placed, id: \.card) { item in
                         if let before = previous(item.card, in: placed) {
-                            rule(between: before, and: item.card)
+                            rule(between: before, and: item.card, fit: fit)
                         }
-                        card(item, in: placed)
+                        card(item, in: placed, fit: fit)
                             .frame(width: item.width ?? max(0, left) / CGFloat(max(1, flexible)), height: geo.size.height,
                                    alignment: item.card == .music && item.size == .large ? .leading : .center)
                     }
@@ -326,7 +328,7 @@ struct HomeView: View {
         }
     }
 
-    @ViewBuilder private func card(_ item: HomeTiler.Placed, in placed: [HomeTiler.Placed]) -> some View {
+    @ViewBuilder private func card(_ item: HomeTiler.Placed, in placed: [HomeTiler.Placed], fit: HomeFit) -> some View {
         switch item.card {
         case .music:
             if placed.count == 1 { MusicPlayerView() }
@@ -336,10 +338,10 @@ struct HomeView: View {
             // Beside the big player it's half of Home; beside the small card, the day in full;
             // alone, roomy enough for the tasks in a column of their own.
             let music = placed.first { $0.card == .music }
-            TodayPanel(layout: music == nil ? .roomy : music?.size == .large ? .half : .full)
+            TodayPanel(layout: music == nil ? .roomy : music?.size == .large ? .half : .full, fit: fit)
         case .weather:
             if let report = weather.report {
-                HomeWeatherCard(report: report)
+                HomeWeatherCard(report: report, fit: fit)
                     .transition(.opacity)
             }
         }
@@ -352,10 +354,10 @@ struct HomeView: View {
 
     /// The rule between two cards. The day and the weather share a header line, so the rule
     /// between them starts under it.
-    @ViewBuilder private func rule(between a: HomeCard, and b: HomeCard) -> some View {
+    @ViewBuilder private func rule(between a: HomeCard, and b: HomeCard, fit: HomeFit) -> some View {
         if Set([a, b]) == [.today, .weather] {
             SectionDivider()
-                .padding(.top, TodayPanel.headerHeight + 10)
+                .padding(.top, fit.headerHeight + 10)
         } else {
             divider
         }

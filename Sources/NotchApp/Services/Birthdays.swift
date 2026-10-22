@@ -17,8 +17,12 @@ final class Birthdays: ObservableObject {
     @Published private(set) var today: [Person] = []
     private var day: Date?
 
-    /// Debug (`homeshot`): shows these instead, until the next read.
-    func preview(_ people: [Person]) { today = people }
+    /// Debug (`homeshot`): shows these instead, and no reads land until it ends (nil).
+    func preview(_ people: [Person]?) {
+        previewing = people != nil
+        today = people ?? []
+    }
+    private var previewing = false
 
     static var authorized: Bool { CNContactStore.authorizationStatus(for: .contacts) == .authorized }
 
@@ -29,7 +33,10 @@ final class Birthdays: ObservableObject {
         day = now
         Task.detached(priority: .utility) {
             let found = Self.read(on: Date())
-            await MainActor.run { if Birthdays.shared.today != found { Birthdays.shared.today = found } }
+            await MainActor.run {
+                let shared = Birthdays.shared
+                if !shared.previewing, shared.today != found { shared.today = found }
+            }
         }
     }
 

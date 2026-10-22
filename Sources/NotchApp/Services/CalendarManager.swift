@@ -66,6 +66,7 @@ final class CalendarManager: ObservableObject {
     }
 
     func reload() {
+        guard !previewing else { return }
         status = EKEventStore.authorizationStatus(for: .event)
         guard hasAccess, AppSettings.shared.calendarEnabled else { events = []; later = nil; week = []; return }
         let now = Date()
@@ -109,11 +110,17 @@ final class CalendarManager: ObservableObject {
         }
     }
 
-    /// Debug (`homeshot`): shows these as today's events until the next reload.
-    func preview(events: [EKEvent]) {
-        self.events = events
-        later = nil
+    /// Debug (`homeshot`): shows these as today's events, with no reloads until it ends (nil).
+    func preview(events: [EKEvent]?) {
+        previewing = events != nil
+        if let events {
+            self.events = events
+            later = nil
+        } else {
+            reload()
+        }
     }
+    private var previewing = false
 
     func openCalendar() {
         NSWorkspace.shared.open(URL(string: "ical://")!)

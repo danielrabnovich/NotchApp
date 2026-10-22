@@ -44,10 +44,11 @@ enum HomeShots {
         func next(_ i: Int) {
             guard i < shots.count else {
                 // Read again rather than put back what was there: it may have still been loading.
-                Birthdays.shared.preview([])
+                Birthdays.shared.preview(nil)
+                TodayWeather.shared.preview(nil)
                 Birthdays.shared.refreshIfStale(force: true)
                 TodayWeather.shared.refreshIfStale(force: true)
-                CalendarManager.shared.reload()
+                CalendarManager.shared.preview(events: nil)
                 window?.orderOut(nil)
                 window = nil
                 writeSheet(images, to: out.appendingPathComponent("sheet.png"))
@@ -56,7 +57,7 @@ enum HomeShots {
             let shot = shots[i]
             let now = Date()
             Birthdays.shared.preview(shot.fixture.birthdays)
-            TodayWeather.shared.preview(shot.fixture.weather ? weather(now) : nil)
+            TodayWeather.shared.preview(.some(shot.fixture.weather ? weather(now) : nil))
             CalendarManager.shared.preview(events: shot.fixture.events(CalendarManager.shared.store, now))
             let call = shot.fixture.call
                 ? MeetingMonitor.Call(app: "Zoom", bundleID: "us.zoom.xos", started: now.addingTimeInterval(-300), event: "Writers Meeting")
@@ -136,6 +137,13 @@ enum HomeShots {
         return e
     }
 
+    /// On the Birthdays calendar, as Contacts' birthdays are (the default calendar without one).
+    private static func birthday(_ store: EKEventStore, _ title: String, _ now: Date) -> EKEvent {
+        let e = event(store, title, hour: now, from: 0, hours: 0, allDay: true)
+        if let birthdays = store.calendars(for: .event).first(where: { $0.type == .birthday }) { e.calendar = birthdays }
+        return e
+    }
+
     private static func hour(_ now: Date) -> Date {
         Calendar.current.dateInterval(of: .hour, for: now)!.start
     }
@@ -146,17 +154,17 @@ enum HomeShots {
              event(store, "Dinner", hour: hour(now), from: 2, hours: 1)]
         },
         Fixture(name: "birthday", birthdays: [.init(id: "1", name: "Марина", turning: 42)]) { store, now in
-            [event(store, "Марина’s 42nd Birthday", hour: now, from: 0, hours: 0, allDay: true),
+            [birthday(store, "Марина’s 42nd Birthday", now),
              event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
         },
         Fixture(name: "birthday-call", birthdays: [.init(id: "1", name: "Марина", turning: 42)], call: true) { store, now in
-            [event(store, "Марина’s 42nd Birthday", hour: now, from: 0, hours: 0, allDay: true),
+            [birthday(store, "Марина’s 42nd Birthday", now),
              event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
         },
         Fixture(name: "busy",
                 birthdays: [.init(id: "1", name: "Alexandria Konstantinopoulou", turning: 30), .init(id: "2", name: "Марина", turning: 42)],
                 call: true) { store, now in
-            [event(store, "Марина’s 42nd Birthday", hour: now, from: 0, hours: 0, allDay: true),
+            [birthday(store, "Марина’s 42nd Birthday", now),
              event(store, "Quarterly planning with the extended leadership team", hour: hour(now), from: 0, hours: 1,
                    location: "Conference Room 4B, North Building, Floor 12"),
              event(store, "Writers Meeting", hour: hour(now), from: 1, hours: 1.5),

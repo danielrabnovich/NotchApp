@@ -88,3 +88,28 @@ enum HomeTiler {
         }
     }
 }
+
+/// How the day fits Home's height: a call bar above it, or a birthday line, can leave too little
+/// room for even one event. First the week strip loses its weekday letters (the weather beside it
+/// shrinks to match), then the birthday line goes.
+struct HomeFit: Equatable {
+    /// The month and week strip's line, which the weather beside it lines up with.
+    var headerHeight: CGFloat = Self.fullHeader
+    var birthdayLine = true
+
+    var letters: Bool { headerHeight == Self.fullHeader }
+
+    static let fullHeader: CGFloat = 45
+    static let shortHeader: CGFloat = 36
+    /// Under the header: its gap, then one whole event row.
+    private static let oneRow: CGFloat = 10 + 30
+    /// The birthday line and the gap under it.
+    private static let birthday: CGFloat = 15 + 8
+
+    static func fitting(height: CGFloat, birthday hasBirthday: Bool) -> HomeFit {
+        let line = hasBirthday ? birthday : 0
+        if height >= fullHeader + line + oneRow { return HomeFit() }
+        if height >= shortHeader + line + oneRow { return HomeFit(headerHeight: shortHeader) }
+        return HomeFit(headerHeight: shortHeader, birthdayLine: false)
+    }
+}

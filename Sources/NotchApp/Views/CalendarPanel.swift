@@ -7,9 +7,8 @@ import SwiftUI
 /// (`full`), with tasks in a column of their own when music isn't on Home (`roomy`).
 struct TodayPanel: View {
     enum Layout { case half, full, roomy }
-    /// The month and week strip's line, which the weather beside it lines up with.
-    static let headerHeight: CGFloat = 45
     var layout: Layout = .half
+    var fit = HomeFit()
     private var wide: Bool { layout != .half }
     @EnvironmentObject private var calendar: CalendarManager
     @EnvironmentObject private var tasks: TaskStore
@@ -59,7 +58,7 @@ struct TodayPanel: View {
     /// Someone's birthday: the first line of today's column, never a row across the whole panel (that
     /// pushed the forecast below it out of the notch).
     @ViewBuilder private var birthdayLine: some View {
-        if !birthdays.today.isEmpty {
+        if showsBirthdayLine {
             HStack(spacing: 6) {
                 Image(systemName: "birthday.cake.fill").foregroundStyle(.pink)
                 Text(birthdays.today.map { p in p.turning.map { "\(p.name) turns \($0)" } ?? "\(p.name)'s birthday" }.joined(separator: " · "))
@@ -70,6 +69,8 @@ struct TodayPanel: View {
         }
     }
 
+    private var showsBirthdayLine: Bool { fit.birthdayLine && !birthdays.today.isEmpty }
+
     private func header(now: Date) -> some View {
         HStack(alignment: .center, spacing: 12) {
             Text(picked ?? now, format: .dateTime.month(.abbreviated))
@@ -79,10 +80,11 @@ struct TodayPanel: View {
                 .contentShape(Rectangle())
                 .onTapGesture { calendar.openCalendar() }
                 .help("Open Calendar")
-            WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: 30,
+            WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: 30, letters: fit.letters,
                       picked: settings.calendarEnabled ? $picked : .constant(nil))
             Spacer(minLength: 0)
         }
+        .frame(height: fit.letters ? nil : fit.headerHeight)
     }
 
     /// A day other than today, picked in the week strip: all of its events.
@@ -104,7 +106,10 @@ struct TodayPanel: View {
     }
 
     @ViewBuilder private func content(now: Date) -> some View {
-        let events = settings.calendarEnabled ? calendar.events.filter { $0.isAllDay || $0.endDate > now } : []
+        // The birthday line already says whose birthday it is: not again from the Birthdays calendar.
+        let events = settings.calendarEnabled
+            ? calendar.events.filter { ($0.isAllDay || $0.endDate > now) && !(showsBirthdayLine && $0.calendar?.type == .birthday) }
+            : []
         // The next timed event: on now, or still to come today; else the first one in the coming week.
         let today = events.first { !$0.isAllDay }
         let next = today ?? (settings.calendarEnabled ? calendar.later : nil)
@@ -138,7 +143,6 @@ struct TodayPanel: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Spacer(minLength: 0)
         } else {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -178,12 +182,13 @@ struct TodayPanel: View {
 /// days under it.
 struct HomeWeatherCard: View {
     let report: WeatherReport
+    var fit = HomeFit()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             WeatherNow(report: report)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: TodayPanel.headerHeight)
+                .frame(height: fit.headerHeight)
             if report.days.count > 1 {
                 Forecast(report: report)
             }
@@ -323,8 +328,13 @@ final class TodayWeather: ObservableObject {
     @Published private(set) var report: WeatherReport?
     private var fetchedAt = Date.distantPast
 
-    /// Debug (`homeshot`): shows this instead, until the next fetch.
-    func preview(_ report: WeatherReport?) { self.report = report }
+    /// Debug (`homeshot`): shows this instead (`.some(nil)`: no weather), and no fetch lands until
+    /// it ends (nil).
+    func preview(_ report: WeatherReport??) {
+        previewing = report != nil
+        if let report { self.report = report }
+    }
+    private var previewing = false
 
     func refreshIfStale(force: Bool = false) {
         guard force || Date().timeIntervalSince(fetchedAt) > 30 * 60 else { return }
@@ -334,6 +344,7 @@ final class TodayWeather: ObservableObject {
                 fetchedAt = Date().addingTimeInterval(-25 * 60) // try again in five minutes
                 return
             }
+            guard !previewing else { return }
             withAnimation(.easeOut(duration: 0.2)) { self.report = report }
         }
     }
@@ -411,6 +422,8 @@ private struct WeekStrip: View {
     let now: Date
     let events: [EKEvent]
     let pitch: CGFloat
+    /// The weekday over each date; without, today is just its red number.
+    var letters = true
     @Binding var picked: Date?
 
     var body: some View {
@@ -436,11 +449,13 @@ private struct WeekStrip: View {
             colors.append(Color(nsColor: calendar.color))
         }
         return VStack(spacing: 1) {
-            Text(isToday ? day.formatted(.dateTime.weekday(.abbreviated)).uppercased() : day.formatted(.dateTime.weekday(.narrow)))
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.white.opacity(isToday || isPicked ? 0.85 : 0.4))
-                .lineLimit(1)
-                .fixedSize()
+            if letters {
+                Text(isToday ? day.formatted(.dateTime.weekday(.abbreviated)).uppercased() : day.formatted(.dateTime.weekday(.narrow)))
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white.opacity(isToday || isPicked ? 0.85 : 0.4))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
             Text(day, format: .dateTime.day())
                 // Smaller in a narrow strip, where today's two bold digits ran wider than the column.
                 .font(.system(size: isToday ? (pitch < 30 ? 16 : 19) : (pitch < 30 ? 14 : 15),
