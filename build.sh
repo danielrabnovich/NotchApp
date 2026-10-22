@@ -33,6 +33,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 cp build/MediaAdapter.dylib MediaAdapter/adapter.pl "$APP/Contents/Resources/"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+# Packages' resources (FluidAudio's): their code looks for them in the app's Resources.
+for b in .build/release/*.bundle; do [ -d "$b" ] && cp -R "$b" "$APP/Contents/Resources/"; done
 
 # What Search answers questions about NotchApp from: the guide, every setting and the changelog.
 echo "▸ Building help…"

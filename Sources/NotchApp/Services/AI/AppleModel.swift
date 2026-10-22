@@ -92,6 +92,34 @@ enum AppleModel {
         #endif
     }
 
+    /// Which numbered voice in a call's transcript ("Speaker 2: …") is which of `names`, where a
+    /// line makes it clear (guided generation). Each answer comes with the line that shows it, and
+    /// answers whose line isn't in the transcript, or doesn't say the name, are dropped.
+    static func voiceNames(_ transcript: String, names: [String]) async throws -> [Int: String] {
+        #if canImport(FoundationModels)
+        guard #available(macOS 26, *) else { throw Unavailable() }
+        let instructions = """
+        You work out who's who in a call's transcript. Lines are marked Speaker 1, Speaker 2… for the other people on \
+        the call, and You for the user. The people invited: \(names.joined(separator: ", ")). Name a speaker only when a \
+        line makes it clear: they introduce themselves ("this is Sam", "Sam here"), someone thanks or answers them by \
+        name right after they spoke ("thanks, Priya"), or someone asks them by name and they answer next ("Priya, can \
+        you…"). A name a speaker says to or about someone else isn't their own. Leave out every speaker you aren't sure \
+        of; an empty list is fine.
+        """
+        let found = try await fitting(transcript) { try await Engine.voiceNames(instructions: instructions, text: $0) }
+        let said = transcript.lowercased()
+        var named: [Int: String] = [:]
+        for (number, name, line) in found {
+            let quote = line.trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: "\"“”"))).lowercased()
+            guard quote.count >= 6, said.contains(quote), quote.contains(name.lowercased()) else { continue }
+            named[number] = name
+        }
+        return named
+        #else
+        throw Unavailable()
+        #endif
+    }
+
     /// Runs `body` on the text cut to the budget; if the model still finds it too long, on half as much.
     private static func fitting<T>(_ user: String, _ body: (String) async throws -> T) async throws -> T {
         var text = user.count > inputBudget ? String(user.prefix(inputBudget)) + "\n[…cut to fit]" : user
@@ -181,6 +209,28 @@ private enum Engine {
         return AppleModel.MeetingNotes(summary: form.summary, decisions: form.decisions,
                                        items: form.actionItems.map { .init(owner: $0.owner, task: $0.task, when: $0.when) },
                                        followUp: form.followUp)
+    }
+
+    @Generable
+    struct VoicesForm {
+        @Guide(description: "Each speaker whose name the transcript makes clear. Leave out any you aren't sure of.")
+        let speakers: [NamedVoice]
+    }
+
+    @Generable
+    struct NamedVoice {
+        @Guide(description: "The speaker's number, as in \"Speaker 2\".")
+        let number: Int
+        @Guide(description: "Their name: one of the people invited.")
+        let name: String
+        @Guide(description: "The line that shows it, quoted exactly, without the speaker label.")
+        let line: String
+    }
+
+    static func voiceNames(instructions: String, text: String) async throws -> [(Int, String, String)] {
+        let session = LanguageModelSession(model: model, instructions: instructions)
+        let form = try await session.respond(to: text, generating: VoicesForm.self, options: GenerationOptions(temperature: 0)).content
+        return form.speakers.map { ($0.number, $0.name, $0.line) }
     }
 
     static func stream(instructions: String, text: String, temperature: Double,

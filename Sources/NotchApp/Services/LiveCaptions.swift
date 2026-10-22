@@ -20,6 +20,8 @@ final class LiveCaptions: ObservableObject {
         /// Where it starts and ends in the recording, in seconds (none in calls kept before there was audio).
         var offset: TimeInterval? = nil
         var end: TimeInterval? = nil
+        /// Which of the other side's voices said it (1, 2…), once the call's been listened to again.
+        var voice: Int? = nil
     }
 
     /// Finished stretches of speech, in order.

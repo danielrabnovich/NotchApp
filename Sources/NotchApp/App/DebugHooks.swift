@@ -116,6 +116,18 @@ enum DebugHooks {
                 default: MeetingAssistant.shared.delete(m.id)
                 }
             }
+        case "meetingvoices", "meetingname", "meetingattendees":
+            // meetingvoices <id prefix> | meetingname <id prefix> <voice> [name…] | meetingattendees <id prefix> <Name One, Name Two>
+            if let m = MeetingAssistant.shared.meetings.first(where: { $0.id.uuidString.lowercased().hasPrefix((parts[safe: 1] ?? "-").lowercased()) }) {
+                switch verb {
+                case "meetingvoices": MeetingAssistant.shared.debugVoices(m.id)
+                case "meetingname":
+                    if let n = Int(parts[safe: 2] ?? "") { MeetingAssistant.shared.nameVoice(n, in: m.id, as: parts.dropFirst(3).joined(separator: " ")) }
+                default:
+                    let names = parts.dropFirst(2).joined(separator: " ").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                    MeetingAssistant.shared.debugAttendees(m.id, names)
+                }
+            }
         case "meetingpause": MeetingPlayer.shared.pause()
         case "callquiet": MeetingMonitor.shared.debugQuiet()
         case "callask": // a simulated call, offered for recording as a detected one is
