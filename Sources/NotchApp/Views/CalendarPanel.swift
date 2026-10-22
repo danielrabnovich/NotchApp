@@ -1,12 +1,14 @@
 import EventKit
 import SwiftUI
 
-/// Home's day at a glance: the month and this week (tap a day to see its events), the weather,
-/// today's events (with a countdown, or Join when the call is about to start), and the tasks due
-/// today. Beside a playing song it takes half of Home (`half`); otherwise it gets the weather in
-/// full as well (`full`), with tasks in a column of their own when nothing else is on Home (`roomy`).
+/// Home's day at a glance: the month and this week (tap a day to see its events), today's events
+/// (with a countdown, or Join when the call is about to start), and the tasks due today. Beside a
+/// playing song it takes half of Home (`half`); beside the small music card, a few more tasks
+/// (`full`), with tasks in a column of their own when music isn't on Home (`roomy`).
 struct TodayPanel: View {
     enum Layout { case half, full, roomy }
+    /// The month and week strip's line, which the weather beside it lines up with.
+    static let headerHeight: CGFloat = 45
     var layout: Layout = .half
     private var wide: Bool { layout != .half }
     @EnvironmentObject private var calendar: CalendarManager
@@ -35,24 +37,15 @@ struct TodayPanel: View {
                     }
                     Spacer(minLength: 0)
                 } else {
-                    HStack(alignment: .top, spacing: 18) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if let picked, !Calendar.current.isDate(picked, inSameDayAs: now) {
-                                dayList(picked, now: now)
-                            } else {
-                                birthdayLine
-                                content(now: now)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        if wide, let report = weather.report, report.days.count > 1 {
-                            SectionDivider()
-                            Forecast(report: report)
-                                .frame(width: 128)
-                                .transition(.opacity)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let picked, !Calendar.current.isDate(picked, inSameDayAs: now) {
+                            dayList(picked, now: now)
+                        } else {
+                            birthdayLine
+                            content(now: now)
                         }
                     }
-                    .frame(maxHeight: .infinity, alignment: .top)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
         }
@@ -78,27 +71,17 @@ struct TodayPanel: View {
     }
 
     private func header(now: Date) -> some View {
-        // The weather sits over the forecast column, on its left edge: the same 18 + 1 + 18 points
-        // in from the events as the column below.
-        HStack(alignment: .center, spacing: 18) {
-            HStack(alignment: .center, spacing: 12) {
-                Text(picked ?? now, format: .dateTime.month(.abbreviated))
-                    .font(.system(size: 22, weight: .bold))
-                    .lineLimit(1)
-                    .fixedSize()
-                    .contentShape(Rectangle())
-                    .onTapGesture { calendar.openCalendar() }
-                    .help("Open Calendar")
-                WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: 30,
-                          picked: settings.calendarEnabled ? $picked : .constant(nil))
-                Spacer(minLength: 0)
-            }
-            if wide, let report = weather.report {
-                Color.clear.frame(width: 1, height: 1)
-                WeatherNow(report: report)
-                    .frame(width: 128, alignment: .leading)
-                    .transition(.opacity)
-            }
+        HStack(alignment: .center, spacing: 12) {
+            Text(picked ?? now, format: .dateTime.month(.abbreviated))
+                .font(.system(size: 22, weight: .bold))
+                .lineLimit(1)
+                .fixedSize()
+                .contentShape(Rectangle())
+                .onTapGesture { calendar.openCalendar() }
+                .help("Open Calendar")
+            WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: 30,
+                      picked: settings.calendarEnabled ? $picked : .constant(nil))
+            Spacer(minLength: 0)
         }
     }
 
@@ -191,7 +174,25 @@ struct TodayPanel: View {
     }
 }
 
-/// The weather now, at the end of the header: its symbol, the temperature, and today's range.
+/// Home's weather card: the weather now, on the line of Today's header beside it, and the next few
+/// days under it.
+struct HomeWeatherCard: View {
+    let report: WeatherReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            WeatherNow(report: report)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: TodayPanel.headerHeight)
+            if report.days.count > 1 {
+                Forecast(report: report)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+/// The weather now: its symbol, the temperature, and today's range.
 private struct WeatherNow: View {
     let report: WeatherReport
 
@@ -322,8 +323,11 @@ final class TodayWeather: ObservableObject {
     @Published private(set) var report: WeatherReport?
     private var fetchedAt = Date.distantPast
 
-    func refreshIfStale() {
-        guard Date().timeIntervalSince(fetchedAt) > 30 * 60 else { return }
+    /// Debug (`homeshot`): shows this instead, until the next fetch.
+    func preview(_ report: WeatherReport?) { self.report = report }
+
+    func refreshIfStale(force: Bool = false) {
+        guard force || Date().timeIntervalSince(fetchedAt) > 30 * 60 else { return }
         fetchedAt = Date()
         Task {
             guard let report = try? await WeatherService.report(location: nil, dayOffset: 0) else {

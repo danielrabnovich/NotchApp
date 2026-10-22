@@ -127,6 +127,12 @@ final class AppSettings: ObservableObject {
     @Published var musicEnabled: Bool { didSet { defaults.set(musicEnabled, forKey: "musicEnabled") } }
     @Published var musicLiveActivity: Bool { didSet { defaults.set(musicLiveActivity, forKey: "musicLiveActivity") } }
     @Published var showVisualizer: Bool { didSet { defaults.set(showVisualizer, forKey: "showVisualizer") } }
+    /// Music gets half of Home while it's playing, rather than staying a small card.
+    @Published var homeMusicTakesOver: Bool { didSet { defaults.set(homeMusicTakesOver, forKey: "homeMusicTakesOver") } }
+    /// Home's cards, left to right (see HomeTiler for where they go and how big they are).
+    @Published var homeCards: [HomeEntry] {
+        didSet { defaults.set(try? JSONEncoder().encode(homeCards), forKey: "homeCards") }
+    }
 
     // HUD
     @Published var volumeHUD: Bool { didSet { defaults.set(volumeHUD, forKey: "volumeHUD") } }
@@ -307,6 +313,7 @@ final class AppSettings: ObservableObject {
             "musicEnabled": true,
             "musicLiveActivity": true,
             "showVisualizer": true,
+            "homeMusicTakesOver": true,
             "volumeHUD": true,
             "brightnessHUD": true,
             "chargingAnimation": true,
@@ -417,6 +424,8 @@ final class AppSettings: ObservableObject {
         musicEnabled = defaults.bool(forKey: "musicEnabled")
         musicLiveActivity = defaults.bool(forKey: "musicLiveActivity")
         showVisualizer = defaults.bool(forKey: "showVisualizer")
+        homeMusicTakesOver = defaults.bool(forKey: "homeMusicTakesOver")
+        homeCards = defaults.data(forKey: "homeCards").flatMap { try? JSONDecoder().decode([HomeEntry].self, from: $0) } ?? HomeEntry.defaults
         volumeHUD = defaults.bool(forKey: "volumeHUD")
         brightnessHUD = defaults.bool(forKey: "brightnessHUD")
         chargingAnimation = defaults.bool(forKey: "chargingAnimation")

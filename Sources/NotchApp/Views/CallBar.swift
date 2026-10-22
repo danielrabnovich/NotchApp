@@ -7,9 +7,11 @@ struct CallBar: View {
     @ObservedObject private var controls = ControlsService.shared
     @ObservedObject private var captions = LiveCaptions.shared
     @State private var actions: [MeetingControls.Action] = []
+    /// Debug (`homeshot`): a made-up call to show instead.
+    var preview: MeetingMonitor.Call?
 
     var body: some View {
-        if let call = meetings.call {
+        if let call = preview ?? meetings.call {
             HStack(spacing: 8) {
                 if let id = call.bundleID, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
                     AppIcon(bundlePath: url.path, size: 16)

@@ -261,46 +261,25 @@ struct HomeView: View {
     /// reshuffle the page (starting playback does bring the player back).
     @State private var musicLarge = true
     @ObservedObject private var meetings = MeetingMonitor.shared
+    @ObservedObject private var weather = TodayWeather.shared
+    /// Debug (`homeshot`): music's size and a call, instead of what's going on.
+    var shot: HomeShot?
 
     private var showsToday: Bool { settings.calendarEnabled || settings.tasksEnabled }
 
     var body: some View {
         VStack(spacing: 8) {
-            if settings.meetingMode, meetings.call != nil { CallBar() }
+            if let call = shot?.call { CallBar(preview: call) }
+            else if shot == nil, settings.meetingMode, meetings.call != nil { CallBar() }
             content
         }
         .animation(Motion.pane.animation, value: meetings.call != nil)
     }
 
     private var content: some View {
-        HStack(spacing: 18) {
-            if settings.musicEnabled, showsToday, musicLarge {
-                // Playing: an even split, fixed, so neither side moves as songs change.
-                GeometryReader { geo in
-                    let half = (geo.size.width - 37) / 2
-                    HStack(spacing: 18) {
-                        MusicPlayerView(half: true)
-                            .frame(width: half, alignment: .leading)
-                        divider
-                        TodayPanel(layout: .half)
-                            .frame(width: half)
-                    }
-                }
-            } else if settings.musicEnabled, !showsToday {
-                MusicPlayerView()
-                    .frame(maxWidth: .infinity)
-            } else if showsToday {
-                // Music keeps its place on the left, small; the day widens into the room it gave up,
-                // with the weather in full.
-                let compact = settings.musicEnabled && media.hasTrack
-                if compact {
-                    CompactMusicCard()
-                        .frame(width: 170)
-                    divider
-                }
-                TodayPanel(layout: compact ? .full : .roomy)
-                    .frame(maxWidth: .infinity)
-            } else {
+        GeometryReader { geo in
+            let placed = HomeTiler.tile(settings.homeCards, width: geo.size.width, wanted: wanted)
+            if placed.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 22))
@@ -308,12 +287,77 @@ struct HomeView: View {
                         .font(.system(size: 12))
                 }
                 .foregroundStyle(.white.opacity(0.5))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(width: geo.size.width, height: geo.size.height)
+            } else {
+                // The fixed cards first; the rest share what they leave.
+                let flexible = placed.filter { $0.width == nil }.count
+                let left = geo.size.width - placed.compactMap(\.width).reduce(0, +) - HomeTiler.gap * CGFloat(placed.count - 1)
+                HStack(spacing: 18) {
+                    ForEach(placed, id: \.card) { item in
+                        if let before = previous(item.card, in: placed) {
+                            rule(between: before, and: item.card)
+                        }
+                        card(item, in: placed)
+                            .frame(width: item.width ?? max(0, left) / CGFloat(max(1, flexible)), height: geo.size.height,
+                                   alignment: item.card == .music && item.size == .large ? .leading : .center)
+                    }
+                }
             }
         }
-        .onAppear { musicLarge = media.isPlaying }
+        .onAppear { musicLarge = shot.map { $0.music == .large } ?? media.isPlaying }
         .onChange(of: media.isPlaying) { _, playing in
-            if playing, !musicLarge { withAnimation(Motion.pane.animation) { musicLarge = true } }
+            if playing, !musicLarge, shot == nil { withAnimation(Motion.pane.animation) { musicLarge = true } }
+        }
+    }
+
+    /// The size each card wants right now, nil when it has nothing to show. Music: half of Home
+    /// while playing (if it takes over), a small card while paused, gone with nothing to play
+    /// (unless it's all Home has); the weather only beside the day, once it's in.
+    private func wanted(_ card: HomeCard) -> HomeCardSize? {
+        switch card {
+        case .music:
+            let hasTrack = shot.map { $0.music != .none } ?? media.hasTrack
+            guard settings.musicEnabled, hasTrack || !showsToday else { return nil }
+            return settings.homeMusicTakesOver && musicLarge ? .large : .small
+        case .today:
+            return showsToday ? .medium : nil
+        case .weather:
+            return showsToday && weather.report != nil ? .small : nil
+        }
+    }
+
+    @ViewBuilder private func card(_ item: HomeTiler.Placed, in placed: [HomeTiler.Placed]) -> some View {
+        switch item.card {
+        case .music:
+            if placed.count == 1 { MusicPlayerView() }
+            else if item.size == .large { MusicPlayerView(half: true) }
+            else { CompactMusicCard() }
+        case .today:
+            // Beside the big player it's half of Home; beside the small card, the day in full;
+            // alone, roomy enough for the tasks in a column of their own.
+            let music = placed.first { $0.card == .music }
+            TodayPanel(layout: music == nil ? .roomy : music?.size == .large ? .half : .full)
+        case .weather:
+            if let report = weather.report {
+                HomeWeatherCard(report: report)
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    private func previous(_ card: HomeCard, in placed: [HomeTiler.Placed]) -> HomeCard? {
+        guard let i = placed.firstIndex(where: { $0.card == card }), i > 0 else { return nil }
+        return placed[i - 1].card
+    }
+
+    /// The rule between two cards. The day and the weather share a header line, so the rule
+    /// between them starts under it.
+    @ViewBuilder private func rule(between a: HomeCard, and b: HomeCard) -> some View {
+        if Set([a, b]) == [.today, .weather] {
+            SectionDivider()
+                .padding(.top, TodayPanel.headerHeight + 10)
+        } else {
+            divider
         }
     }
 

@@ -109,6 +109,12 @@ final class CalendarManager: ObservableObject {
         }
     }
 
+    /// Debug (`homeshot`): shows these as today's events until the next reload.
+    func preview(events: [EKEvent]) {
+        self.events = events
+        later = nil
+    }
+
     func openCalendar() {
         NSWorkspace.shared.open(URL(string: "ical://")!)
     }

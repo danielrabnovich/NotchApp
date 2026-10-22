@@ -17,6 +17,9 @@ final class Birthdays: ObservableObject {
     @Published private(set) var today: [Person] = []
     private var day: Date?
 
+    /// Debug (`homeshot`): shows these instead, until the next read.
+    func preview(_ people: [Person]) { today = people }
+
     static var authorized: Bool { CNContactStore.authorizationStatus(for: .contacts) == .authorized }
 
     /// Reads them again once a day (or after access is granted).

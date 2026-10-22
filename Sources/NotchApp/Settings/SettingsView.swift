@@ -468,6 +468,8 @@ private struct MediaPane: View {
                 if s.musicEnabled {
                     ToggleRow("Live activity while playing", subtitle: "Artwork and a visualizer beside the closed notch.",
                               isOn: $s.musicLiveActivity)
+                    ToggleRow("Bigger on Home while playing", subtitle: "The player takes half of Home; otherwise it stays a small card beside your day.",
+                              isOn: $s.homeMusicTakesOver)
                     ToggleRow("Audio visualizer", subtitle: "Moves with what's actually playing, bass to treble.", isOn: $s.showVisualizer)
                     if s.showVisualizer {
                         PermissionRow(title: "System audio recording",

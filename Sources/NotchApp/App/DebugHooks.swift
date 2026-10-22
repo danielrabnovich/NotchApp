@@ -556,6 +556,7 @@ enum DebugHooks {
         case "trayclose": ShelfTray.shared.close()
         case "traystate": log(ShelfTray.shared.debugState())
         case "traysnap": ShelfTray.shared.debugSnapshot(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/tray.png"))
+        case "homeshot": HomeShots.run(dir: parts[safe: 1] ?? "/tmp/homeshots")
         case "snapshot":
             let path = parts[safe: 1] ?? "/tmp/notch.png"
             c.snapshot(to: URL(fileURLWithPath: path))
