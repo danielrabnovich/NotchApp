@@ -243,6 +243,8 @@ final class AppSettings: ObservableObject {
     /// The model picked for each cloud provider, and each one's address (editable for custom servers).
     @Published var cloudModels: [String: String] { didSet { defaults.set(cloudModels, forKey: "cloudModels") } }
     @Published var cloudBaseURLs: [String: String] { didSet { defaults.set(cloudBaseURLs, forKey: "cloudBaseURLs") } }
+    /// Where the Claude Code or Codex CLI is, when it isn't somewhere NotchApp looks by itself.
+    @Published var cliPaths: [String: String] { didSet { defaults.set(cliPaths, forKey: "cliPaths") } }
     /// Screen questions may use the cloud model (sending the captured window); off keeps them on this Mac.
     @Published var cloudScreenQuestions: Bool { didSet { defaults.set(cloudScreenQuestions, forKey: "cloudScreenQuestions") } }
 
@@ -494,6 +496,7 @@ final class AppSettings: ObservableObject {
         aiProvider = AIProvider(rawValue: defaults.string(forKey: "aiProvider") ?? "") ?? (AppleModel.isAvailable ? .apple : .local)
         cloudModels = defaults.dictionary(forKey: "cloudModels") as? [String: String] ?? [:]
         cloudBaseURLs = defaults.dictionary(forKey: "cloudBaseURLs") as? [String: String] ?? [:]
+        cliPaths = defaults.dictionary(forKey: "cliPaths") as? [String: String] ?? [:]
         cloudScreenQuestions = defaults.object(forKey: "cloudScreenQuestions") as? Bool ?? true
         systemNotifications = defaults.bool(forKey: "systemNotifications")
         imageIndexing = defaults.bool(forKey: "imageIndexing")

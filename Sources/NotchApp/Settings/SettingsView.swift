@@ -1000,6 +1000,94 @@ private struct CloudProviderSettings: View {
     }
 }
 
+/// Claude Code or Codex, signed in with the person's own plan: whether the CLI is there and signed
+/// in, a button to sign in (in Terminal, through the CLI's own login), and the model to use.
+private struct CLIProviderSettings: View {
+    let tool: CLIAgent.Tool
+    let provider: AIProvider
+    @EnvironmentObject private var s: AppSettings
+    @State private var availability: CLIAgent.Availability?
+    @State private var path: String?
+    @State private var checking = false
+
+    var body: some View {
+        Group {
+            LabeledContent {
+                HStack(spacing: 8) {
+                    statusLabel
+                    actionButton
+                }
+            } label: {
+                RowLabel(title: tool.name, subtitle: path.map { "Found at \($0)" } ?? "Uses the \(tool.command) command you already have.")
+            }
+            if tool.suggestedModels.isEmpty {
+                TextField(text: modelBinding, prompt: Text("Codex's default")) {
+                    RowLabel(title: "Model", subtitle: "Any model your plan offers in Codex (its /model list). Leave empty for Codex's default.")
+                }
+            } else {
+                Picker(selection: modelBinding) {
+                    let chosen = s.cloudModel(for: provider)
+                    if !tool.suggestedModels.contains(where: { $0.id == chosen }) { Text(chosen).tag(chosen) }
+                    ForEach(tool.suggestedModels) { Text($0.title).tag($0.id) }
+                } label: {
+                    RowLabel(title: "Model", subtitle: "Bigger models use more of your plan's limits and answer more slowly.")
+                }
+            }
+            TextField(text: Binding(get: { s.cliPaths[provider.rawValue] ?? "" },
+                                    set: { s.cliPaths[provider.rawValue] = $0 }),
+                      prompt: Text("Found automatically")) {
+                RowLabel(title: "Location", subtitle: "Only if \(tool.command) is somewhere unusual. Press Return to check it.")
+            }
+            .onSubmit(check)
+        }
+        .onAppear(perform: check)
+        .onChange(of: provider) { _, _ in check() }
+    }
+
+    @ViewBuilder private var statusLabel: some View {
+        if checking || availability == nil {
+            ProgressView().controlSize(.small)
+        } else {
+            switch availability {
+            case .ready?: Label("Signed in", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+            case .signedOut?: Label("Not signed in", systemImage: "person.crop.circle.badge.exclamationmark").foregroundStyle(.orange)
+            default: Label("Not installed", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            }
+        }
+    }
+
+    @ViewBuilder private var actionButton: some View {
+        switch availability {
+        case .signedOut?:
+            Button("Sign in…") { CLIAgent.openSignIn(tool) }
+                .help("Opens Terminal on \(tool.command)'s own sign-in. Come back here when it's done.")
+            Button("Check again", action: check)
+        case .notInstalled?:
+            Link("Install…", destination: tool.installURL)
+            Button("Check again", action: check)
+        case .ready?:
+            Button("Check again", action: check).buttonStyle(.borderless).foregroundStyle(.secondary)
+        case nil:
+            EmptyView()
+        }
+    }
+
+    private var modelBinding: Binding<String> {
+        Binding(get: { s.cloudModel(for: provider) }, set: { s.cloudModels[provider.rawValue] = $0 })
+    }
+
+    private func check() {
+        checking = true
+        Task {
+            let result = await CLIAgent.availability(tool, refresh: true)
+            path = await CLIAgent.executablePath(tool)
+            availability = result
+            checking = false
+            AssistantStore.shared.refreshStatus()
+        }
+    }
+}
+
 /// One model in the long list: its name and id, ticked when chosen, lit on hover.
 private struct ModelChoiceRow: View {
     let model: CloudLLM.ModelInfo
@@ -1211,20 +1299,18 @@ private struct AssistantPane: View {
                 ToggleRow("Notify when a search finishes", subtitle: "A macOS notification if the notch is closed.",
                           isOn: $s.systemNotifications)
             } footer: {
-                FooterText(s.aiProvider == .apple
-                           ? "Apple's own model, built into macOS: search understands what you mean, picks the right file and writes answers, with nothing to install. Everything stays on your Mac except web searches. It reads text only, so screen questions read the window's text."
-                           : s.aiProvider == .local
-                           ? "With a local model through Ollama, search understands what you mean, picks the right file and writes answers. Everything stays on your Mac except web searches."
-                           : "Search, briefs, nudges and screen questions use \(s.aiProvider.title) with your key. What you search for (and, if allowed below, the window you ask about) is sent to \(s.aiProvider.shortName).")
+                FooterText(intelligenceFooter)
             }
             Section {
                 Picker(selection: $s.aiProvider) {
                     ForEach(AIProvider.allCases) { Text($0.title).tag($0) }
                 } label: {
-                    RowLabel(title: "Model", subtitle: "On this Mac stays private and free; a cloud model with your own key is smarter and faster.")
+                    RowLabel(title: "Model", subtitle: "On this Mac stays private and free; Claude Code or Codex uses the plan you already pay for; a cloud model with your own key is smarter and faster.")
                 }
                 if s.aiProvider == .apple {
                     LabeledContent("Status") { statusLabel }
+                } else if let tool = s.aiProvider.cliTool {
+                    CLIProviderSettings(tool: tool, provider: s.aiProvider)
                 } else if s.aiProvider.isCloud {
                     CloudProviderSettings(provider: s.aiProvider)
                 }
@@ -1357,6 +1443,20 @@ private struct AssistantPane: View {
         }
     }
 
+    /// What the chosen model means for privacy and cost, under the Intelligence section.
+    private var intelligenceFooter: String {
+        if s.aiProvider == .apple {
+            return "Apple's own model, built into macOS: search understands what you mean, picks the right file and writes answers, with nothing to install. Everything stays on your Mac except web searches. It reads text only, so screen questions read the window's text."
+        }
+        if s.aiProvider == .local {
+            return "With a local model through Ollama, search understands what you mean, picks the right file and writes answers. Everything stays on your Mac except web searches."
+        }
+        if let tool = s.aiProvider.cliTool {
+            return "Search, briefs, nudges and screen questions go through \(tool.name) on this Mac, signed in with your own \(tool.plan) plan, and count toward its usage limits. NotchApp never sees your login. What you search for (and, if allowed below, the window you ask about) is sent to \(tool.company)."
+        }
+        return "Search, briefs, nudges and screen questions use \(s.aiProvider.title) with your key. What you search for (and, if allowed below, the window you ask about) is sent to \(s.aiProvider.shortName)."
+    }
+
     @ViewBuilder private var statusLabel: some View {
         switch assistant.status {
         case .ready: Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
@@ -1367,6 +1467,8 @@ private struct AssistantPane: View {
         case .unknown: ProgressView().controlSize(.small)
         case .needsKey: Text("Add an API key above").foregroundStyle(.orange)
         case .appleUnavailable(let why): Text(why).foregroundStyle(.orange)
+        case .cliUnavailable(let tool, let availability):
+            Text(availability == .signedOut ? "Sign in to \(tool.name)" : "\(tool.name) isn't installed").foregroundStyle(.orange)
         }
     }
 
