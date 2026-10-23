@@ -492,3 +492,329 @@ struct MusicTile: View {
         .help(media.isPlaying ? "Pause" : "Play")
     }
 }
+
+/// What was copied last, newest first: click one to copy it again. Small: just the latest.
+struct ClipboardCard: View {
+    var small = false
+    @EnvironmentObject private var clipboard: ClipboardHistory
+
+    var body: some View {
+        let clips = Array(clipboard.clips.prefix(small ? 1 : 4))
+        HomeTile {
+            if clips.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Image(systemName: "doc.on.clipboard")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.45))
+                    Spacer(minLength: 0)
+                    Text("Nothing copied yet")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+            } else if small, let clip = clips.first {
+                row(clip, lines: 2)
+                    .frame(maxHeight: .infinity)
+            } else {
+                ViewThatFits(in: .vertical) {
+                    ForEach((1...clips.count).reversed(), id: \.self) { count in
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(clips.prefix(count)) { row($0, lines: 1) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func row(_ clip: ClipboardHistory.Clip, lines: Int) -> some View {
+        Button { clipboard.copy(clip) } label: {
+            HStack(alignment: lines > 1 ? .top : .center, spacing: 6) {
+                if clip.isPicture, let image = clipboard.image(for: clip) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 18, height: 18)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                } else {
+                    Image(systemName: icon(clip.kind))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .frame(width: 18, height: 18)
+                }
+                Text(clip.title.replacingOccurrences(of: "\n", with: " "))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(lines)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Copy again")
+    }
+
+    private func icon(_ kind: ClipboardHistory.Clip.Kind) -> String {
+        switch kind {
+        case .text: "text.alignleft"
+        case .link: "link"
+        case .image: "photo"
+        case .files: "doc"
+        }
+    }
+}
+
+/// Unread counts from the Dock's badges, most first: each app's icon and its number. Clicking one
+/// opens that app.
+struct UnreadCard: View {
+    var small = false
+    @ObservedObject private var unread = UnreadBadges.shared
+
+    var body: some View {
+        HomeTile {
+            if !AXIsProcessTrusted() {
+                note("lock", "Needs Accessibility")
+            } else if unread.badges.isEmpty {
+                note("checkmark.circle", "All caught up")
+            } else if small {
+                HStack(spacing: 8) {
+                    Text("\(unread.total)")
+                        .font(.system(size: 22, weight: .semibold).monospacedDigit())
+                    HStack(spacing: -6) {
+                        ForEach(unread.badges.prefix(3)) { icon($0, size: 22) }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxHeight: .infinity)
+            } else {
+                ViewThatFits(in: .vertical) {
+                    ForEach((1...min(4, unread.badges.count)).reversed(), id: \.self) { count in
+                        VStack(alignment: .leading, spacing: 5) {
+                            ForEach(unread.badges.prefix(count)) { badge in
+                                Button { NSWorkspace.shared.openApplication(at: badge.appURL, configuration: .init()) } label: {
+                                    HStack(spacing: 7) {
+                                        icon(badge, size: 18)
+                                        Text(badge.name)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.white.opacity(0.8))
+                                        Spacer(minLength: 4)
+                                        Text("\(badge.count)")
+                                            .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
+                                    }
+                                    .lineLimit(1)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("Open \(badge.name)")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear { unread.viewerAppeared() }
+        .onDisappear { unread.viewerDisappeared() }
+    }
+
+    private func icon(_ badge: UnreadBadges.Badge, size: CGFloat) -> some View {
+        Image(nsImage: NSWorkspace.shared.icon(forFile: badge.appURL.path))
+            .resizable()
+            .frame(width: size, height: size)
+    }
+
+    private func note(_ symbol: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Image(systemName: symbol)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.45))
+            Spacer(minLength: 0)
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.5))
+        }
+    }
+}
+
+/// The Notes tab's scratchpad, to type into right here. The notch stays open while it has the
+/// keyboard, as it does on the Notes tab.
+struct ScratchpadCard: View {
+    @EnvironmentObject private var store: ScratchpadStore
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            TextEditor(text: $store.text)
+                .font(.system(size: 11.5))
+                .scrollContentBackground(.hidden)
+                .scrollIndicators(.never)
+                .focused($focused)
+                .onKeyPress(.escape) { focused = false; return .handled }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 6)
+            if store.text.isEmpty {
+                Text("Jot something down…")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.white.opacity(0.3))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .allowsHitTesting(false)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white.opacity(focused ? 0.1 : 0.06)))
+        .animation(.easeOut(duration: 0.15), value: focused)
+        .onChange(of: focused) { _, f in NotchPresenter.shared.primary?.isEditing = f }
+    }
+}
+
+/// How fast the connection's going: down and up, a line of the last minute's download (medium), and
+/// a shield while a VPN is on.
+struct NetworkCard: View {
+    var small = false
+    @EnvironmentObject private var network: NetworkMonitor
+
+    var body: some View {
+        HomeTile {
+            ViewThatFits(in: .vertical) {
+                if !small {
+                    VStack(alignment: .leading, spacing: 0) {
+                        status
+                        Spacer(minLength: 4)
+                        RateLine(values: network.downHistory)
+                            .stroke(Color.cyan, style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+                            .frame(height: 28)
+                        Spacer(minLength: 4)
+                        rates
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    status
+                    rates
+                }
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .onAppear { network.viewerAppeared() }
+        .onDisappear { network.viewerDisappeared() }
+    }
+
+    private var status: some View {
+        HStack(spacing: 5) {
+            Image(systemName: network.info.kind == .offline ? "wifi.slash" : network.info.kind == .wifi ? "wifi" : "network")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(network.info.kind == .offline ? Color.red : .white.opacity(0.7))
+            Text(network.info.kind == .offline ? "Offline" : network.info.ssid ?? network.info.interfaceName)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.6))
+            Spacer(minLength: 0)
+            if let vpn = network.info.vpn {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.green)
+                    .help("\(vpn) is on")
+            }
+        }
+        .lineLimit(1)
+    }
+
+    /// Down and up side by side, or one over the other when that's too wide.
+    private var rates: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                rate("arrow.down", network.downRate)
+                rate("arrow.up", network.upRate)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                rate("arrow.down", network.downRate)
+                rate("arrow.up", network.upRate)
+            }
+        }
+    }
+
+    private func rate(_ icon: String, _ bytes: Double) -> some View {
+        let r = formatRate(bytes)
+        return HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Image(systemName: icon).font(.system(size: 8, weight: .bold)).foregroundStyle(.white.opacity(0.5))
+            Text(r.value).font(.system(size: 12.5, weight: .semibold).monospacedDigit())
+            Text(r.unit.replacingOccurrences(of: "/s", with: "")).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+        .fixedSize()
+    }
+}
+
+/// A line through recent values, scaled to the tallest.
+struct RateLine: Shape {
+    let values: [Double]
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard values.count > 1 else { return path }
+        let top = max(values.max() ?? 0, 1)
+        for (i, value) in values.enumerated() {
+            let point = CGPoint(x: rect.minX + rect.width * CGFloat(i) / CGFloat(values.count - 1),
+                                y: rect.maxY - rect.height * CGFloat(value / top))
+            i == 0 ? path.move(to: point) : path.addLine(to: point)
+        }
+        return path
+    }
+}
+
+/// Days to go until the date set for the Countdown (shared with its Glance). Without one, clicking
+/// goes to where it's set.
+struct CountdownCard: View {
+    var small = false
+    @EnvironmentObject private var settings: AppSettings
+
+    var body: some View {
+        TimelineView(.everyMinute) { context in
+            HomeTile {
+                if let target = Countdown.target {
+                    let text = Countdown.text(at: context.date)
+                    if small {
+                        VStack(alignment: .leading, spacing: 1) {
+                            title
+                            Text(text)
+                                .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                        }
+                        .frame(maxHeight: .infinity)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            title
+                            Spacer(minLength: 0)
+                            Text(text)
+                                .font(.system(size: 28, weight: .semibold).monospacedDigit())
+                            Text(target, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.white.opacity(0.5))
+                        }
+                    }
+                } else {
+                    Button { SettingsWindowController.shared.show(pane: .home) } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Image(systemName: "hourglass")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.white.opacity(0.45))
+                            Spacer(minLength: 0)
+                            Text("Pick a date in Settings")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.5))
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var title: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "hourglass").font(.system(size: 9.5, weight: .semibold))
+            Text(settings.countdownTitle.isEmpty ? "Countdown" : settings.countdownTitle)
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundStyle(.white.opacity(0.6))
+        .lineLimit(1)
+    }
+}

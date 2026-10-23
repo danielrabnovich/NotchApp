@@ -192,6 +192,14 @@ enum HomeShots {
         Fixture(name: "new", cards: [.init(card: .today), .init(card: .agents), .init(card: .shelf), .init(card: .timer)]) { store, now in
             [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
         },
+        Fixture(name: "more", cards: [.init(card: .today), .init(card: .clipboard, size: .small), .init(card: .unread, size: .small),
+                                       .init(card: .network), .init(card: .countdown)]) { store, now in
+            [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
+        },
+        Fixture(name: "more2", cards: [.init(card: .scratchpad), .init(card: .unread), .init(card: .clipboard), .init(card: .network, size: .small),
+                                        .init(card: .countdown, size: .small)]) { store, now in
+            [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
+        },
         Fixture(name: "edit", cards: [.init(card: .music), .init(card: .today), .init(card: .weather), .init(card: .timer, size: .small)],
                 editing: true) { store, now in
             [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]

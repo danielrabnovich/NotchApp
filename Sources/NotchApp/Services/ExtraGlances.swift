@@ -102,7 +102,20 @@ final class UnreadBadges: ObservableObject {
     var total: Int { badges.reduce(0) { $0 + $1.count } }
     private var timer: Timer?
 
+    /// The Unread Glance's demand; Home's card counts as a viewer on top of it.
+    private var glance = false
+    private var viewers = 0
+
     func setDemand(_ wanted: Bool) {
+        glance = wanted
+        apply()
+    }
+
+    func viewerAppeared() { viewers += 1; apply() }
+    func viewerDisappeared() { viewers = max(0, viewers - 1); apply() }
+
+    private func apply() {
+        let wanted = glance || viewers > 0
         guard wanted != (timer != nil) else { return }
         timer?.invalidate()
         timer = nil

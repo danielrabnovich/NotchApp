@@ -121,6 +121,15 @@ private struct CardRow: View {
                 .labelsHidden()
                 .fixedSize()
             }
+            if entry.card == .countdown {
+                TextField("", text: $s.countdownTitle, prompt: Text("Launch"))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 110)
+                DatePicker("", selection: Binding(get: { Countdown.target ?? Date().addingTimeInterval(14 * 86400) },
+                                                  set: { s.countdownDate = $0.timeIntervalSince1970 }),
+                           displayedComponents: .date)
+                    .labelsHidden()
+            }
             if !entry.card.sizes.isEmpty {
                 Picker("Size", selection: size) {
                     Text("Auto").tag(HomeCardSize?.none)

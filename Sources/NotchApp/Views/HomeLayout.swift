@@ -2,14 +2,14 @@ import SwiftUI
 
 /// What Home can show: cards in a row across it.
 enum HomeCard: String, Codable, CaseIterable {
-    case music, today, weather, stats, batteries, clock, agents, shelf, timer
+    case music, today, weather, stats, batteries, clock, agents, shelf, timer, clipboard, unread, scratchpad, network, countdown
 
     /// A tile of its own (on a soft card) at this size, rather than a column of the page.
     func isTile(_ size: HomeCardSize) -> Bool {
         switch self {
         case .today: false
         case .music, .weather: size == .small
-        case .stats, .batteries, .clock, .agents, .shelf, .timer: true
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: true
         }
     }
 
@@ -152,7 +152,7 @@ enum HomeTiler {
         switch card {
         case .music: alone ? nil : size == .large ? (width - gap) / 2 : size == .medium ? 170 : 128
         case .today: nil
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer: 128
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: 128
         }
     }
 
@@ -165,7 +165,7 @@ enum HomeTiler {
         case .today: 3
         case .music: 2
         case .weather: 1
-        case .stats, .batteries, .clock, .agents, .shelf, .timer: 0
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: 0
         }
     }
 
@@ -174,7 +174,7 @@ enum HomeTiler {
         switch card {
         case .today: nil
         case .music: size == .large ? .medium : size == .medium ? .small : nil
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer: size == .medium ? .small : nil
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: size == .medium ? .small : nil
         }
     }
 
@@ -182,7 +182,7 @@ enum HomeTiler {
         switch card {
         case .today: nil
         case .music: size == .small ? .medium : size == .medium ? .large : nil
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer: size == .small ? .medium : nil
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: size == .small ? .medium : nil
         }
     }
 }
@@ -224,6 +224,11 @@ extension HomeCard {
         case .agents: "Agents"
         case .shelf: "Shelf"
         case .timer: "Timer"
+        case .clipboard: "Clipboard"
+        case .unread: "Unread"
+        case .scratchpad: "Scratchpad"
+        case .network: "Network"
+        case .countdown: "Countdown"
         }
     }
 
@@ -238,6 +243,11 @@ extension HomeCard {
         case .agents: "sparkles.rectangle.stack.fill"
         case .shelf: "tray.full.fill"
         case .timer: "timer"
+        case .clipboard: "doc.on.clipboard"
+        case .unread: "app.badge"
+        case .scratchpad: "note.text"
+        case .network: "network"
+        case .countdown: "hourglass"
         }
     }
 
@@ -252,6 +262,11 @@ extension HomeCard {
         case .agents: "Your coding agents: which are working, and which are waiting for you."
         case .shelf: "The latest files on the Shelf, to drag straight into another app."
         case .timer: "Start a countdown or a focus session, and see it run."
+        case .clipboard: "What you copied last: click one to copy it again."
+        case .unread: "Unread counts from the Dock: Mail, Slack, Messages and the rest."
+        case .scratchpad: "A note to type into right on Home."
+        case .network: "How fast it's going right now, and whether a VPN is on."
+        case .countdown: "Days to go until a date you pick."
         }
     }
 
@@ -260,7 +275,7 @@ extension HomeCard {
         switch self {
         case .today: []
         case .music: [.small, .medium, .large]
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer: [.small, .medium]
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: [.small, .medium]
         }
     }
 
@@ -285,7 +300,8 @@ extension HomeCard {
         case .agents: s.agentsEnabled
         case .shelf: s.shelfEnabled
         case .timer: s.timerEnabled
-        case .weather, .batteries, .clock: true
+        case .clipboard: s.clipboardHistory
+        case .weather, .batteries, .clock, .unread, .scratchpad, .network, .countdown: true
         }
     }
 
@@ -294,6 +310,7 @@ extension HomeCard {
         switch self {
         case .music: "Turn on the music player"
         case .today: "Turn on Calendar or Tasks"
+        case .clipboard: "Turn on Clipboard history in Shelf"
         default: "Turn on \(title) in Add-ons"
         }
     }

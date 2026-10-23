@@ -432,6 +432,10 @@ struct HomeView: View {
             return settings.shelfEnabled ? .medium : nil
         case .timer:
             return settings.timerEnabled ? .medium : nil
+        case .clipboard:
+            return settings.clipboardHistory ? .medium : nil
+        case .unread, .scratchpad, .network, .countdown:
+            return .medium
         }
     }
 
@@ -458,6 +462,11 @@ struct HomeView: View {
         case .agents: AgentsCard(small: item.size == .small)
         case .shelf: ShelfCard(small: item.size == .small)
         case .timer: TimerCard(small: item.size == .small)
+        case .clipboard: ClipboardCard(small: item.size == .small)
+        case .unread: UnreadCard(small: item.size == .small)
+        case .scratchpad: ScratchpadCard()
+        case .network: NetworkCard(small: item.size == .small)
+        case .countdown: CountdownCard(small: item.size == .small)
         }
     }
 
