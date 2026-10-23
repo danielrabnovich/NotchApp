@@ -183,8 +183,21 @@ struct TodayPanel: View {
 struct HomeWeatherCard: View {
     let report: WeatherReport
     var fit = HomeFit()
+    /// A half-height tile: just the weather now.
+    var small = false
 
     var body: some View {
+        if small {
+            HomeTile {
+                WeatherNow(report: report)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            }
+        } else {
+            column
+        }
+    }
+
+    private var column: some View {
         VStack(alignment: .leading, spacing: 10) {
             WeatherNow(report: report)
                 .frame(maxWidth: .infinity, alignment: .leading)

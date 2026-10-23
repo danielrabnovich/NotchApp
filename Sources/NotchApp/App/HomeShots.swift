@@ -7,6 +7,8 @@ struct HomeShot {
     enum Music: String, CaseIterable { case large, small, none }
     var music: Music
     var call: MeetingMonitor.Call?
+    /// Home's cards, instead of the ones in Settings.
+    var cards: [HomeEntry]?
 }
 
 /// Debug (`homeshot <dir>`): Home drawn offscreen in every state that changes its layout (music big,
@@ -20,6 +22,7 @@ enum HomeShots {
         var birthdays: [Birthdays.Person] = []
         var call = false
         var weather = true
+        var cards: [HomeEntry]?
         var events: (EKEventStore, Date) -> [EKEvent]
     }
 
@@ -62,7 +65,7 @@ enum HomeShots {
             let call = shot.fixture.call
                 ? MeetingMonitor.Call(app: "Zoom", bundleID: "us.zoom.xos", started: now.addingTimeInterval(-300), event: "Writers Meeting")
                 : nil
-            let view = NSHostingView(rootView: HomeView(shot: HomeShot(music: shot.music, call: call))
+            let view = NSHostingView(rootView: HomeView(shot: HomeShot(music: shot.music, call: call, cards: shot.fixture.cards))
                 .frame(width: shot.size.width, height: shot.size.height)
                 .foregroundStyle(.white)
                 .background(Color.black)
@@ -176,5 +179,15 @@ enum HomeShots {
             [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
         },
         Fixture(name: "empty") { _, _ in [] },
+        Fixture(name: "tiles", cards: [.init(card: .music), .init(card: .today), .init(card: .weather), .init(card: .stats)]) { store, now in
+            [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
+        },
+        Fixture(name: "tiles3", cards: [.init(card: .music), .init(card: .today), .init(card: .weather), .init(card: .stats),
+                                         .init(card: .clock), .init(card: .batteries)]) { store, now in
+            [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
+        },
+        Fixture(name: "tiles-call", call: true, cards: [.init(card: .music), .init(card: .today), .init(card: .clock), .init(card: .stats)]) { store, now in
+            [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
+        },
     ]
 }

@@ -2,7 +2,21 @@ import SwiftUI
 
 /// What Home can show: cards in a row across it.
 enum HomeCard: String, Codable, CaseIterable {
-    case music, today, weather
+    case music, today, weather, stats, batteries, clock
+
+    /// A tile of its own (on a soft card) at this size, rather than a column of the page.
+    func isTile(_ size: HomeCardSize) -> Bool {
+        switch self {
+        case .music, .today: false
+        case .weather: size == .small
+        case .stats, .batteries, .clock: true
+        }
+    }
+
+    /// Half of Home's height at this size, so two stack in a column.
+    func isHalf(_ size: HomeCardSize) -> Bool {
+        size == .small && self != .music
+    }
 }
 
 /// How much of Home a card takes. Not every card has every size.
@@ -21,38 +35,109 @@ struct HomeEntry: Codable, Equatable {
     static let defaults: [HomeEntry] = [.init(card: .music), .init(card: .today), .init(card: .weather)]
 }
 
-/// Lays Home's cards out in one row: each at the size it wants, and when they don't all fit, the
-/// least important one shrinks or goes first (the weather, then music), sizes set by hand last.
+/// Lays Home's cards out in one row of columns, in their order: each at the size it wants, two
+/// half-height tiles side by side stacked in one column. When they don't all fit, the extras
+/// (weather, stats, clock…) shrink, then go, least important first; then music gives up its half.
+/// The day itself always stays. Sizes set by hand don't shrink.
 enum HomeTiler {
-    /// The space a card and the rule before it take: 18 + 1 + 18.
+    /// Between two columns of the page: 18 + a rule + 18.
     static let gap: CGFloat = 37
+    /// Beside a tile, which has its own edge.
+    static let tileGap: CGFloat = 12
+    /// Between two tiles stacked in a column.
+    static let stackGap: CGFloat = 8
+    /// The least a half-height tile can be; with less (a call bar above Home), tiles don't stack.
+    static let halfMinimum: CGFloat = 56
 
     struct Placed: Equatable {
         let card: HomeCard
         let size: HomeCardSize
+    }
+
+    struct Column: Equatable {
+        var cards: [Placed]
         /// Its width; nil takes what the fixed ones leave.
-        let width: CGFloat?
+        var width: CGFloat?
+        /// The space before it, and whether a rule sits in the middle of it.
+        var gap: CGFloat = 0
+        var rule = false
+        var id: String { cards.map(\.card.rawValue).joined(separator: "+") }
+    }
+
+    private struct Item {
+        let entry: HomeEntry
+        var size: HomeCardSize
+        let wanted: HomeCardSize
     }
 
     /// `wanted` is each card's size when there's room (nil: it has nothing to show).
-    static func tile(_ entries: [HomeEntry], width: CGFloat, wanted: (HomeCard) -> HomeCardSize?) -> [Placed] {
-        var cards: [(entry: HomeEntry, size: HomeCardSize)] = entries.compactMap { entry in
-            wanted(entry.card).map { (entry, entry.size ?? $0) }
+    static func tile(_ entries: [HomeEntry], width: CGFloat, height: CGFloat, wanted: (HomeCard) -> HomeCardSize?) -> [Column] {
+        let stacks = (height - stackGap) / 2 >= halfMinimum
+        var items: [Item] = entries.compactMap { entry in
+            wanted(entry.card).map { Item(entry: entry, size: entry.size ?? $0, wanted: entry.size ?? $0) }
         }
-        while needed(cards.map { ($0.entry.card, $0.size) }, width: width) > width {
-            // Least important first; a size set by hand only once nothing else can give.
-            let rank = { (i: Int) in (cards[i].entry.size == nil ? 0 : 1, priority(cards[i].entry.card)) }
-            let order = cards.indices.sorted { rank($0) < rank($1) }
-            guard let i = order.first(where: { smaller(cards[$0].entry.card, than: cards[$0].size) != .some(cards[$0].size) }) else { break }
-            if let size = smaller(cards[i].entry.card, than: cards[i].size) { cards[i].size = size } else { cards.remove(at: i) }
+        func fits() -> Bool { needed(columns(items, width: width, stacks: stacks)) <= width }
+        // Least important first; among equals, the later one.
+        func ascending(_ tier: (HomeCard) -> Bool) -> [HomeCard] {
+            items.enumerated().filter { tier($0.element.entry.card) }
+                .sorted { (importance($0.element.entry.card), -$0.offset) < (importance($1.element.entry.card), -$1.offset) }
+                .map(\.element.entry.card)
         }
-        let sized = cards.map { ($0.entry.card, $0.size) }
-        return sized.map { Placed(card: $0.0, size: $0.1, width: fixedWidth($0.0, $0.1, alone: sized.count == 1, width: width)) }
+        func shrink(_ tier: (HomeCard) -> Bool) {
+            for card in ascending(tier) where !fits() {
+                guard let i = items.firstIndex(where: { $0.entry.card == card }), items[i].entry.size == nil else { continue }
+                while !fits(), let size = smaller(card, than: items[i].size) { items[i].size = size }
+            }
+        }
+        func remove(_ tier: (HomeCard) -> Bool) {
+            // Ones sized by hand last.
+            let order = ascending(tier).sorted { a, b in
+                (items.first { $0.entry.card == a }?.entry.size != nil ? 1 : 0) < (items.first { $0.entry.card == b }?.entry.size != nil ? 1 : 0)
+            }
+            for card in order where !fits() { items.removeAll { $0.entry.card == card } }
+        }
+        let extra = { (card: HomeCard) in card != .music && card != .today }
+        shrink(extra)
+        remove(extra)
+        shrink { $0 == .music }
+        remove { $0 == .music }
+        // What shrank to make room for something that went anyway grows back, most important first.
+        for card in items.map(\.entry.card).sorted(by: { importance($0) > importance($1) }) {
+            guard let i = items.firstIndex(where: { $0.entry.card == card }) else { continue }
+            while items[i].size < items[i].wanted, let size = larger(card, than: items[i].size) {
+                let before = items[i].size
+                items[i].size = size
+                if !fits() { items[i].size = before; break }
+            }
+        }
+        return columns(items, width: width, stacks: stacks)
     }
 
-    private static func needed(_ cards: [(HomeCard, HomeCardSize)], width: CGFloat) -> CGFloat {
-        cards.reduce(gap * CGFloat(max(0, cards.count - 1))) { sum, card in
-            sum + (fixedWidth(card.0, card.1, alone: cards.count == 1, width: width) ?? minWidth(card.0))
+    private static func columns(_ items: [Item], width: CGFloat, stacks: Bool) -> [Column] {
+        var columns: [Column] = []
+        for item in items {
+            let placed = Placed(card: item.entry.card, size: item.size)
+            if stacks, item.entry.card.isHalf(item.size), let last = columns.last, last.cards.count == 1,
+               last.cards[0].card.isHalf(last.cards[0].size) {
+                columns[columns.count - 1].cards.append(placed)
+            } else {
+                columns.append(Column(cards: [placed]))
+            }
+        }
+        for i in columns.indices {
+            let card = columns[i].cards[0]
+            columns[i].width = fixedWidth(card.card, card.size, alone: columns.count == 1, width: width)
+            guard i > 0 else { continue }
+            let tiles = columns[i - 1].cards[0].card.isTile(columns[i - 1].cards[0].size) || card.card.isTile(card.size)
+            columns[i].gap = tiles ? tileGap : gap
+            columns[i].rule = !tiles
+        }
+        return columns
+    }
+
+    private static func needed(_ columns: [Column]) -> CGFloat {
+        columns.reduce(0) { sum, column in
+            sum + column.gap + (column.width ?? column.cards.map { minWidth($0.card) }.max() ?? 0)
         }
     }
 
@@ -60,31 +145,37 @@ enum HomeTiler {
         switch card {
         case .music: alone ? nil : size == .large ? (width - gap) / 2 : 170
         case .today: nil
-        case .weather: 128
+        case .weather, .stats, .batteries, .clock: 128
         }
     }
 
     private static func minWidth(_ card: HomeCard) -> CGFloat {
+        card == .today ? 220 : 0
+    }
+
+    private static func importance(_ card: HomeCard) -> Int {
         switch card {
-        case .today: 220
-        case .music, .weather: 0
+        case .today: 3
+        case .music: 2
+        case .weather: 1
+        case .stats, .batteries, .clock: 0
         }
     }
 
-    private static func priority(_ card: HomeCard) -> Int {
-        switch card {
-        case .weather: 0
-        case .music: 1
-        case .today: 2
-        }
-    }
-
-    /// The next size down, nil when the card goes instead, or the same size when it can't give.
+    /// The next size down, nil when it has none.
     private static func smaller(_ card: HomeCard, than size: HomeCardSize) -> HomeCardSize? {
         switch card {
-        case .music: size == .large ? .small : size
-        case .today: size
-        case .weather: nil
+        case .today: nil
+        case .music: size == .large ? .small : nil
+        case .weather, .stats, .batteries, .clock: size == .medium ? .small : nil
+        }
+    }
+
+    private static func larger(_ card: HomeCard, than size: HomeCardSize) -> HomeCardSize? {
+        switch card {
+        case .today: nil
+        case .music: size == .small ? .large : nil
+        case .weather, .stats, .batteries, .clock: size == .small ? .medium : nil
         }
     }
 }

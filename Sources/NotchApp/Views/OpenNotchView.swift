@@ -263,6 +263,8 @@ struct HomeView: View {
     @ObservedObject private var meetings = MeetingMonitor.shared
     @ObservedObject private var weather = TodayWeather.shared
     @ObservedObject private var birthdays = Birthdays.shared
+    @ObservedObject private var devices = DeviceBatteries.shared
+    @EnvironmentObject private var battery: BatteryMonitor
     /// Debug (`homeshot`): music's size and a call, instead of what's going on.
     var shot: HomeShot?
 
@@ -279,9 +281,10 @@ struct HomeView: View {
 
     private var content: some View {
         GeometryReader { geo in
-            let placed = HomeTiler.tile(settings.homeCards, width: geo.size.width, wanted: wanted)
+            let columns = HomeTiler.tile(shot?.cards ?? settings.homeCards, width: geo.size.width, height: geo.size.height, wanted: wanted)
+            let all = columns.flatMap(\.cards)
             let fit = HomeFit.fitting(height: geo.size.height, birthday: !birthdays.today.isEmpty)
-            if placed.isEmpty {
+            if columns.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 22))
@@ -291,17 +294,32 @@ struct HomeView: View {
                 .foregroundStyle(.white.opacity(0.5))
                 .frame(width: geo.size.width, height: geo.size.height)
             } else {
-                // The fixed cards first; the rest share what they leave.
-                let flexible = placed.filter { $0.width == nil }.count
-                let left = geo.size.width - placed.compactMap(\.width).reduce(0, +) - HomeTiler.gap * CGFloat(placed.count - 1)
-                HStack(spacing: 18) {
-                    ForEach(placed, id: \.card) { item in
-                        if let before = previous(item.card, in: placed) {
-                            rule(between: before, and: item.card, fit: fit)
+                // The fixed columns first; the rest share what they leave.
+                let flexible = columns.filter { $0.width == nil }.count
+                let left = geo.size.width - columns.reduce(0) { $0 + $1.gap + ($1.width ?? 0) }
+                HStack(spacing: 0) {
+                    ForEach(Array(columns.enumerated()), id: \.element.id) { i, column in
+                        if i > 0 {
+                            ZStack {
+                                if column.rule { rule(between: columns[i - 1].cards[0].card, and: column.cards[0].card, fit: fit) }
+                            }
+                            .frame(width: column.gap, height: geo.size.height)
                         }
-                        card(item, in: placed, fit: fit)
-                            .frame(width: item.width ?? max(0, left) / CGFloat(max(1, flexible)), height: geo.size.height,
-                                   alignment: item.card == .music && item.size == .large ? .leading : .center)
+                        let width = column.width ?? max(0, left) / CGFloat(max(1, flexible))
+                        if let item = column.cards.first, column.cards.count == 1 {
+                            card(item, in: all, fit: fit)
+                                .frame(width: width, height: geo.size.height,
+                                       alignment: item.card == .music && item.size == .large ? .leading : .center)
+                        } else {
+                            // Two half-height tiles stacked.
+                            VStack(spacing: HomeTiler.stackGap) {
+                                ForEach(column.cards, id: \.card) { item in
+                                    card(item, in: all, fit: fit)
+                                        .frame(width: width, height: (geo.size.height - HomeTiler.stackGap) / 2)
+                                }
+                            }
+                            .frame(width: width, height: geo.size.height)
+                        }
                     }
                 }
             }
@@ -324,7 +342,13 @@ struct HomeView: View {
         case .today:
             return showsToday ? .medium : nil
         case .weather:
-            return showsToday && weather.report != nil ? .small : nil
+            return showsToday && weather.report != nil ? .medium : nil
+        case .stats:
+            return settings.statsEnabled ? .medium : nil
+        case .batteries:
+            return battery.hasBattery || !devices.devices.isEmpty ? .medium : nil
+        case .clock:
+            return .medium
         }
     }
 
@@ -341,15 +365,13 @@ struct HomeView: View {
             TodayPanel(layout: music == nil ? .roomy : music?.size == .large ? .half : .full, fit: fit)
         case .weather:
             if let report = weather.report {
-                HomeWeatherCard(report: report, fit: fit)
+                HomeWeatherCard(report: report, fit: fit, small: item.size == .small)
                     .transition(.opacity)
             }
+        case .stats: StatsCard(small: item.size == .small)
+        case .batteries: BatteriesCard(small: item.size == .small)
+        case .clock: ClockCard(small: item.size == .small)
         }
-    }
-
-    private func previous(_ card: HomeCard, in placed: [HomeTiler.Placed]) -> HomeCard? {
-        guard let i = placed.firstIndex(where: { $0.card == card }), i > 0 else { return nil }
-        return placed[i - 1].card
     }
 
     /// The rule between two cards. The day and the weather share a header line, so the rule
