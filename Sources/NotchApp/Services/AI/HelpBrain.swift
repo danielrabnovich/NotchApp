@@ -132,6 +132,7 @@ enum HelpBrain {
         switch s.aiProvider {
         case .apple: model = "Apple Intelligence (on this Mac)"
         case .local: model = "\(s.ollamaModel) through Ollama (on this Mac)"
+        case .claudeCode, .codex: model = "the \(s.aiProvider.cliTool?.name ?? "") command-line tool, signed in with the user's own \(s.aiProvider.cliTool?.plan ?? "") plan"
         default: model = "a cloud model (\(s.aiProvider.rawValue))"
         }
         out.append(Entry(id: -3, kind: "live", title: "Your AI model right now",

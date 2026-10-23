@@ -1,15 +1,25 @@
 import Foundation
 import Security
 
-/// Where the intelligence comes from: Apple's model on this Mac, a local Ollama model, or a cloud
-/// model with your own key.
+/// Where the intelligence comes from: Apple's model on this Mac, a local Ollama model, the Claude Code
+/// or Codex CLI signed in with your own plan, or a cloud model with your own key.
 enum AIProvider: String, CaseIterable, Identifiable {
-    case apple, local, anthropic, deepseek, zai, customAnthropic, openai, openrouter, gemini, groq, custom
+    case apple, local, claudeCode, codex, anthropic, deepseek, zai, customAnthropic, openai, openrouter, gemini, groq, custom
 
     var id: String { rawValue }
 
-    /// Sent to a company's servers (with your key), rather than run on this Mac.
+    /// Sent to a company's servers (with your key or plan), rather than run on this Mac.
     var isCloud: Bool { self != .apple && self != .local }
+
+    /// Runs through a command-line tool signed in with the person's subscription (see `CLIAgent`)
+    /// rather than an API key.
+    var cliTool: CLIAgent.Tool? {
+        switch self {
+        case .claudeCode: .claude
+        case .codex: .codex
+        default: nil
+        }
+    }
 
     enum Wire { case anthropic, openAI }
 
@@ -20,6 +30,8 @@ enum AIProvider: String, CaseIterable, Identifiable {
         switch self {
         case .apple: "On this Mac (Apple Intelligence)"
         case .local: "On this Mac (Ollama)"
+        case .claudeCode: "Claude Code (your Claude plan)"
+        case .codex: "Codex (your ChatGPT plan)"
         case .anthropic: "Anthropic (Claude)"
         case .deepseek: "DeepSeek"
         case .zai: "Z.ai (GLM)"
@@ -36,11 +48,11 @@ enum AIProvider: String, CaseIterable, Identifiable {
     var shortName: String {
         switch self {
         case .apple, .local: "this Mac"
-        case .anthropic: "Anthropic"
+        case .anthropic, .claudeCode: "Anthropic"
         case .deepseek: "DeepSeek"
         case .zai: "Z.ai"
         case .customAnthropic: "your provider"
-        case .openai: "OpenAI"
+        case .openai, .codex: "OpenAI"
         case .openrouter: "OpenRouter"
         case .gemini: "Google"
         case .groq: "Groq"
@@ -50,7 +62,7 @@ enum AIProvider: String, CaseIterable, Identifiable {
 
     var defaultBaseURL: String {
         switch self {
-        case .apple, .local: ""
+        case .apple, .local, .claudeCode, .codex: ""
         case .anthropic: "https://api.anthropic.com/v1"
         case .deepseek: "https://api.deepseek.com/anthropic/v1"
         case .zai: "https://api.z.ai/api/anthropic/v1"
@@ -65,7 +77,15 @@ enum AIProvider: String, CaseIterable, Identifiable {
 
     /// Model picked before the list has been fetched. Only Anthropic's is filled in (its current
     /// default); the others come from the provider's own model list once the key is checked.
-    var suggestedModel: String { self == .anthropic ? "claude-opus-5-5" : "" }
+    /// Claude Code takes its own short names; Sonnet keeps quick notch questions fast and light on
+    /// the plan's limits. Codex is left to its own default.
+    var suggestedModel: String {
+        switch self {
+        case .anthropic: "claude-opus-5-5"
+        case .claudeCode: "sonnet"
+        default: ""
+        }
+    }
 
     /// Where the model list is when the Anthropic-style endpoint doesn't list them (OpenAI-style).
     var fallbackModelsURL: String? {
@@ -102,10 +122,10 @@ enum AIProvider: String, CaseIterable, Identifiable {
     }
 
     /// A local server (LM Studio and the like) may need no key.
-    var keyRequired: Bool { self != .custom && self != .customAnthropic }
+    var keyRequired: Bool { self != .custom && self != .customAnthropic && cliTool == nil }
 
     /// Whether the server address is worth showing (the first-party ones never change).
-    var editableServer: Bool { ![.anthropic, .openai, .local].contains(self) }
+    var editableServer: Bool { ![.anthropic, .openai, .local, .apple, .claudeCode, .codex].contains(self) }
 }
 
 /// API keys, in the login Keychain (never in preferences).
@@ -157,7 +177,7 @@ enum CloudLLM {
     /// The cloud model in use, or nil for the local one (or a cloud provider not set up yet).
     @MainActor static var active: Config? {
         let s = AppSettings.shared
-        guard s.aiProvider.isCloud else { return nil }
+        guard s.aiProvider.isCloud, s.aiProvider.cliTool == nil else { return nil }
         return config(for: s.aiProvider)
     }
 

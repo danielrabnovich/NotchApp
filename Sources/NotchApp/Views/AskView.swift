@@ -2976,6 +2976,20 @@ private struct AIStatusLine: View {
                         Button(why) { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension")!) }
                             .buttonStyle(NotchLinkButtonStyle())
                     }
+                case .cliUnavailable(let tool, let availability):
+                    HStack(spacing: 4) {
+                        Text("Searching without AI ·")
+                        if availability == .signedOut {
+                            Button("Sign in to \(tool.name)") { CLIAgent.openSignIn(tool) }
+                                .buttonStyle(NotchLinkButtonStyle())
+                        } else if availability == .outdated {
+                            Button("Update \(tool.name)") { CLIAgent.openUpdate(tool) }
+                                .buttonStyle(NotchLinkButtonStyle())
+                        } else {
+                            Link("Get \(tool.name)", destination: tool.installURL)
+                                .foregroundStyle(ActionColor.link)
+                        }
+                    }
                 }
             }
         }

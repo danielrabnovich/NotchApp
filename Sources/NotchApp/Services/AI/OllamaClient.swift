@@ -8,6 +8,8 @@ enum OllamaClient {
         case needsKey(String)
         /// Apple Intelligence is chosen but can't run (off, not ready, or not on this Mac): why.
         case appleUnavailable(String)
+        /// Claude Code or Codex is chosen but isn't installed or signed in: the tool, and which.
+        case cliUnavailable(CLIAgent.Tool, CLIAgent.Availability)
     }
 
     struct OllamaError: LocalizedError {
@@ -69,6 +71,10 @@ enum OllamaClient {
         let provider = await AppSettings.shared.aiProvider
         if provider == .apple {
             return AppleModel.isAvailable ? .ready : .appleUnavailable(AppleModel.unavailableReason ?? "Apple Intelligence isn't available")
+        }
+        if let tool = provider.cliTool {
+            let availability = await CLIAgent.availability(tool)
+            return availability.usable ? .ready : .cliUnavailable(tool, availability)
         }
         if provider != .local {
             return await CloudLLM.active != nil ? .ready : .needsKey(provider.shortName)
@@ -184,6 +190,9 @@ enum OllamaClient {
         if await AppSettings.shared.aiProvider == .apple {
             return try await AppleModel.chat(system: system, user: user, json: json, temperature: temperature)
         }
+        if let cli = await CLIAgent.active() {
+            return try await CLIAgent.stream(cli, system: system, user: user, images: images, json: json, quick: json) { _ in }
+        }
         if let cloud = await CloudLLM.active {
             return try await CloudLLM.chat(cloud, system: system, user: user, images: images, json: json, quick: json)
         }
@@ -224,6 +233,8 @@ enum OllamaClient {
         // Apple's model reads text only: the screen is read for it instead.
         if await AppSettings.shared.aiProvider == .apple { return false }
         if allowCloud, await CloudLLM.active != nil { return true }
+        // Claude Code and Codex both take pictures.
+        if allowCloud, await AppSettings.shared.aiProvider.cliTool != nil { return true }
         let name = await model
         if let known = await MainActor.run(body: { visionSupport[name] }) { return known }
         var request = URLRequest(url: await baseURL.appendingPathComponent("api/show"))
@@ -281,6 +292,9 @@ enum OllamaClient {
                            onText: @escaping @Sendable (String) async -> Void) async throws -> String {
         if await AppSettings.shared.aiProvider == .apple {
             return try await AppleModel.stream(system: system, user: user, temperature: temperature, onText: onText)
+        }
+        if allowCloud, let cli = await CLIAgent.active() {
+            return try await CLIAgent.stream(cli, system: system, user: user, images: images, onText: onText)
         }
         if allowCloud, let cloud = await CloudLLM.active {
             return try await CloudLLM.stream(cloud, system: system, user: user, images: images, onText: onText)
