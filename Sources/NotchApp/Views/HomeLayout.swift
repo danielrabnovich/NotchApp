@@ -4,7 +4,8 @@ import SwiftUI
 enum HomeCard: String, Codable, CaseIterable {
     case music, today, weather, stats, batteries, clock, agents, shelf, timer, clipboard, unread, scratchpad, network, countdown
 
-    /// A tile of its own (on a soft card) at this size, rather than a column of the page.
+    /// A tile of its own at this size (narrow, and half height when small), rather than a column of
+    /// the page.
     func isTile(_ size: HomeCardSize) -> Bool {
         switch self {
         case .today: false
@@ -43,14 +44,12 @@ struct HomeEntry: Codable, Equatable {
 enum HomeTiler {
     /// Between two columns of the page: 18 + a rule + 18.
     static let gap: CGFloat = 37
-    /// Between two tiles, which have their own edges.
-    static let tileGap: CGFloat = 12
-    /// Between a tile and a column of the page.
-    static let edgeGap: CGFloat = 16
-    /// Between two tiles stacked in a column.
-    static let stackGap: CGFloat = 8
+    /// Beside a tile, which is narrower: 14 + a rule + 14.
+    static let tileGap: CGFloat = 29
+    /// Between two tiles stacked in a column: 8 + a rule + 8.
+    static let stackGap: CGFloat = 17
     /// The least a half-height tile can be; with less (a call bar above Home), tiles don't stack.
-    static let halfMinimum: CGFloat = 56
+    static let halfMinimum: CGFloat = 52
 
     struct Placed: Equatable {
         let card: HomeCard
@@ -61,9 +60,8 @@ enum HomeTiler {
         var cards: [Placed]
         /// Its width; nil takes what the fixed ones leave.
         var width: CGFloat?
-        /// The space before it, and whether a rule sits in the middle of it.
+        /// The space before it, with a rule in the middle.
         var gap: CGFloat = 0
-        var rule = false
         var id: String { cards.map(\.card.rawValue).joined(separator: "+") }
     }
 
@@ -136,8 +134,7 @@ enum HomeTiler {
             columns[i].width = fixedWidth(card.card, card.size, alone: columns.count == 1, width: width)
             guard i > 0 else { continue }
             let before = columns[i - 1].cards[0].card.isTile(columns[i - 1].cards[0].size), now = card.card.isTile(card.size)
-            columns[i].gap = before && now ? tileGap : before || now ? edgeGap : gap
-            columns[i].rule = !before && !now
+            columns[i].gap = before || now ? tileGap : gap
         }
         return columns
     }
@@ -150,9 +147,10 @@ enum HomeTiler {
 
     private static func fixedWidth(_ card: HomeCard, _ size: HomeCardSize, alone: Bool, width: CGFloat) -> CGFloat? {
         switch card {
-        case .music: alone ? nil : size == .large ? (width - gap) / 2 : size == .medium ? 170 : 128
+        case .music: alone ? nil : size == .large ? (width - gap) / 2 : size == .medium ? 170 : 112
         case .today: nil
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: 128
+        case .weather: size == .small ? 112 : 128
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: 112
         }
     }
 

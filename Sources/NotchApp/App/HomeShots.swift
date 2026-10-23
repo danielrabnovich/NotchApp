@@ -126,8 +126,13 @@ enum HomeShots {
             WeatherReport.Day(date: cal.date(byAdding: .day, value: i, to: cal.startOfDay(for: now))!,
                               code: [0, 3, 3, 61, 2][i], high: [20, 13, 17, 12, 15][i], low: [6, 4, 1, 5, 3][i], rainChance: [0, 10, 0, 70, 20][i])
         }
+        // Rain on its way in a few hours.
+        let hours = (0..<12).map { i in
+            WeatherReport.Hour(date: hour(now).addingTimeInterval(Double(i) * 3600), code: [0, 1, 2, 3, 61, 61, 3, 2, 2, 1, 0, 0][i],
+                               temp: [14, 15, 15, 14, 12, 11, 11, 10, 9, 8, 8, 7][i], rainChance: [0, 0, 10, 20, 60, 70, 40, 20, 10, 0, 0, 0][i], uv: 2)
+        }
         return WeatherReport(place: "Test", unit: "°C", currentTemp: 14, feelsLike: 12, currentCode: 0, wind: 8,
-                             windUnit: "km/h", humidity: 45, days: days, focusDay: 0)
+                             windUnit: "km/h", humidity: 45, days: days, focusDay: 0, uv: 2, hours: hours)
     }
 
     /// Events on the hour (not relative to the second) so two sheets taken minutes apart match.

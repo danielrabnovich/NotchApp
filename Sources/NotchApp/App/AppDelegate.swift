@@ -48,6 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Recall.shared.start()
         AppActions.shared.start()
         ShortcutsApp.shared.refreshIfStale()
+        // Before Home first opens, so the weather's there when it does.
+        if settings.calendarEnabled || settings.tasksEnabled, settings.homeCards.contains(where: { $0.card == .weather }) {
+            TodayWeather.shared.refreshIfStale()
+        }
         HeatWatcher.shared.start()
         LeaveBy.shared.start()
         SoundAlerts.shared.start()

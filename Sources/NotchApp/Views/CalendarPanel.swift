@@ -194,14 +194,17 @@ struct TodayPanel: View {
 struct HomeWeatherCard: View {
     let report: WeatherReport
     var fit = HomeFit()
-    /// A half-height tile: just the weather now.
+    /// A half-height tile: the weather now, and what's coming.
     var small = false
 
     var body: some View {
         if small {
             HomeTile {
-                WeatherNow(report: report)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                ViewThatFits(in: .vertical) {
+                    WeatherTile(report: report)
+                    WeatherNow(report: report)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
         } else {
             column
@@ -221,26 +224,158 @@ struct HomeWeatherCard: View {
     }
 }
 
+/// Where the weather goes while its first report is on the way: its shape, gently pulsing.
+struct WeatherSkeleton: View {
+    var fit = HomeFit()
+    var small = false
+    @State private var dim = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 7) {
+                Circle().frame(width: 20, height: 20)
+                VStack(alignment: .leading, spacing: 5) {
+                    bar(38, 16)
+                    bar(58, 8)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: small ? nil : fit.headerHeight)
+            if !small {
+                VStack(alignment: .leading, spacing: 8) {
+                    bar(92, 9)
+                    bar(.infinity, 36)
+                }
+            }
+        }
+        .foregroundStyle(.white.opacity(0.1))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: small ? .leading : .topLeading)
+        .opacity(dim ? 0.45 : 1)
+        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: dim)
+        .onAppear { dim = true }
+    }
+
+    private func bar(_ width: CGFloat, _ height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: min(4, height / 2), style: .continuous)
+            .frame(maxWidth: width, minHeight: height, maxHeight: height)
+    }
+}
+
 /// The weather now: its symbol, the temperature, and today's range.
 private struct WeatherNow: View {
     let report: WeatherReport
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: WeatherReport.symbol(report.currentCode))
+            Image(systemName: WeatherReport.symbol(report.currentCode, isDay: report.isDay))
                 .symbolRenderingMode(.multicolor)
                 .font(.system(size: 20))
             VStack(alignment: .leading, spacing: 0) {
                 Text("\(Int(report.currentTemp.rounded()))°")
-                    .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                    .font(HomeType.figure)
+                    .rollingNumber(Int(report.currentTemp.rounded()))
                 if let today = report.days.first {
                     Text("H \(Int(today.high.rounded()))°  L \(Int(today.low.rounded()))°")
-                        .font(.system(size: 10, weight: .medium).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.5))
+                        .font(HomeType.detail.weight(.medium))
+                        .foregroundStyle(HomeType.secondary)
                 }
             }
         }
         .help(report.summary)
+    }
+}
+
+/// The weather as a half-height tile: now and today's range on one line, then the one thing worth
+/// knowing about the next few hours.
+private struct WeatherTile: View {
+    let report: WeatherReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: WeatherReport.symbol(report.currentCode, isDay: report.isDay))
+                    .symbolRenderingMode(.multicolor)
+                    .font(.system(size: 18))
+                Text("\(Int(report.currentTemp.rounded()))°")
+                    .font(HomeType.figure)
+                    .rollingNumber(Int(report.currentTemp.rounded()))
+                Spacer(minLength: 2)
+                if let today = report.days.first {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text("H \(Int(today.high.rounded()))°")
+                        Text("L \(Int(today.low.rounded()))°")
+                    }
+                    .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(HomeType.secondary)
+                }
+            }
+            WeatherHeadline(report: report)
+        }
+        .lineLimit(1)
+        .help(report.summary)
+    }
+}
+
+/// `WeatherReport.headline`, in color only when it's rain or strong sun.
+private struct WeatherHeadline: View {
+    let report: WeatherReport
+
+    var body: some View {
+        let headline = report.headline
+        HStack(spacing: 3) {
+            switch headline.kind {
+            case .rain: Image(systemName: "umbrella.fill")
+            case .sun: Image(systemName: "sun.max.fill")
+            case .wind: Image(systemName: "wind")
+            case .calm: EmptyView()
+            }
+            Text(headline.text)
+        }
+        .font(HomeType.detail.weight(headline.kind == .calm ? .regular : .medium))
+        .foregroundStyle(color(headline.kind))
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+    }
+
+    private func color(_ kind: WeatherReport.Headline.Kind) -> Color {
+        switch kind {
+        case .rain: Color(red: 0.45, green: 0.72, blue: 1)
+        case .sun: .orange
+        case .wind, .calm: HomeType.secondary
+        }
+    }
+}
+
+/// The next few hours, one column each: the time, the sky, the temperature, and the chance of
+/// rain under them all once any of them is likely enough to matter.
+private struct HourlyStrip: View {
+    let hours: [WeatherReport.Hour]
+
+    var body: some View {
+        let rainy = hours.contains { $0.rainChance >= 30 }
+        HStack(spacing: 0) {
+            ForEach(hours) { hour in
+                VStack(spacing: 3) {
+                    Text(hour.date, format: .dateTime.hour(.defaultDigits(amPM: .narrow)))
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(HomeType.secondary)
+                    Image(systemName: WeatherReport.symbol(hour.code, isDay: hour.isDay))
+                        .symbolRenderingMode(.multicolor)
+                        .font(.system(size: 12))
+                        .frame(height: 14)
+                    Text("\(Int(hour.temp.rounded()))°")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    if rainy {
+                        Text(hour.rainChance >= 30 ? "\(hour.rainChance)%" : " ")
+                            .font(.system(size: 9, weight: .medium).monospacedDigit())
+                            .foregroundStyle(Color(red: 0.45, green: 0.72, blue: 1))
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .help(WeatherReport.describe(hour.code) + (hour.rainChance > 0 ? ", \(hour.rainChance)% chance of rain" : ""))
+            }
+        }
+        .lineLimit(1)
     }
 }
 
@@ -249,27 +384,33 @@ private struct Forecast: View {
     let report: WeatherReport
 
     var body: some View {
-        // As many days as fit under the header (a call bar above Home takes some of the height).
+        // The next hours first, then as many days as fit under them (a call bar above Home takes
+        // some of the height); the hours go only when nothing else would.
+        let hours = Array(report.hours.dropFirst().prefix(5))
         ViewThatFits(in: .vertical) {
-            column(days: 3)
-            column(days: 2)
-            column(days: 1)
-            column(days: 0)
+            if hours.count >= 3 {
+                ForEach([3, 2, 1, 0], id: \.self) { column(hours: hours, days: $0) }
+            }
+            column(hours: [], days: 0)
         }
     }
 
-    private func column(days: Int) -> some View {
+    private func column(hours: [WeatherReport.Hour], days: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
+            // The sky's in the header's symbol, so with the hours to fit it goes.
             VStack(alignment: .leading, spacing: 1) {
-                Text(WeatherReport.describe(report.currentCode))
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .lineLimit(1)
-                Text(detail)
-                    .font(.system(size: 10.5).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.5))
-                    .lineLimit(1)
+                if hours.isEmpty {
+                    Text(WeatherReport.describe(report.currentCode))
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .lineLimit(1)
+                }
+                WeatherHeadline(report: report)
             }
             .padding(.bottom, 2)
+            if !hours.isEmpty {
+                HourlyStrip(hours: hours)
+                    .padding(.bottom, 2)
+            }
             ForEach(report.days.dropFirst().prefix(days)) { day in
                 HStack(spacing: 6) {
                     Text(day.date, format: .dateTime.weekday(.abbreviated))
@@ -291,14 +432,6 @@ private struct Forecast: View {
                 .help(WeatherReport.describe(day.code) + (day.rainChance > 0 ? ", \(day.rainChance)% chance of rain" : ""))
             }
         }
-    }
-
-    /// "Feels 55° · Rain 40%", the rain only once it's likely enough to matter.
-    private var detail: String {
-        var parts = ["Feels \(Int(report.feelsLike.rounded()))°"]
-        if let today = report.days.first, today.rainChance >= 20 { parts.append("Rain \(today.rainChance)%") }
-        else { parts.append("\(report.humidity)% humid") }
-        return parts.joined(separator: " · ")
     }
 }
 
@@ -350,7 +483,32 @@ private struct TodayTaskRow: View {
 final class TodayWeather: ObservableObject {
     static let shared = TodayWeather()
     @Published private(set) var report: WeatherReport?
+    /// Fetching with nothing to show yet: Home keeps the weather's place with a placeholder.
+    @Published private(set) var loading = false
     private var fetchedAt = Date.distantPast
+
+    /// The last report and when it came, saved so Home has the weather the moment it first opens
+    /// after a relaunch (a fresh one replaces it as soon as it lands).
+    private struct Saved: Codable {
+        let at: Date
+        let report: WeatherReport
+    }
+    private static let savedKey = "todayWeather"
+
+    init() {
+        guard let data = UserDefaults.standard.data(forKey: Self.savedKey),
+              let saved = try? JSONDecoder().decode(Saved.self, from: data),
+              Date().timeIntervalSince(saved.at) < 6 * 3600 else { return }
+        // Without the hours and days already gone.
+        let r = saved.report
+        let thisHour = Calendar.current.dateInterval(of: .hour, for: Date())?.start ?? Date()
+        let today = Calendar.current.startOfDay(for: Date())
+        let days = r.days.filter { $0.date >= today }
+        guard !days.isEmpty else { return }
+        report = WeatherReport(place: r.place, unit: r.unit, currentTemp: r.currentTemp, feelsLike: r.feelsLike,
+                               currentCode: r.currentCode, wind: r.wind, windUnit: r.windUnit, humidity: r.humidity,
+                               days: days, focusDay: 0, uv: r.uv, isDay: r.isDay, hours: r.hours.filter { $0.date >= thisHour })
+    }
 
     /// Debug (`homeshot`): shows this instead (`.some(nil)`: no weather), and no fetch lands until
     /// it ends (nil).
@@ -363,10 +521,15 @@ final class TodayWeather: ObservableObject {
     func refreshIfStale(force: Bool = false) {
         guard force || Date().timeIntervalSince(fetchedAt) > 30 * 60 else { return }
         fetchedAt = Date()
+        if report == nil, !previewing { loading = true }
         Task {
+            defer { withAnimation(.easeOut(duration: 0.2)) { loading = false } }
             guard let report = try? await WeatherService.report(location: nil, dayOffset: 0) else {
                 fetchedAt = Date().addingTimeInterval(-25 * 60) // try again in five minutes
                 return
+            }
+            if let data = try? JSONEncoder().encode(Saved(at: Date(), report: report)) {
+                UserDefaults.standard.set(data, forKey: Self.savedKey)
             }
             guard !previewing else { return }
             withAnimation(.easeOut(duration: 0.2)) { self.report = report }

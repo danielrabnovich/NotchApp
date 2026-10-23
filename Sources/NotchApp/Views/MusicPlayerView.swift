@@ -108,25 +108,41 @@ struct MusicPlayerView: View {
 }
 
 /// Music when it isn't playing: the paused track and its controls, small, beside Home's day.
+/// Centered: the artwork over the song over the controls, all down the middle (unless Home's too
+/// short for that, under a call bar).
 struct CompactMusicCard: View {
+    var centered = false
     @EnvironmentObject private var media: MediaController
 
     var body: some View {
+        if centered {
+            ViewThatFits(in: .vertical) {
+                VStack(spacing: 8) {
+                    art
+                    VStack(spacing: 1) {
+                        Text(media.title)
+                            .font(.system(size: 12.5, weight: .semibold))
+                        Text(media.artist)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                    .lineLimit(1)
+                    .multilineTextAlignment(.center)
+                    controls
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                beside
+            }
+        } else {
+            beside
+        }
+    }
+
+    /// The artwork beside the song, the controls under both.
+    private var beside: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                ZStack(alignment: .bottomTrailing) {
-                    AlbumArtView(image: media.artwork, size: 52, cornerRadius: 10)
-                    if let icon = media.appIcon {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .frame(width: 18, height: 18)
-                            .shadow(color: .black.opacity(0.5), radius: 2)
-                            .offset(x: 5, y: 5)
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture { media.openSourceApp() }
-                .help(media.appName.map { "Open \($0)" } ?? "")
+                art
                 VStack(alignment: .leading, spacing: 2) {
                     Text(media.title)
                         .font(.system(size: 12.5, weight: .semibold))
@@ -137,26 +153,46 @@ struct CompactMusicCard: View {
                         .lineLimit(1)
                 }
             }
-            HStack(spacing: 8) {
-                Button { media.previousTrack() } label: {
-                    Image(systemName: "backward.fill").font(.system(size: 12))
-                }
-                .buttonStyle(NotchIconButtonStyle(size: 28))
-                Button { media.togglePlayPause() } label: {
-                    Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 16))
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                .buttonStyle(NotchIconButtonStyle(size: 32))
-                .help(media.isPlaying ? "Pause" : "Resume")
-                Button { media.nextTrack() } label: {
-                    Image(systemName: "forward.fill").font(.system(size: 12))
-                }
-                .buttonStyle(NotchIconButtonStyle(size: 28))
-            }
-            .frame(maxWidth: .infinity)
+            controls
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private var art: some View {
+        ZStack(alignment: .bottomTrailing) {
+            AlbumArtView(image: media.artwork, size: 52, cornerRadius: 10)
+            if let icon = media.appIcon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 18, height: 18)
+                    .shadow(color: .black.opacity(0.5), radius: 2)
+                    .offset(x: 5, y: 5)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { media.openSourceApp() }
+        .help(media.appName.map { "Open \($0)" } ?? "")
+    }
+
+    private var controls: some View {
+        HStack(spacing: 8) {
+            Button { media.previousTrack() } label: {
+                Image(systemName: "backward.fill").font(.system(size: 12))
+            }
+            .buttonStyle(NotchIconButtonStyle(size: 28))
+            Button { media.togglePlayPause() } label: {
+                Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 16))
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(NotchIconButtonStyle(size: 32))
+            .help(media.isPlaying ? "Pause" : "Resume")
+            Button { media.nextTrack() } label: {
+                Image(systemName: "forward.fill").font(.system(size: 12))
+            }
+            .buttonStyle(NotchIconButtonStyle(size: 28))
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 

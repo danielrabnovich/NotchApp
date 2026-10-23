@@ -351,20 +351,26 @@ struct HomeView: View {
             ForEach(Array(columns.enumerated()), id: \.element.id) { i, column in
                 if i > 0 {
                     ZStack {
-                        if column.rule, !isEditing { rule(between: columns[i - 1].cards[0].card, and: column.cards[0].card, fit: fit) }
+                        if !isEditing { rule(between: columns[i - 1].cards[0], and: column.cards[0], fit: fit) }
                     }
                     .frame(width: column.gap, height: size.height)
                 }
                 Group {
                     if let item = column.cards.first, column.cards.count == 1 {
-                        editable(card(item, in: all, fit: fit), item.card, from: i, columns: columns, middles: middles)
+                        editable(card(item, in: all, fit: fit, columns: columns.count), item.card, from: i, columns: columns, middles: middles)
                             .frame(width: widths[i], height: size.height,
                                    alignment: item.card == .music && item.size == .large ? .leading : .center)
                     } else {
-                        // Two half-height tiles stacked.
-                        VStack(spacing: HomeTiler.stackGap) {
-                            ForEach(column.cards, id: \.card) { item in
-                                editable(card(item, in: all, fit: fit), item.card, from: i, columns: columns, middles: middles)
+                        // Two half-height tiles stacked, a rule between.
+                        VStack(spacing: 0) {
+                            ForEach(Array(column.cards.enumerated()), id: \.element.card) { j, item in
+                                if j > 0 {
+                                    ZStack {
+                                        if !isEditing { Rectangle().fill(.white.opacity(0.1)).frame(height: 1) }
+                                    }
+                                    .frame(height: HomeTiler.stackGap)
+                                }
+                                editable(card(item, in: all, fit: fit, columns: columns.count), item.card, from: i, columns: columns, middles: middles)
                                     .frame(width: widths[i], height: (size.height - HomeTiler.stackGap) / 2)
                             }
                         }
@@ -419,7 +425,7 @@ struct HomeView: View {
         case .today:
             return showsToday ? .medium : nil
         case .weather:
-            return showsToday && weather.report != nil ? .medium : nil
+            return showsToday && (weather.report != nil || weather.loading) ? .medium : nil
         case .stats:
             return settings.statsEnabled ? .medium : nil
         case .batteries:
@@ -439,12 +445,13 @@ struct HomeView: View {
         }
     }
 
-    @ViewBuilder private func card(_ item: HomeTiler.Placed, in placed: [HomeTiler.Placed], fit: HomeFit) -> some View {
+    @ViewBuilder private func card(_ item: HomeTiler.Placed, in placed: [HomeTiler.Placed], fit: HomeFit, columns: Int) -> some View {
         switch item.card {
         case .music:
             if placed.count == 1 { MusicPlayerView() }
             else if item.size == .large { MusicPlayerView(half: true) }
-            else if item.size == .medium { CompactMusicCard() }
+            // Among tiles (four columns or more), stacked down the middle like they are.
+            else if item.size == .medium { CompactMusicCard(centered: columns >= 4) }
             else { MusicTile() }
         case .today:
             // Beside the big player it's half of Home; beside the small card, the day in full;
@@ -454,6 +461,9 @@ struct HomeView: View {
         case .weather:
             if let report = weather.report {
                 HomeWeatherCard(report: report, fit: fit, small: item.size == .small)
+                    .transition(.opacity)
+            } else {
+                WeatherSkeleton(fit: fit, small: item.size == .small)
                     .transition(.opacity)
             }
         case .stats: StatsCard(small: item.size == .small)
@@ -472,8 +482,8 @@ struct HomeView: View {
 
     /// The rule between two cards. The day and the weather share a header line, so the rule
     /// between them starts under it.
-    @ViewBuilder private func rule(between a: HomeCard, and b: HomeCard, fit: HomeFit) -> some View {
-        if Set([a, b]) == [.today, .weather] {
+    @ViewBuilder private func rule(between a: HomeTiler.Placed, and b: HomeTiler.Placed, fit: HomeFit) -> some View {
+        if Set([a.card, b.card]) == [.today, .weather], !a.card.isTile(a.size), !b.card.isTile(b.size) {
             SectionDivider()
                 .padding(.top, fit.headerHeight + 10)
         } else {

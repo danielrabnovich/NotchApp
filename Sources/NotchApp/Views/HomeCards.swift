@@ -1,45 +1,88 @@
 import SwiftUI
 
-/// A card of its own on Home: a soft rounded panel, unlike the page's columns. Glances beside the
-/// notch are pills; on Home the same things are tiles.
+/// A tile on Home: a column of the page like the others, only narrower (and half height when
+/// small), with rules between. Under the pointer, a soft panel shows what a click would open.
 struct HomeTile<Content: View>: View {
     @ViewBuilder var content: Content
+    @State private var hovering = false
 
     var body: some View {
         content
-            .padding(10)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white.opacity(0.06)))
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.white.opacity(hovering ? 0.06 : 0))
+                    .padding(-6)
+            )
+            .onHover { h in withAnimation(.easeOut(duration: 0.15)) { hovering = h } }
+    }
+}
+
+/// The type every tile shares: a label for what it is, a figure (big when there's room), rows of a
+/// list and their values, and a quieter detail line.
+enum HomeType {
+    static let label = Font.system(size: 10.5, weight: .medium)
+    static let detail = Font.system(size: 10.5).monospacedDigit()
+    static let row = Font.system(size: 11)
+    static let value = Font.system(size: 11.5, weight: .semibold).monospacedDigit()
+    static let figure = Font.system(size: 20, weight: .semibold).monospacedDigit()
+    static let bigFigure = Font.system(size: 28, weight: .semibold).monospacedDigit()
+    /// Labels and details.
+    static let secondary = Color.white.opacity(0.55)
+}
+
+/// What a tile says with nothing to show: its symbol, and a word on why.
+struct HomeNote: View {
+    let symbol: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Image(systemName: symbol)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.45))
+            Text(text)
+                .font(HomeType.label)
+                .foregroundStyle(HomeType.secondary)
+        }
+        .frame(maxHeight: .infinity)
     }
 }
 
 /// How busy the Mac is: the Stats rings, and each one's number in its color. Small: the rings
-/// beside the numbers; medium: the rings over them.
+/// beside the numbers and the power drawn; medium: the rings with the power and how hot it is, the
+/// numbers under them, then the app working hardest.
 struct StatsCard: View {
     var small = false
     @ObservedObject private var stats = SystemMonitor.shared
+    @EnvironmentObject private var settings: AppSettings
+
+    private struct Reading {
+        let label: String
+        let short: String
+        let value: String
+        let color: Color
+    }
 
     var body: some View {
         let s = stats.snapshot
         let memory = s.memory.total > 0 ? Double(s.memory.used) / Double(s.memory.total) : 0
-        let readings: [(String, Double, Color)] = [("CPU", s.cpuTotal, StatsPalette.cpu)]
-            + (s.gpu.map { [("GPU", $0, StatsPalette.gpu)] } ?? [])
-            + [("Memory", memory, StatsPalette.memory)]
+        let percent = { (v: Double) in "\(Int((v * 100).rounded()))%" }
+        let readings = [Reading(label: "CPU", short: "CPU", value: percent(s.cpuTotal), color: StatsPalette.cpu)]
+            + (s.gpu.map { [Reading(label: "GPU", short: "GPU", value: percent($0), color: StatsPalette.gpu)] } ?? [])
+            + [Reading(label: "Memory", short: "RAM", value: percent(memory), color: StatsPalette.memory)]
+        let power = s.systemPower.map { Reading(label: "Power", short: "PWR", value: "\(formatSmall($0)) W", color: StatsPalette.power) }
         HomeTile {
             // Medium, unless Home's too short for it (a call bar above).
             ViewThatFits(in: .vertical) {
-                if !small {
-                    VStack(alignment: .leading, spacing: 0) {
-                        StatRings(diameter: 44)
-                        Spacer(minLength: 6)
-                        numbers(readings, compact: false)
+                if !small { medium(s, readings) }
+                ForEach(power.map { [readings + [$0], readings] } ?? [readings], id: \.count) { rows in
+                    HStack(spacing: 10) {
+                        StatRings(diameter: 36)
+                        numbers(rows, compact: true)
                     }
+                    .frame(maxHeight: .infinity)
                 }
-                HStack(spacing: 10) {
-                    StatRings(diameter: 36)
-                    numbers(readings, compact: true)
-                }
-                .frame(maxHeight: .infinity)
             }
         }
         .contentShape(Rectangle())
@@ -49,18 +92,69 @@ struct StatsCard: View {
         .onDisappear { stats.viewerDisappeared() }
     }
 
-    /// Compact: the label in its color, shortened ("MEM"); otherwise a dot in its color.
-    private func numbers(_ readings: [(String, Double, Color)], compact: Bool) -> some View {
-        VStack(alignment: .leading, spacing: compact ? 1 : 3) {
-            ForEach(readings, id: \.0) { label, value, color in
+    private func medium(_ s: SystemSnapshot, _ readings: [Reading]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 4) {
+                StatRings(diameter: 44)
+                Spacer(minLength: 0)
+                VStack(alignment: .trailing, spacing: 1) {
+                    if let watts = s.systemPower {
+                        HStack(spacing: 2) {
+                            Image(systemName: "bolt.fill")
+                                .font(.system(size: 8))
+                                .foregroundStyle(StatsPalette.power)
+                            Text("\(formatSmall(watts)) W")
+                                .rollingNumber(formatSmall(watts))
+                        }
+                        .font(HomeType.value)
+                    }
+                    if let celsius = s.cpuTemp {
+                        // Only worth a color once it's running hot.
+                        Text(settings.formatTemperature(celsius))
+                            .font(HomeType.detail)
+                            .foregroundStyle(celsius >= 80 ? StatsPalette.temperature(celsius) : HomeType.secondary)
+                            .rollingNumber(settings.formatTemperature(celsius))
+                    }
+                }
+                .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            numbers(readings, compact: false)
+            if let app = s.topCPU.first {
                 HStack(spacing: 5) {
-                    if !compact { Circle().fill(color).frame(width: 6, height: 6) }
-                    Text(compact && label == "Memory" ? "MEM" : label)
-                        .font(.system(size: compact ? 9.5 : 10.5, weight: .medium))
-                        .foregroundStyle(compact ? color : .white.opacity(0.6))
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: app.bundlePath ?? "/System/Applications/Utilities/Activity Monitor.app"))
+                        .resizable()
+                        .frame(width: 13, height: 13)
+                    Text(app.name)
+                        .foregroundStyle(HomeType.secondary)
                     Spacer(minLength: 2)
-                    Text("\(Int((value * 100).rounded()))%")
-                        .font(.system(size: compact ? 10.5 : 11, weight: .semibold).monospacedDigit())
+                    // Of the whole Mac, like CPU above it (Activity Monitor's share of one core runs past 100%).
+                    Text("\(Int((app.cpu / Double(max(1, s.cores.count)) * 100).rounded()))%")
+                        .foregroundStyle(HomeType.secondary)
+                }
+                .font(HomeType.detail)
+                .lineLimit(1)
+                .padding(.top, 5)
+                .help("Working hardest: \(app.name)")
+            }
+        }
+        .onAppear { stats.detailAppeared() }
+        .onDisappear { stats.detailDisappeared() }
+    }
+
+    /// Compact: the label in its color, shortened ("RAM"); otherwise a dot in its color.
+    private func numbers(_ readings: [Reading], compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: compact ? 1 : 3) {
+            ForEach(readings, id: \.label) { r in
+                HStack(spacing: 5) {
+                    if !compact { Circle().fill(r.color).frame(width: 6, height: 6) }
+                    Text(compact ? r.short : r.label)
+                        .font(compact ? .system(size: 9.5, weight: .medium) : HomeType.label)
+                        .foregroundStyle(compact ? r.color : HomeType.secondary)
+                    Spacer(minLength: 2)
+                    Text(r.value)
+                        .font(compact ? .system(size: 10.5, weight: .semibold).monospacedDigit() : HomeType.value)
+                        .rollingNumber(r.value)
                 }
                 .lineLimit(1)
             }
@@ -116,7 +210,7 @@ struct BatteriesCard: View {
                         Spacer(minLength: 0)
                     } else {
                         Text(row.name)
-                            .font(.system(size: 11))
+                            .font(HomeType.row)
                             .foregroundStyle(.white.opacity(0.7))
                         Spacer(minLength: 4)
                         level(row)
@@ -135,8 +229,9 @@ struct BatteriesCard: View {
                 Image(systemName: "bolt.fill").font(.system(size: 8))
             }
             Text("\(row.level)%")
+                .rollingNumber(row.level)
         }
-        .font(.system(size: small ? 12 : 11.5, weight: .semibold).monospacedDigit())
+        .font(HomeType.value)
         .foregroundStyle(row.charging ? Color.green : row.level <= 20 ? Color.red : .white)
     }
 }
@@ -159,11 +254,11 @@ struct ClockCard: View {
                         label(city, zone: zone, now: now)
                         HStack(alignment: .firstTextBaseline) {
                             Text(time(now, zone))
-                                .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                                .font(HomeType.figure)
                             Spacer(minLength: 2)
                             Text(WorldClock.offset(zone, at: now))
-                                .font(.system(size: 10).monospacedDigit())
-                                .foregroundStyle(.white.opacity(0.45))
+                                .font(HomeType.detail)
+                                .foregroundStyle(HomeType.secondary)
                         }
                     }
                     .frame(maxHeight: .infinity)
@@ -179,10 +274,10 @@ struct ClockCard: View {
             label(city, zone: zone, now: now, large: true)
             Spacer(minLength: 8)
             Text(time(now, zone))
-                .font(.system(size: 28, weight: .semibold).monospacedDigit())
+                .font(HomeType.bigFigure)
             Text(([day(zone, now: now)].compactMap { $0 } + [WorldClock.offset(zone, at: now)]).joined(separator: " · "))
-                .font(.system(size: 10.5).monospacedDigit())
-                .foregroundStyle(.white.opacity(0.5))
+                .font(HomeType.detail)
+                .foregroundStyle(HomeType.secondary)
         }
     }
 
@@ -196,8 +291,8 @@ struct ClockCard: View {
                 .font(.system(size: 9.5))
                 .foregroundStyle(day ? Color.yellow : Color(red: 0.6, green: 0.65, blue: 1))
             Text(city.name)
-                .font(.system(size: large ? 12 : 10.5, weight: large ? .semibold : .medium))
-                .foregroundStyle(.white.opacity(large ? 1 : 0.6))
+                .font(large ? .system(size: 12, weight: .semibold) : HomeType.label)
+                .foregroundStyle(large ? .white : HomeType.secondary)
         }
     }
 
@@ -228,15 +323,7 @@ struct AgentsCard: View {
         let active = agents.waiting + agents.working
         HomeTile {
             if active.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.white.opacity(0.45))
-                    Spacer(minLength: 0)
-                    Text("No agents at work")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
-                }
+                HomeNote(symbol: "sparkles", text: "No agents at work")
             } else {
                 ViewThatFits(in: .vertical) {
                     ForEach((1...(small ? 2 : 4)).reversed(), id: \.self) { count in
@@ -268,7 +355,7 @@ struct AgentsCard: View {
                         .font(.system(size: 10, weight: .semibold))
                         .frame(width: 14)
                         Text(session.project)
-                            .font(.system(size: 11.5, weight: .medium))
+                            .font(HomeType.row.weight(.medium))
                             .foregroundStyle(.white.opacity(session.state == .waiting ? 1 : 0.8))
                         Spacer(minLength: 0)
                     }
@@ -280,8 +367,8 @@ struct AgentsCard: View {
             }
             if more > 0 {
                 Text("+\(more) more")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.45))
+                    .font(HomeType.detail)
+                    .foregroundStyle(HomeType.secondary)
                     .padding(.leading, 20)
             }
         }
@@ -298,15 +385,7 @@ struct ShelfCard: View {
         let items = Array(shelf.items.suffix(small ? 3 : 4).reversed())
         HomeTile {
             if items.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    Image(systemName: "tray")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.white.opacity(0.45))
-                    Spacer(minLength: 0)
-                    Text("Drop files on the notch")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
-                }
+                HomeNote(symbol: "tray", text: "Drop files on the notch")
             } else if small {
                 HStack(spacing: 6) {
                     ForEach(items) { thumb($0, side: 34) }
@@ -319,8 +398,8 @@ struct ShelfCard: View {
                     }
                     Spacer(minLength: 0)
                     Text(shelf.items.count == 1 ? "1 file" : "\(shelf.items.count) files")
-                        .font(.system(size: 10.5).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.5))
+                        .font(HomeType.detail)
+                        .foregroundStyle(HomeType.secondary)
                 }
             }
         }
@@ -399,8 +478,8 @@ struct TimerCard: View {
             ring.frame(width: 34, height: 34)
             VStack(alignment: .leading, spacing: 0) {
                 Text(label)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .font(HomeType.label)
+                    .foregroundStyle(HomeType.secondary)
                 Text(timer.displayTime)
                     .font(.system(size: 15, weight: .semibold).monospacedDigit())
             }
@@ -420,18 +499,18 @@ struct TimerCard: View {
             }
             Spacer(minLength: 6)
             Text(label)
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .font(HomeType.label)
+                .foregroundStyle(HomeType.secondary)
             Text(timer.displayTime)
-                .font(.system(size: 24, weight: .semibold).monospacedDigit())
+                .font(HomeType.bigFigure)
         }
         .lineLimit(1)
     }
 }
 
 /// Music as a narrow tile, when Home is full: the artwork with play or pause, and the song.
-/// Full height (alone in its column), the artwork's bigger and the artist shows too. Clicking the
-/// artwork goes to the app playing it.
+/// Full height (alone in its column), it's all down the middle: the artwork, the song and artist,
+/// then the controls. Clicking the artwork goes to the app playing it.
 struct MusicTile: View {
     @EnvironmentObject private var media: MediaController
 
@@ -445,20 +524,35 @@ struct MusicTile: View {
     }
 
     private var tall: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                art(52)
-                Spacer(minLength: 0)
-                playPause
+        VStack(spacing: 8) {
+            art(56)
+            VStack(spacing: 1) {
+                Text(media.title)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(media.artist)
+                    .font(HomeType.detail)
+                    .foregroundStyle(HomeType.secondary)
             }
-            Spacer(minLength: 8)
-            Text(media.title)
-                .font(.system(size: 12, weight: .semibold))
-            Text(media.artist)
-                .font(.system(size: 10.5))
-                .foregroundStyle(.white.opacity(0.55))
+            .lineLimit(1)
+            HStack(spacing: 4) {
+                Button { media.previousTrack() } label: {
+                    Image(systemName: "backward.fill").font(.system(size: 11))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 26))
+                Button { media.togglePlayPause() } label: {
+                    Image(systemName: media.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 14))
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 30))
+                .help(media.isPlaying ? "Pause" : "Play")
+                Button { media.nextTrack() } label: {
+                    Image(systemName: "forward.fill").font(.system(size: 11))
+                }
+                .buttonStyle(NotchIconButtonStyle(size: 26))
+            }
         }
-        .lineLimit(1)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var short: some View {
@@ -502,15 +596,7 @@ struct ClipboardCard: View {
         let clips = Array(clipboard.clips.prefix(small ? 1 : 4))
         HomeTile {
             if clips.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    Image(systemName: "doc.on.clipboard")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.white.opacity(0.45))
-                    Spacer(minLength: 0)
-                    Text("Nothing copied yet")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
-                }
+                HomeNote(symbol: "doc.on.clipboard", text: "Nothing copied yet")
             } else if small, let clip = clips.first {
                 row(clip, lines: 2)
                     .frame(maxHeight: .infinity)
@@ -542,7 +628,7 @@ struct ClipboardCard: View {
                         .frame(width: 18, height: 18)
                 }
                 Text(clip.title.replacingOccurrences(of: "\n", with: " "))
-                    .font(.system(size: 11))
+                    .font(HomeType.row)
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(lines)
                     .multilineTextAlignment(.leading)
@@ -573,13 +659,14 @@ struct UnreadCard: View {
     var body: some View {
         HomeTile {
             if !AXIsProcessTrusted() {
-                note("lock", "Needs Accessibility")
+                HomeNote(symbol: "lock", text: "Needs Accessibility")
             } else if unread.badges.isEmpty {
-                note("checkmark.circle", "All caught up")
+                HomeNote(symbol: "checkmark.circle", text: "All caught up")
             } else if small {
                 HStack(spacing: 8) {
                     Text("\(unread.total)")
-                        .font(.system(size: 22, weight: .semibold).monospacedDigit())
+                        .font(HomeType.figure)
+                        .rollingNumber(unread.total)
                     HStack(spacing: -6) {
                         ForEach(unread.badges.prefix(3)) { icon($0, size: 22) }
                     }
@@ -595,11 +682,12 @@ struct UnreadCard: View {
                                     HStack(spacing: 7) {
                                         icon(badge, size: 18)
                                         Text(badge.name)
-                                            .font(.system(size: 11))
+                                            .font(HomeType.row)
                                             .foregroundStyle(.white.opacity(0.8))
                                         Spacer(minLength: 4)
                                         Text("\(badge.count)")
-                                            .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
+                                            .font(HomeType.value)
+                                            .rollingNumber(badge.count)
                                     }
                                     .lineLimit(1)
                                     .contentShape(Rectangle())
@@ -620,18 +708,6 @@ struct UnreadCard: View {
         Image(nsImage: NSWorkspace.shared.icon(forFile: badge.appURL.path))
             .resizable()
             .frame(width: size, height: size)
-    }
-
-    private func note(_ symbol: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Image(systemName: symbol)
-                .font(.system(size: 13))
-                .foregroundStyle(.white.opacity(0.45))
-            Spacer(minLength: 0)
-            Text(text)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.5))
-        }
     }
 }
 
@@ -661,7 +737,8 @@ struct ScratchpadCard: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.white.opacity(focused ? 0.1 : 0.06)))
+        // A field to type in, so unlike the other tiles it keeps its panel.
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white.opacity(focused ? 0.1 : 0.06)).padding(-6))
         .animation(.easeOut(duration: 0.15), value: focused)
         .onChange(of: focused) { _, f in NotchPresenter.shared.primary?.isEditing = f }
     }
@@ -704,8 +781,8 @@ struct NetworkCard: View {
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(network.info.kind == .offline ? Color.red : .white.opacity(0.7))
             Text(network.info.kind == .offline ? "Offline" : network.info.ssid ?? network.info.interfaceName)
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.6))
+                .font(HomeType.label)
+                .foregroundStyle(HomeType.secondary)
             Spacer(minLength: 0)
             if let vpn = network.info.vpn {
                 Image(systemName: "lock.shield.fill")
@@ -774,7 +851,7 @@ struct CountdownCard: View {
                         VStack(alignment: .leading, spacing: 1) {
                             title
                             Text(text)
-                                .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                                .font(HomeType.figure)
                         }
                         .frame(maxHeight: .infinity)
                     } else {
@@ -782,23 +859,15 @@ struct CountdownCard: View {
                             title
                             Spacer(minLength: 0)
                             Text(text)
-                                .font(.system(size: 28, weight: .semibold).monospacedDigit())
+                                .font(HomeType.bigFigure)
                             Text(target, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.white.opacity(0.5))
+                                .font(HomeType.detail)
+                                .foregroundStyle(HomeType.secondary)
                         }
                     }
                 } else {
                     Button { SettingsWindowController.shared.show(pane: .home) } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Image(systemName: "hourglass")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.white.opacity(0.45))
-                            Spacer(minLength: 0)
-                            Text("Pick a date in Settings")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.5))
-                        }
+                        HomeNote(symbol: "hourglass", text: "Pick a date in Settings")
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .contentShape(Rectangle())
                     }
@@ -812,9 +881,9 @@ struct CountdownCard: View {
         HStack(spacing: 4) {
             Image(systemName: "hourglass").font(.system(size: 9.5, weight: .semibold))
             Text(settings.countdownTitle.isEmpty ? "Countdown" : settings.countdownTitle)
-                .font(.system(size: 11, weight: .medium))
+                .font(HomeType.label)
         }
-        .foregroundStyle(.white.opacity(0.6))
+        .foregroundStyle(HomeType.secondary)
         .lineLimit(1)
     }
 }

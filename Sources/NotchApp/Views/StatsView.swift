@@ -68,7 +68,8 @@ enum StatKind: String, CaseIterable, Identifiable {
 
 private enum CardMode {
     case normal, expanded, compact
-    static let compactWidth: CGFloat = 58
+    /// The tiles beside an expanded card: wide enough for their name and a readable figure.
+    static let compactWidth: CGFloat = 78
     /// Width of the summary column inside an expanded card.
     static let summaryWidth: CGFloat = 138
 }
@@ -221,11 +222,12 @@ private struct MemoryCard: View {
                 .help("\(gigabytes(m.used, digits: 1)) of \(gigabytes(m.total, digits: 0)) GB in use")
         } detail: {
             VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 0) {
-                    MiniStat(label: "App", value: gigabytes(m.app, digits: 1), color: StatsPalette.memory)
-                    MiniStat(label: "Wired", value: gigabytes(m.wired, digits: 1), color: StatsPalette.memoryWired)
-                    MiniStat(label: "Compressed", value: gigabytes(m.compressed, digits: 1), color: StatsPalette.memoryCompressed)
-                    MiniStat(label: "Cached", value: gigabytes(m.cached, digits: 1), color: .white.opacity(0.6))
+                // Centered, so a long label ("Compressed") has room on both sides.
+                HStack(spacing: 4) {
+                    MiniStat(label: "App", value: gigabytes(m.app, digits: 1), color: StatsPalette.memory, centered: true)
+                    MiniStat(label: "Wired", value: gigabytes(m.wired, digits: 1), color: StatsPalette.memoryWired, centered: true)
+                    MiniStat(label: "Compressed", value: gigabytes(m.compressed, digits: 1), color: StatsPalette.memoryCompressed, centered: true)
+                    MiniStat(label: "Cached", value: gigabytes(m.cached, digits: 1), color: .white.opacity(0.6), centered: true)
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
@@ -263,6 +265,22 @@ private struct PowerCard: View {
                     DetailRow(icon: "cpu", label: "CPU", value: watts(cpu))
                 }
             }
+        } compactNote: {
+            // What it's running on, like the others' temperature or memory in use.
+            if let text = source(s) {
+                HStack(spacing: 2) {
+                    Image(systemName: text.icon).font(.system(size: 7.5, weight: .bold))
+                    Text(text.value)
+                }
+                    .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(StatsPalette.power)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .padding(.horizontal, 5)
+                    .frame(height: 16)
+                    .background(Capsule().fill(StatsPalette.power.opacity(0.16)))
+                    .help(text.help)
+            }
         } detail: {
             // Two columns: where the power goes, then the battery and adapter. (The fans are in
             // the footer.)
@@ -286,7 +304,7 @@ private struct PowerCard: View {
                     }
                     TemperatureRow(label: "Temp", celsius: s.batteryTemp)
                 }
-                .frame(width: 128)
+                .frame(width: 104)
             }
         }
     }
@@ -297,7 +315,8 @@ private struct PowerCard: View {
             ("CPU", "cpu", s.cpuPower, StatsPalette.cpu, false),
             ("GPU", "cube.transparent", s.gpuPower, StatsPalette.gpu, false),
             ("Display", "sun.max.fill", s.displayPower, Color(red: 1, green: 0.85, blue: 0.4), false),
-            ("Memory", "memorychip", s.memoryPower, StatsPalette.memory, true),
+            // "RAM": "Memory" doesn't fit beside its watts in this narrow column.
+            ("RAM", "memorychip", s.memoryPower, StatsPalette.memory, true),
         ]
         let known = parts.compactMap(\.watts).reduce(0, +)
         let total = max(s.systemPower ?? known, known, 0.1)
@@ -306,15 +325,23 @@ private struct PowerCard: View {
             SectionLabel("Components")
             ForEach(parts.filter { $0.watts != nil }, id: \.label) { part in
                 MeterRow(label: part.label, value: (part.watts ?? 0) / total, color: part.color,
-                         text: watts(part.watts ?? 0))
+                         text: watts(part.watts ?? 0), bar: false)
                     .help(part.approx ? "Approximate: the memory controller's power, which follows memory traffic" : "")
             }
             if let other {
-                MeterRow(label: "Other", value: other / total, color: .white.opacity(0.4), text: watts(other))
+                MeterRow(label: "Other", value: other / total, color: .white.opacity(0.4), text: watts(other), bar: false)
                     .help("Storage, Wi-Fi, fans, speakers, power conversion and the rest")
             }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// Charging, the adapter, or the battery's time left: "+12 W", "94 W", "3h 20m".
+    private func source(_ s: SystemSnapshot) -> (icon: String, value: String, help: String)? {
+        if let battery = s.batteryPower, battery > 0.5 { return ("bolt.fill", "+" + watts(battery), "Charging at \(watts(battery))") }
+        if let adapter = s.adapterWatts { return ("powerplug.fill", "\(adapter) W", "On a \(adapter) W adapter") }
+        if let minutes = s.batteryMinutesRemaining { return ("battery.75percent", "\(minutes / 60)h \(minutes % 60)m", "Battery time left") }
+        return nil
     }
 
     @ViewBuilder private func batteryRow(_ s: SystemSnapshot, _ battery: Double) -> some View {
@@ -423,16 +450,21 @@ private struct StatCard<Graph: View, Footer: View, Note: View, Detail: View>: Vi
     /// Icon, value and graph only, for the narrow tiles beside an expanded card.
     private var compactFace: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(tint)
-                .frame(height: 16)
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
+            // Named when there's room, just the symbol when not.
+            ViewThatFits(in: .horizontal) {
+                NotchSectionLabel(title: title, symbol: icon, tint: tint)
+                    .fixedSize()
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(tint)
+            }
+            .frame(height: 16)
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text(value)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
+                    .font(.system(size: 20, weight: .semibold, design: .rounded).monospacedDigit())
                     .rollingNumber(value)
                 Text(unit)
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.45))
             }
             .lineLimit(1)
@@ -655,9 +687,10 @@ private struct MiniStat: View {
     let label: String
     let value: String
     let color: Color
+    var centered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: centered ? .center : .leading, spacing: 0) {
             Text(value)
                 .font(.system(size: 13, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(color == .white ? .white : color)
@@ -665,8 +698,10 @@ private struct MiniStat: View {
             Text(label)
                 .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.4))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: centered ? .center : .leading)
     }
 }
 
@@ -677,21 +712,28 @@ private struct MeterRow: View {
     let color: Color
     var text: String? = nil
     var labelWidth: CGFloat = 50
+    /// Without the bar, just the label and the number (where the column's too narrow for one).
+    var bar = true
 
     var body: some View {
         HStack(spacing: 5) {
             Text(label)
                 .foregroundStyle(.white.opacity(0.5))
                 .minimumScaleFactor(0.8)
-                .frame(width: labelWidth, alignment: .leading)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.08))
-                    Capsule().fill(color.gradient)
-                        .frame(width: max(3, geo.size.width * min(1, max(0, value))))
+                .frame(width: bar ? labelWidth : nil, alignment: .leading)
+                .layoutPriority(bar ? 0 : 1)
+            if bar {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.08))
+                        Capsule().fill(color.gradient)
+                            .frame(width: max(3, geo.size.width * min(1, max(0, value))))
+                    }
                 }
+                .frame(height: 4)
+            } else {
+                Spacer(minLength: 4)
             }
-            .frame(height: 4)
             Text(text ?? percent(value) + "%")
                 .foregroundStyle(.white.opacity(0.85))
                 .rollingNumber(text ?? percent(value))
