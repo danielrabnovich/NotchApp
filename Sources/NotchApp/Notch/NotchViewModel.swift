@@ -430,6 +430,7 @@ final class NotchViewModel: ObservableObject {
         pager.fromIndex = nil
         pager.reset(to: tabIndex)
         tabFlash = nil
+        HomeEditing.shared.end()
         withAnimation(AppSettings.shared.closeAnimation) {
             isOpen = false
             isDragActive = false
@@ -443,7 +444,9 @@ final class NotchViewModel: ObservableObject {
     /// search, then closes the notch. Text fields handle their own Escape (clear, stop editing) first.
     func backOut() {
         guard isOpen else { return }
-        if overlay != nil || mirror {
+        if HomeEditing.shared.active {
+            HomeEditing.shared.end()
+        } else if overlay != nil || mirror {
             withAnimation(Motion.pane.animation) {
                 overlay = nil
                 mirror = false

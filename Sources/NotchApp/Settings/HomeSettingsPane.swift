@@ -21,7 +21,7 @@ struct HomeSettingsPane: View {
                     Menu {
                         ForEach(missing, id: \.self) { card in
                             Button { withAnimation(.snappy) { s.homeCards.append(HomeEntry(card: card)) } } label: {
-                                Label(card.title, systemImage: card.icon)
+                                Label(card.isOn(s) ? card.title : "\(card.title) (off)", systemImage: card.icon)
                             }
                         }
                     } label: {
@@ -30,6 +30,11 @@ struct HomeSettingsPane: View {
                     .menuStyle(.borderlessButton)
                     .fixedSize()
                 }
+                Button("Edit in the Notch…") {
+                    NotchPresenter.shared.primary?.open(tab: .home)
+                    HomeEditing.shared.begin()
+                }
+                .help("Drag cards along Home itself, size them and add more, right where they'll be. Right-click Home for the same.")
             } header: {
                 Text("Cards")
             } footer: {
@@ -148,12 +153,7 @@ private struct CardRow: View {
 
     /// Why it might not show, when it's something the user can fix.
     private var note: String? {
-        switch entry.card {
-        case .stats where !s.statsEnabled: "Shows once Stats is on (Add-ons)."
-        case .music where !s.musicEnabled: "Shows once the music player is on (below)."
-        case .today where !s.calendarEnabled && !s.tasksEnabled: "Shows once Calendar or Tasks is on."
-        default: nil
-        }
+        entry.card.isOn(s) ? nil : "Off: \(entry.card.featureHint.prefix(1).lowercased() + entry.card.featureHint.dropFirst()) to show it."
     }
 
     private var index: Int { s.homeCards.firstIndex(of: entry) ?? 0 }

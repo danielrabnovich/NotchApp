@@ -2,20 +2,20 @@ import SwiftUI
 
 /// What Home can show: cards in a row across it.
 enum HomeCard: String, Codable, CaseIterable {
-    case music, today, weather, stats, batteries, clock
+    case music, today, weather, stats, batteries, clock, agents, shelf, timer
 
     /// A tile of its own (on a soft card) at this size, rather than a column of the page.
     func isTile(_ size: HomeCardSize) -> Bool {
         switch self {
-        case .music, .today: false
-        case .weather: size == .small
-        case .stats, .batteries, .clock: true
+        case .today: false
+        case .music, .weather: size == .small
+        case .stats, .batteries, .clock, .agents, .shelf, .timer: true
         }
     }
 
     /// Half of Home's height at this size, so two stack in a column.
     func isHalf(_ size: HomeCardSize) -> Bool {
-        size == .small && self != .music
+        size == .small
     }
 }
 
@@ -37,13 +37,16 @@ struct HomeEntry: Codable, Equatable {
 
 /// Lays Home's cards out in one row of columns, in their order: each at the size it wants, two
 /// half-height tiles side by side stacked in one column. When they don't all fit, the extras
-/// (weather, stats, clock…) shrink, then go, least important first; then music gives up its half.
+/// (weather, stats, clock…) shrink, then music (unless it's playing big) shrinks to a tile, then
+/// the extras wait for room, least important first; last, music gives up its half.
 /// The day itself always stays. Sizes set by hand don't shrink.
 enum HomeTiler {
     /// Between two columns of the page: 18 + a rule + 18.
     static let gap: CGFloat = 37
-    /// Beside a tile, which has its own edge.
+    /// Between two tiles, which have their own edges.
     static let tileGap: CGFloat = 12
+    /// Between a tile and a column of the page.
+    static let edgeGap: CGFloat = 16
     /// Between two tiles stacked in a column.
     static let stackGap: CGFloat = 8
     /// The least a half-height tile can be; with less (a call bar above Home), tiles don't stack.
@@ -98,6 +101,10 @@ enum HomeTiler {
         }
         let extra = { (card: HomeCard) in card != .music && card != .today }
         shrink(extra)
+        // Music that isn't playing big becomes a tile before anything has to wait for room.
+        if let i = items.firstIndex(where: { $0.entry.card == .music }), items[i].entry.size == nil, items[i].size != .large {
+            while !fits(), let size = smaller(.music, than: items[i].size) { items[i].size = size }
+        }
         remove(extra)
         shrink { $0 == .music }
         remove { $0 == .music }
@@ -128,9 +135,9 @@ enum HomeTiler {
             let card = columns[i].cards[0]
             columns[i].width = fixedWidth(card.card, card.size, alone: columns.count == 1, width: width)
             guard i > 0 else { continue }
-            let tiles = columns[i - 1].cards[0].card.isTile(columns[i - 1].cards[0].size) || card.card.isTile(card.size)
-            columns[i].gap = tiles ? tileGap : gap
-            columns[i].rule = !tiles
+            let before = columns[i - 1].cards[0].card.isTile(columns[i - 1].cards[0].size), now = card.card.isTile(card.size)
+            columns[i].gap = before && now ? tileGap : before || now ? edgeGap : gap
+            columns[i].rule = !before && !now
         }
         return columns
     }
@@ -143,14 +150,14 @@ enum HomeTiler {
 
     private static func fixedWidth(_ card: HomeCard, _ size: HomeCardSize, alone: Bool, width: CGFloat) -> CGFloat? {
         switch card {
-        case .music: alone ? nil : size == .large ? (width - gap) / 2 : 170
+        case .music: alone ? nil : size == .large ? (width - gap) / 2 : size == .medium ? 170 : 128
         case .today: nil
-        case .weather, .stats, .batteries, .clock: 128
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer: 128
         }
     }
 
     private static func minWidth(_ card: HomeCard) -> CGFloat {
-        card == .today ? 220 : 0
+        card == .today ? 210 : 0
     }
 
     private static func importance(_ card: HomeCard) -> Int {
@@ -158,7 +165,7 @@ enum HomeTiler {
         case .today: 3
         case .music: 2
         case .weather: 1
-        case .stats, .batteries, .clock: 0
+        case .stats, .batteries, .clock, .agents, .shelf, .timer: 0
         }
     }
 
@@ -166,16 +173,16 @@ enum HomeTiler {
     private static func smaller(_ card: HomeCard, than size: HomeCardSize) -> HomeCardSize? {
         switch card {
         case .today: nil
-        case .music: size == .large ? .small : nil
-        case .weather, .stats, .batteries, .clock: size == .medium ? .small : nil
+        case .music: size == .large ? .medium : size == .medium ? .small : nil
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer: size == .medium ? .small : nil
         }
     }
 
     private static func larger(_ card: HomeCard, than size: HomeCardSize) -> HomeCardSize? {
         switch card {
         case .today: nil
-        case .music: size == .small ? .large : nil
-        case .weather, .stats, .batteries, .clock: size == .small ? .medium : nil
+        case .music: size == .small ? .medium : size == .medium ? .large : nil
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer: size == .small ? .medium : nil
         }
     }
 }
@@ -214,6 +221,9 @@ extension HomeCard {
         case .stats: "Stats"
         case .batteries: "Batteries"
         case .clock: "World Clock"
+        case .agents: "Agents"
+        case .shelf: "Shelf"
+        case .timer: "Timer"
         }
     }
 
@@ -225,6 +235,9 @@ extension HomeCard {
         case .stats: "gauge.with.dots.needle.50percent"
         case .batteries: "battery.75percent"
         case .clock: "globe"
+        case .agents: "sparkles.rectangle.stack.fill"
+        case .shelf: "tray.full.fill"
+        case .timer: "timer"
         }
     }
 
@@ -236,6 +249,9 @@ extension HomeCard {
         case .stats: "How busy the Mac is: CPU, GPU and memory."
         case .batteries: "The Mac's battery and your Bluetooth devices', emptiest first."
         case .clock: "The time in another city."
+        case .agents: "Your coding agents: which are working, and which are waiting for you."
+        case .shelf: "The latest files on the Shelf, to drag straight into another app."
+        case .timer: "Start a countdown or a focus session, and see it run."
         }
     }
 
@@ -243,17 +259,42 @@ extension HomeCard {
     var sizes: [HomeCardSize] {
         switch self {
         case .today: []
-        case .music: [.small, .large]
-        case .weather, .stats, .batteries, .clock: [.small, .medium]
+        case .music: [.small, .medium, .large]
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer: [.small, .medium]
         }
     }
 
     func name(_ size: HomeCardSize) -> String {
         switch (self, size) {
-        case (.music, .small): "Small card"
+        case (.music, .small): "Tile"
+        case (.music, .medium): "Card"
         case (.music, _): "Half of Home"
         case (_, .small): "Half height"
         default: "Full height"
+        }
+    }
+}
+
+extension HomeCard {
+    /// Whether the feature it shows is on; a card for one that's off waits until it is.
+    @MainActor func isOn(_ s: AppSettings) -> Bool {
+        switch self {
+        case .music: s.musicEnabled
+        case .today: s.calendarEnabled || s.tasksEnabled
+        case .stats: s.statsEnabled
+        case .agents: s.agentsEnabled
+        case .shelf: s.shelfEnabled
+        case .timer: s.timerEnabled
+        case .weather, .batteries, .clock: true
+        }
+    }
+
+    /// Where its feature is turned on, for a card that's off.
+    var featureHint: String {
+        switch self {
+        case .music: "Turn on the music player"
+        case .today: "Turn on Calendar or Tasks"
+        default: "Turn on \(title) in Add-ons"
         }
     }
 }

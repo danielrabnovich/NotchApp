@@ -9,6 +9,8 @@ struct HomeShot {
     var call: MeetingMonitor.Call?
     /// Home's cards, instead of the ones in Settings.
     var cards: [HomeEntry]?
+    /// Drawn in edit mode.
+    var editing = false
 }
 
 /// Debug (`homeshot <dir>`): Home drawn offscreen in every state that changes its layout (music big,
@@ -23,6 +25,7 @@ enum HomeShots {
         var call = false
         var weather = true
         var cards: [HomeEntry]?
+        var editing = false
         var events: (EKEventStore, Date) -> [EKEvent]
     }
 
@@ -65,7 +68,7 @@ enum HomeShots {
             let call = shot.fixture.call
                 ? MeetingMonitor.Call(app: "Zoom", bundleID: "us.zoom.xos", started: now.addingTimeInterval(-300), event: "Writers Meeting")
                 : nil
-            let view = NSHostingView(rootView: HomeView(shot: HomeShot(music: shot.music, call: call, cards: shot.fixture.cards))
+            let view = NSHostingView(rootView: HomeView(shot: HomeShot(music: shot.music, call: call, cards: shot.fixture.cards ?? HomeEntry.defaults, editing: shot.fixture.editing))
                 .frame(width: shot.size.width, height: shot.size.height)
                 .foregroundStyle(.white)
                 .background(Color.black)
@@ -184,6 +187,13 @@ enum HomeShots {
         },
         Fixture(name: "tiles3", cards: [.init(card: .music), .init(card: .today), .init(card: .weather), .init(card: .stats),
                                          .init(card: .clock), .init(card: .batteries)]) { store, now in
+            [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
+        },
+        Fixture(name: "new", cards: [.init(card: .today), .init(card: .agents), .init(card: .shelf), .init(card: .timer)]) { store, now in
+            [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
+        },
+        Fixture(name: "edit", cards: [.init(card: .music), .init(card: .today), .init(card: .weather), .init(card: .timer, size: .small)],
+                editing: true) { store, now in
             [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
         },
         Fixture(name: "tiles-call", call: true, cards: [.init(card: .music), .init(card: .today), .init(card: .clock), .init(card: .stats)]) { store, now in

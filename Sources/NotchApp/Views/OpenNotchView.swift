@@ -2,6 +2,7 @@ import SwiftUI
 
 struct OpenNotchView: View {
     @ObservedObject var viewModel: NotchViewModel
+    @ObservedObject private var homeEditing = HomeEditing.shared
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var battery: BatteryMonitor
     @EnvironmentObject private var activity: ActivityCenter
@@ -52,7 +53,8 @@ struct OpenNotchView: View {
             // A tab picked from the keyboard shows its name here the same way, briefly.
             let flash = activity.peek.flatMap { $0.kind == .volume || $0.kind == .brightness ? $0 : nil }
             let tabName = flash == nil ? viewModel.tabFlash : nil
-            let covered = flash != nil || tabName != nil
+            let editingHome = homeEditing.active && viewModel.tab == .home && flash == nil && tabName == nil
+            let covered = flash != nil || tabName != nil || editingHome
             ZStack(alignment: .trailing) {
                 statusItems
                     .opacity(covered ? 0 : 1)
@@ -71,14 +73,21 @@ struct OpenNotchView: View {
                     .padding(.trailing, 4)
                     .id(tabName)
                     .transition(.blurReplace)
+                } else if editingHome {
+                    HomeEditBar()
+                        .transition(.blurReplace)
                 }
             }
+            .animation(.snappy(duration: 0.25), value: editingHome)
             .animation(.snappy(duration: 0.25), value: flash == nil)
             .animation(.snappy(duration: 0.25), value: tabName)
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 14)
         .padding(.top, 2)
+        .onChange(of: viewModel.tab) { _, tab in
+            if tab != .home { homeEditing.end() }
+        }
     }
 
     /// The battery, the camera mirror and Settings, on the right of the notch.
@@ -263,6 +272,10 @@ struct HomeView: View {
     @ObservedObject private var meetings = MeetingMonitor.shared
     @ObservedObject private var weather = TodayWeather.shared
     @ObservedObject private var birthdays = Birthdays.shared
+    @ObservedObject private var editing = HomeEditing.shared
+    /// The card being dragged in edit mode, and how far.
+    @State private var dragging: HomeCard?
+    @State private var dragOffset: CGFloat = 0
     @ObservedObject private var devices = DeviceBatteries.shared
     @EnvironmentObject private var battery: BatteryMonitor
     /// Debug (`homeshot`): music's size and a call, instead of what's going on.
@@ -281,52 +294,116 @@ struct HomeView: View {
 
     private var content: some View {
         GeometryReader { geo in
-            let columns = HomeTiler.tile(shot?.cards ?? settings.homeCards, width: geo.size.width, height: geo.size.height, wanted: wanted)
+            let entries = shot?.cards ?? settings.homeCards
+            let columns = HomeTiler.tile(entries, width: geo.size.width, height: geo.size.height, wanted: wanted)
             let all = columns.flatMap(\.cards)
             let fit = HomeFit.fitting(height: geo.size.height, birthday: !birthdays.today.isEmpty)
-            if columns.isEmpty {
-                VStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 22))
-                    Text(settings.homeCards.isEmpty ? "Add cards to Home in Settings" : "Turn on Music, Calendar or Tasks in Settings")
-                        .font(.system(size: 12))
-                }
-                .foregroundStyle(.white.opacity(0.5))
-                .frame(width: geo.size.width, height: geo.size.height)
-            } else {
-                // The fixed columns first; the rest share what they leave.
-                let flexible = columns.filter { $0.width == nil }.count
-                let left = geo.size.width - columns.reduce(0) { $0 + $1.gap + ($1.width ?? 0) }
-                HStack(spacing: 0) {
-                    ForEach(Array(columns.enumerated()), id: \.element.id) { i, column in
-                        if i > 0 {
-                            ZStack {
-                                if column.rule { rule(between: columns[i - 1].cards[0].card, and: column.cards[0].card, fit: fit) }
-                            }
-                            .frame(width: column.gap, height: geo.size.height)
-                        }
-                        let width = column.width ?? max(0, left) / CGFloat(max(1, flexible))
-                        if let item = column.cards.first, column.cards.count == 1 {
-                            card(item, in: all, fit: fit)
-                                .frame(width: width, height: geo.size.height,
-                                       alignment: item.card == .music && item.size == .large ? .leading : .center)
-                        } else {
-                            // Two half-height tiles stacked.
-                            VStack(spacing: HomeTiler.stackGap) {
-                                ForEach(column.cards, id: \.card) { item in
-                                    card(item, in: all, fit: fit)
-                                        .frame(width: width, height: (geo.size.height - HomeTiler.stackGap) / 2)
-                                }
-                            }
-                            .frame(width: width, height: geo.size.height)
-                        }
+            let waiting = entries.map(\.card).filter { card in wanted(card) != nil && !all.contains { $0.card == card } }
+            Group {
+                if isEditing, shot == nil, editing.adding {
+                    HomeCardGallery()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .transition(.opacity)
+                } else if columns.isEmpty {
+                    VStack(spacing: 6) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 22))
+                        Text(isEditing ? "Add cards with the + above" : entries.isEmpty ? "Right-click to add cards to Home" : "Turn on Music, Calendar or Tasks in Settings")
+                            .font(.system(size: 12))
                     }
+                    .foregroundStyle(.white.opacity(0.5))
+                    .frame(width: geo.size.width, height: geo.size.height)
+                } else {
+                    row(columns, all: all, fit: fit, size: geo.size)
                 }
+            }
+            .onChange(of: waiting, initial: true) { _, waiting in
+                if shot == nil { editing.waiting = waiting }
+            }
+        }
+        .contextMenu {
+            if shot == nil {
+                Button(isEditing ? "Done Editing" : "Edit Home…") { isEditing ? editing.end() : editing.begin() }
             }
         }
         .onAppear { musicLarge = shot.map { $0.music == .large } ?? media.isPlaying }
         .onChange(of: media.isPlaying) { _, playing in
             if playing, !musicLarge, shot == nil { withAnimation(Motion.pane.animation) { musicLarge = true } }
+        }
+    }
+
+    private var isEditing: Bool { shot?.editing ?? editing.active }
+
+    private func row(_ columns: [HomeTiler.Column], all: [HomeTiler.Placed], fit: HomeFit, size: CGSize) -> some View {
+        // The fixed columns first; the rest share what they leave.
+        let flexible = columns.filter { $0.width == nil }.count
+        let left = size.width - columns.reduce(0) { $0 + $1.gap + ($1.width ?? 0) }
+        let widths = columns.map { $0.width ?? max(0, left) / CGFloat(max(1, flexible)) }
+        // Each column's middle, for where a dragged card lands.
+        var middles: [CGFloat] = []
+        var x: CGFloat = 0
+        for (column, width) in zip(columns, widths) {
+            x += column.gap
+            middles.append(x + width / 2)
+            x += width
+        }
+        return HStack(spacing: 0) {
+            ForEach(Array(columns.enumerated()), id: \.element.id) { i, column in
+                if i > 0 {
+                    ZStack {
+                        if column.rule, !isEditing { rule(between: columns[i - 1].cards[0].card, and: column.cards[0].card, fit: fit) }
+                    }
+                    .frame(width: column.gap, height: size.height)
+                }
+                Group {
+                    if let item = column.cards.first, column.cards.count == 1 {
+                        editable(card(item, in: all, fit: fit), item.card, from: i, columns: columns, middles: middles)
+                            .frame(width: widths[i], height: size.height,
+                                   alignment: item.card == .music && item.size == .large ? .leading : .center)
+                    } else {
+                        // Two half-height tiles stacked.
+                        VStack(spacing: HomeTiler.stackGap) {
+                            ForEach(column.cards, id: \.card) { item in
+                                editable(card(item, in: all, fit: fit), item.card, from: i, columns: columns, middles: middles)
+                                    .frame(width: widths[i], height: (size.height - HomeTiler.stackGap) / 2)
+                            }
+                        }
+                        .frame(width: widths[i], height: size.height)
+                    }
+                }
+                .zIndex(column.cards.contains { $0.card == dragging } ? 1 : 0)
+            }
+        }
+    }
+
+    /// A card, decorated for edit mode and following a drag.
+    private func editable(_ view: some View, _ card: HomeCard, from column: Int, columns: [HomeTiler.Column], middles: [CGFloat]) -> some View {
+        let entry = (shot?.cards ?? settings.homeCards).first { $0.card == card } ?? HomeEntry(card: card)
+        return view
+            .modifier(HomeEditDecoration(entry: entry, editing: isEditing,
+                                         onDrag: { dx in dragging = card; dragOffset = dx },
+                                         onDrop: { dx in drop(card, from: column, by: dx, columns: columns, middles: middles) }))
+            .offset(x: dragging == card ? dragOffset : 0)
+            .scaleEffect(dragging == card ? 1.03 : 1)
+    }
+
+    /// Moves a dragged card to the column nearest where it was let go: before that column's cards
+    /// when it went left, after them when it went right.
+    private func drop(_ card: HomeCard, from column: Int, by dx: CGFloat, columns: [HomeTiler.Column], middles: [CGFloat]) {
+        let landed = middles[column] + dx
+        let target = middles.indices.min { abs(middles[$0] - landed) < abs(middles[$1] - landed) } ?? column
+        withAnimation(Motion.pane.animation) {
+            dragging = nil
+            dragOffset = 0
+            guard target != column, let from = settings.homeCards.firstIndex(where: { $0.card == card }) else { return }
+            let right = target > column
+            let anchor = right ? columns[target].cards.last!.card : columns[target].cards.first!.card
+            let entry = settings.homeCards.remove(at: from)
+            guard let at = settings.homeCards.firstIndex(where: { $0.card == anchor }) else {
+                settings.homeCards.insert(entry, at: from)
+                return
+            }
+            settings.homeCards.insert(entry, at: right ? at + 1 : at)
         }
     }
 
@@ -338,7 +415,7 @@ struct HomeView: View {
         case .music:
             let hasTrack = shot.map { $0.music != .none } ?? media.hasTrack
             guard settings.musicEnabled, hasTrack || !showsToday else { return nil }
-            return settings.homeMusicTakesOver && musicLarge ? .large : .small
+            return settings.homeMusicTakesOver && musicLarge ? .large : .medium
         case .today:
             return showsToday ? .medium : nil
         case .weather:
@@ -349,6 +426,12 @@ struct HomeView: View {
             return battery.hasBattery || !devices.devices.isEmpty ? .medium : nil
         case .clock:
             return .medium
+        case .agents:
+            return settings.agentsEnabled ? .medium : nil
+        case .shelf:
+            return settings.shelfEnabled ? .medium : nil
+        case .timer:
+            return settings.timerEnabled ? .medium : nil
         }
     }
 
@@ -357,7 +440,8 @@ struct HomeView: View {
         case .music:
             if placed.count == 1 { MusicPlayerView() }
             else if item.size == .large { MusicPlayerView(half: true) }
-            else { CompactMusicCard() }
+            else if item.size == .medium { CompactMusicCard() }
+            else { MusicTile() }
         case .today:
             // Beside the big player it's half of Home; beside the small card, the day in full;
             // alone, roomy enough for the tasks in a column of their own.
@@ -371,6 +455,9 @@ struct HomeView: View {
         case .stats: StatsCard(small: item.size == .small)
         case .batteries: BatteriesCard(small: item.size == .small)
         case .clock: ClockCard(small: item.size == .small)
+        case .agents: AgentsCard(small: item.size == .small)
+        case .shelf: ShelfCard(small: item.size == .small)
+        case .timer: TimerCard(small: item.size == .small)
         }
     }
 

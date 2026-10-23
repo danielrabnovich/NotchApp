@@ -72,19 +72,30 @@ struct TodayPanel: View {
     private var showsBirthdayLine: Bool { fit.birthdayLine && !birthdays.today.isEmpty }
 
     private func header(now: Date) -> some View {
+        // Narrower days, then no month, when Today is squeezed between other cards.
+        ViewThatFits(in: .horizontal) {
+            headerLine(now: now, month: true, pitch: 30)
+            headerLine(now: now, month: true, pitch: 26)
+            headerLine(now: now, month: false, pitch: 26)
+        }
+        .frame(height: fit.letters ? nil : fit.headerHeight)
+    }
+
+    private func headerLine(now: Date, month: Bool, pitch: CGFloat) -> some View {
         HStack(alignment: .center, spacing: 12) {
-            Text(picked ?? now, format: .dateTime.month(.abbreviated))
-                .font(.system(size: 22, weight: .bold))
-                .lineLimit(1)
-                .fixedSize()
-                .contentShape(Rectangle())
-                .onTapGesture { calendar.openCalendar() }
-                .help("Open Calendar")
-            WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: 30, letters: fit.letters,
+            if month {
+                Text(picked ?? now, format: .dateTime.month(.abbreviated))
+                    .font(.system(size: 22, weight: .bold))
+                    .lineLimit(1)
+                    .fixedSize()
+                    .contentShape(Rectangle())
+                    .onTapGesture { calendar.openCalendar() }
+                    .help("Open Calendar")
+            }
+            WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: pitch, letters: fit.letters,
                       picked: settings.calendarEnabled ? $picked : .constant(nil))
             Spacer(minLength: 0)
         }
-        .frame(height: fit.letters ? nil : fit.headerHeight)
     }
 
     /// A day other than today, picked in the week strip: all of its events.
