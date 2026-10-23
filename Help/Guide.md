@@ -106,7 +106,9 @@ Everything runs on your Mac unless you choose a cloud model. Web searches send o
 
 ## Troubleshooting
 - "Couldn't reach Ollama": start Ollama from Settings → Search, or run `ollama serve`, and check a model is downloaded.
-- "Claude Code isn't signed in" or "Codex isn't signed in": press Sign in in Settings → Search, or run `claude auth login` / `codex login` in Terminal, then Check again. If the tool isn't found, set its Location there (run `which claude` or `which codex` to see where it is).
+- "Claude Code isn't signed in" or "Codex isn't signed in": press Sign in in Settings → Search, or run `claude auth login` / `codex login` in Terminal. Settings updates by itself once you're signed in. If the tool isn't found, set its Location there (run `which claude` or `which codex` to see where it is).
+- "Needs an update" next to Claude Code or Codex: that version is too old for NotchApp. Press Update in Settings → Search (Claude Code updates in Terminal; for Codex, update it the way you installed it).
+- Claude Code through your company's Amazon Bedrock or Google Vertex account: NotchApp uses the settings your Terminal sets up (your shell profile), so if `claude` works in Terminal it works here. Changed your profile? Press Check again in Settings → Search.
 - "Structured output is unavailable": that model can't use JSON mode; NotchApp now asks for JSON in the prompt instead, so it should work after an update.
 - A permission is on but the feature says it isn't: macOS may be holding the switch for an older build. Remove NotchApp from that list in System Settings and add it again, then reopen NotchApp.
 - Search can't see a folder: allow Desktop, Documents and Downloads in Settings → Search → Files & folders.

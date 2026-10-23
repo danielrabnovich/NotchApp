@@ -29,6 +29,23 @@ enum CLIAgent {
         /// The CLI's own sign-in command, run in Terminal so its browser login works as usual.
         var loginArguments: [String] { self == .claude ? ["auth", "login"] : ["login"] }
 
+        /// The CLI's own update command, when it has one that works however it was installed.
+        /// Codex is updated the way it was installed (npm, Homebrew…), so it gets its install page.
+        var updateArguments: [String]? { self == .claude ? ["update"] : nil }
+
+        /// The help page that lists the options NotchApp uses, and those options. A version too old
+        /// to list them all would fail every request with "unknown option".
+        var helpArguments: [String] { self == .claude ? ["--help"] : ["exec", "--help"] }
+        var requiredFlags: [String] {
+            switch self {
+            case .claude: ["--print", "--input-format", "--output-format", "--include-partial-messages", "--verbose", "--tools",
+                           "--strict-mcp-config", "--setting-sources", "--disable-slash-commands", "--no-session-persistence",
+                           "--system-prompt", "--model", "--effort"]
+            case .codex: ["--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules",
+                          "--color", "--sandbox", "--cd", "--config", "--model", "--image"]
+            }
+        }
+
         /// Models offered in Settings, as the CLI's own names ("" is the CLI's default). Codex's
         /// list depends on the plan, so it gets a text field instead.
         var suggestedModels: [ModelChoice] {
@@ -63,7 +80,19 @@ enum CLIAgent {
         case ready
         case notInstalled
         case signedOut
+        /// Installed, but too old for the options NotchApp uses.
+        case outdated
+        /// The status check itself failed (timed out, unreadable answer). Requests still go
+        /// through, so a real problem shows up as that request's error.
+        case checkFailed
+
+        /// Whether requests should go to the CLI.
+        var usable: Bool { self == .ready || self == .checkFailed }
     }
+
+    /// Posted on the main thread when a CLI's availability changes, so Settings and the Search
+    /// tab update without waiting for someone to press Check again.
+    static let availabilityChanged = Notification.Name("CLIAgent.availabilityChanged")
 
     // MARK: - Active config
 
@@ -80,32 +109,47 @@ enum CLIAgent {
 
     // MARK: - Status
 
-    /// Whether the CLI is installed and signed in. Cached for a minute: Settings and the Search tab
-    /// ask often, and each check starts a process.
-    static func availability(_ tool: Tool, refresh: Bool = false) async -> Availability {
+    /// Whether the CLI is installed, recent enough and signed in. Cached for a minute: Settings and
+    /// the Search tab ask often, and each check starts a process. `refresh` skips the cache;
+    /// `rescan` also looks for the CLI again and re-reads the Terminal setup (a CLI installed or
+    /// moved since NotchApp opened).
+    static func availability(_ tool: Tool, refresh: Bool = false, rescan: Bool = false) async -> Availability {
         let custom = await MainActor.run { AppSettings.shared.cliPaths[tool.providerRawValue] ?? "" }
-        if !refresh, let cached = await Locator.shared.cachedAvailability(tool) { return cached }
-        guard let exe = await Locator.shared.executable(for: tool, custom: custom, refresh: refresh) else {
+        if !refresh, !rescan, let cached = await Locator.shared.cachedAvailability(tool) { return cached }
+        if rescan { await Locator.shared.reloadShell() }
+        guard let exe = await Locator.shared.executable(for: tool, custom: custom, refresh: rescan) else {
             await Locator.shared.store(.notInstalled, for: tool)
             return .notInstalled
         }
         let env = await Locator.shared.environment(for: exe)
+        guard await Locator.shared.supportsRequiredFlags(tool, executable: exe, env: env) else {
+            await Locator.shared.store(.outdated, for: tool)
+            return .outdated
+        }
         let result: Availability
         switch tool {
         case .claude:
-            // `claude auth status` prints JSON with "loggedIn". Older versions without the command
-            // are assumed signed in; the first request explains if they aren't.
+            // `claude auth status --json` prints {"loggedIn": …, "apiProvider": …}; exit code 1 when
+            // signed out. Company setups (Amazon Bedrock, Google Vertex…) sign in through their
+            // cloud account rather than claude.ai, so they count as signed in.
             let r = await run(exe, ["auth", "status", "--json"], env: env, timeout: 15)
-            if let obj = try? JSONSerialization.jsonObject(with: Data(r.out.utf8)) as? [String: Any],
+            // Just the JSON object: a warning may be printed around it.
+            var json = ""
+            if let start = r.out.firstIndex(of: "{"), let end = r.out.lastIndex(of: "}"), start < end { json = String(r.out[start...end]) }
+            if let obj = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
                let loggedIn = obj["loggedIn"] as? Bool {
-                result = loggedIn ? .ready : .signedOut
+                let provider = obj["apiProvider"] as? String ?? "firstParty"
+                result = loggedIn || provider != "firstParty" ? .ready : .signedOut
             } else {
-                result = r.out.localizedCaseInsensitiveContains("not logged in") ? .signedOut : .ready
+                result = .checkFailed
             }
         case .codex:
-            // `codex login status` exits 0 when signed in (ChatGPT or an API key saved in Codex).
+            // `codex login status` exits 0 when signed in (ChatGPT or an API key saved in Codex),
+            // and prints "Not logged in" with exit code 1 when not.
             let r = await run(exe, ["login", "status"], env: env, timeout: 15)
-            result = r.code == 0 ? .ready : .signedOut
+            if r.code == 0 { result = .ready }
+            else if r.out.localizedCaseInsensitiveContains("not logged in") { result = .signedOut }
+            else { result = .checkFailed }
         }
         await Locator.shared.store(result, for: tool)
         return result
@@ -118,21 +162,83 @@ enum CLIAgent {
     }
 
     /// Opens Terminal on the CLI's own sign-in, so its usual browser login runs. NotchApp only
-    /// checks the result afterwards; it never handles the credentials.
+    /// checks the result afterwards; it never handles the credentials. It watches for the sign-in
+    /// to finish, so Settings and the Search tab turn ready by themselves.
     @MainActor static func openSignIn(_ tool: Tool) {
+        openInTerminal(tool, arguments: tool.loginArguments, doing: "Signing in to \(tool.name)",
+                       failed: "Sign-in didn't finish.", retry: "press Sign in again")
+        watch(tool) { $0 == .ready }
+    }
+
+    /// Updates a CLI that's too old: Claude Code updates itself in Terminal; Codex's install page
+    /// explains the update for however it was installed.
+    @MainActor static func openUpdate(_ tool: Tool) {
+        guard let arguments = tool.updateArguments else {
+            NSWorkspace.shared.open(tool.installURL)
+            watch(tool) { $0 != .outdated }
+            return
+        }
+        openInTerminal(tool, arguments: arguments, doing: "Updating \(tool.name)",
+                       failed: "The update didn't finish.", retry: "try Update again")
+        watch(tool) { $0 != .outdated }
+    }
+
+    /// Runs one of the CLI's own commands in a Terminal window, with a line before and after
+    /// saying what it's for and what to do next. Terminal is asked for by name, so the script
+    /// isn't opened in an editor when .command files belong to another app. The script deletes
+    /// itself as soon as it starts.
+    @MainActor private static func openInTerminal(_ tool: Tool, arguments: [String], doing: String, failed: String, retry: String) {
         Task {
             let custom = AppSettings.shared.cliPaths[tool.providerRawValue] ?? ""
             let exe = await Locator.shared.executable(for: tool, custom: custom) ?? tool.command
-            let script = "#!/bin/zsh -l\n" + ([exe] + tool.loginArguments).map(shellQuoted).joined(separator: " ") + "\n"
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("NotchApp-\(tool.command)-login.command")
+            let command = ([exe] + arguments).map(shellQuoted).joined(separator: " ")
+            let script = """
+                #!/bin/zsh -l
+                rm -f "$0"
+                clear
+                echo \(shellQuoted("\(doing) for NotchApp. A browser page may open; follow the steps there or below."))
+                echo
+                if \(command); then
+                  echo
+                  echo \(shellQuoted("Done. NotchApp picks this up by itself, so you can close this window."))
+                else
+                  echo
+                  echo \(shellQuoted("\(failed) Close this window and \(retry) in NotchApp's Settings."))
+                fi
+
+                """
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("NotchApp-\(tool.command)-\(UUID().uuidString.prefix(8)).command")
             do {
                 try script.write(to: url, atomically: true, encoding: .utf8)
                 try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
-                NSWorkspace.shared.open(url)
             } catch {
-                DebugHooks.log("CLIAgent: couldn't open sign-in: \(error)")
+                DebugHooks.log("CLIAgent: couldn't write the Terminal script: \(error)")
+                return
             }
-            await Locator.shared.forget(tool)
+            let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+            if FileManager.default.fileExists(atPath: terminal.path) {
+                NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                    if let error { DebugHooks.log("CLIAgent: couldn't open Terminal: \(error)") }
+                }
+            } else {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+
+    /// Re-checks every few seconds after a sign-in or update is started, until `done` holds or
+    /// five minutes pass. Each change is posted (`availabilityChanged`), so the screens update.
+    @MainActor private static var watchers: [Tool: Task<Void, Never>] = [:]
+
+    @MainActor private static func watch(_ tool: Tool, until done: @escaping @Sendable (Availability) -> Bool) {
+        watchers[tool]?.cancel()
+        watchers[tool] = Task {
+            for _ in 0..<100 {
+                try? await Task.sleep(for: .seconds(3))
+                if Task.isCancelled { return }
+                if done(await availability(tool, refresh: true)) { break }
+            }
+            if !Task.isCancelled { watchers[tool] = nil }
         }
     }
 
@@ -197,6 +303,9 @@ enum CLIAgent {
                     if (event?["delta"] as? [String: Any])?["stop_reason"] as? String == "refusal" { state.refused = true }
                 default: break
                 }
+            case "assistant":
+                // Claude Code's own name for what went wrong ("authentication_failed", "rate_limit"…).
+                if let code = obj["error"] as? String { state.errorCode = code }
             case "result":
                 let text = obj["result"] as? String ?? ""
                 if obj["is_error"] as? Bool == true { state.error = text.isEmpty ? "Claude Code stopped with an error." : text }
@@ -204,11 +313,12 @@ enum CLIAgent {
             default: break
             }
         }
-        if let error = state.error { throw CLIError(message: friendly(error, tool: .claude)) }
+        if let error = state.error { throw await failure(error, code: state.errorCode, tool: .claude) }
         if state.refused { throw CLIError(message: "The model declined to answer that.") }
         let final = (state.text.isEmpty ? state.result ?? "" : state.text).trimmingCharacters(in: .whitespacesAndNewlines)
         if final.isEmpty, outcome.code != 0 {
-            throw CLIError(message: friendly(outcome.stderr.isEmpty ? "Claude Code exited with code \(outcome.code)." : outcome.stderr, tool: .claude))
+            throw await failure(outcome.stderr.isEmpty ? "Claude Code exited with code \(outcome.code)." : outcome.stderr,
+                                code: state.errorCode, tool: .claude)
         }
         await onText(final)
         return final
@@ -262,11 +372,11 @@ enum CLIAgent {
             default: break
             }
         }
-        if let error = state.error { throw CLIError(message: friendly(error, tool: .codex)) }
+        if let error = state.error { throw await failure(error, tool: .codex) }
         let final = state.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if final.isEmpty {
             let why = state.lastNotice ?? (outcome.stderr.isEmpty ? "Codex exited with code \(outcome.code)." : outcome.stderr)
-            throw CLIError(message: friendly(why, tool: .codex))
+            throw await failure(why, tool: .codex)
         }
         await onText(final)
         return final
@@ -280,6 +390,7 @@ enum CLIAgent {
         var result: String?
         var error: String?
         var lastNotice: String?
+        var errorCode: String?
         var refused = false
         private var lastEmit = Date.distantPast
 
@@ -401,18 +512,57 @@ enum CLIAgent {
 
     // MARK: - Helpers
 
+    /// What a CLI's error comes down to, when it's one of the cases with a clear fix.
+    enum Problem: Equatable {
+        case signedOut, usageLimit, outdated
+    }
+
+    /// Reads a CLI's error. Matches whole phrases these CLIs actually print (checked against
+    /// Claude Code 2.1 and Codex 0.157), not loose words like "login", so an unrelated error that
+    /// happens to mention one isn't reported as a sign-in problem.
+    static func problem(in raw: String, code: String? = nil) -> Problem? {
+        let lower = raw.lowercased()
+        // An old CLI rejecting an option NotchApp passes: Claude Code prints "error: unknown option
+        // '--effort'", Codex "error: unexpected argument '--ignore-rules' found".
+        if lower.contains("unknown option '--") || lower.contains("unexpected argument '--") { return .outdated }
+        if code == "authentication_failed" { return .signedOut }
+        if code == "rate_limit" { return .usageLimit }
+        if ["not logged in", "please run /login", "please log in", "log in again", "sign in again",
+            "invalid api key", "invalid x-api-key", "oauth token has expired", "could not be refreshed",
+            "401 unauthorized", "missing bearer or basic authentication"].contains(where: lower.contains) {
+            return .signedOut
+        }
+        if ["usage limit", "rate limit", "limit reached", "hit your limit", "429 too many requests",
+            "quota exceeded", "insufficient_quota"].contains(where: lower.contains) {
+            return .usageLimit
+        }
+        return nil
+    }
+
     /// Turns the CLIs' errors into something to act on.
-    static func friendly(_ raw: String, tool: Tool) -> String {
+    static func friendly(_ raw: String, code: String? = nil, tool: Tool) -> String {
         let m = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = m.lowercased()
-        if ["not logged in", "please run /login", "log in", "login", "unauthorized", "401", "authentication",
-            "invalid api key", "oauth token"].contains(where: lower.contains) {
+        switch problem(in: m, code: code) {
+        case .outdated?:
+            return "This version of \(tool.name) is too old for NotchApp. Update it from Settings → Search."
+        case .signedOut?:
             return "\(tool.name) isn't signed in. Sign in from Settings → Search."
-        }
-        if ["usage limit", "rate limit", "limit reached", "429", "quota"].contains(where: lower.contains) {
+        case .usageLimit?:
             return "Your \(tool.plan) plan's usage limit is reached for now. \(m)"
+        case nil:
+            return m.isEmpty ? "\(tool.name) stopped with an error." : "\(tool.name): \(m)"
         }
-        return m.isEmpty ? "\(tool.name) stopped with an error." : "\(tool.name): \(m)"
+    }
+
+    /// The error to show for a failed request. A sign-in or version problem also updates the
+    /// saved status, so Settings and the Search tab show it straight away.
+    private static func failure(_ raw: String, code: String? = nil, tool: Tool) async -> CLIError {
+        switch problem(in: raw, code: code) {
+        case .signedOut?: await Locator.shared.store(.signedOut, for: tool)
+        case .outdated?: await Locator.shared.store(.outdated, for: tool)
+        default: break
+        }
+        return CLIError(message: friendly(raw, code: code, tool: tool))
     }
 
     /// A TOML basic string. A JSON string literal is one (same escapes), so JSON encoding does it.
@@ -430,14 +580,20 @@ enum CLIAgent {
 // MARK: - Finding the CLI
 
 extension CLIAgent {
-    /// Finds the CLI and the PATH it needs. Apps opened from the Dock don't get the shell's PATH,
-    /// so an npm-installed CLI (which needs `node`) wouldn't run without the login shell's.
+    /// Finds the CLI and the environment it needs. Apps opened from the Dock don't get the shell's
+    /// setup, so an npm-installed CLI (which needs `node`) wouldn't run, and settings people keep in
+    /// their shell profile (a company's Amazon Bedrock or Google Vertex setup, a proxy, a
+    /// certificate) wouldn't apply. NotchApp reads the login shell's environment once and runs the
+    /// CLI with it, the way it runs when typed in Terminal.
     actor Locator {
         static let shared = Locator()
 
         private var executables: [Tool: String] = [:]
         private var availability: [Tool: (value: Availability, at: Date)] = [:]
-        private var shellPATH: String?
+        private var shellEnvironment: [String: String]?
+        /// Whether a given build of a CLI lists every option NotchApp uses, keyed by its path and
+        /// modification date, so an update is noticed without re-reading the help on every check.
+        private var flagSupport: [String: Bool] = [:]
 
         func executable(for tool: Tool, custom: String, refresh: Bool = false) async -> String? {
             let custom = (custom as NSString).expandingTildeInPath.trimmingCharacters(in: .whitespaces)
@@ -452,28 +608,54 @@ extension CLIAgent {
                           "\(home)/.npm-global/bin/codex", "\(home)/.bun/bin/codex", "\(home)/.volta/bin/codex",
                           "/Applications/Codex.app/Contents/Resources/codex"]
             }
-            candidates += await loginShellPATH().split(separator: ":").map { "\($0)/\(tool.command)" }
+            let shellPATH = await loginShellEnvironment()["PATH"] ?? ""
+            candidates += shellPATH.split(separator: ":").map { "\($0)/\(tool.command)" }
             let found = candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
             executables[tool] = found
             return found
         }
 
-        /// The environment for a CLI run: the login shell's PATH (plus the CLI's own folder), and
-        /// no API keys, so the CLI uses the plan it's signed in with rather than billing a key that
-        /// happens to be in the environment.
+        /// The environment for a CLI run: NotchApp's own, with the login shell's on top (its PATH
+        /// plus the CLI's own folder first), and no API keys, so the CLI uses the plan it's signed in
+        /// with rather than billing a key that happens to be set.
         func environment(for executable: String) async -> [String: String] {
             var env = ProcessInfo.processInfo.environment
+            for (key, value) in await loginShellEnvironment() where !Self.terminalOnlyKeys.contains(key) {
+                env[key] = value
+            }
             for key in ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY",
                         // Set inside a Claude Code session; would make the CLI think it's nested.
                         "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"] {
                 env.removeValue(forKey: key)
             }
             let dir = (executable as NSString).deletingLastPathComponent
-            env["PATH"] = ([dir, await loginShellPATH(), "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"])
+            env["PATH"] = ([dir, env["PATH"] ?? "", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"])
                 .filter { !$0.isEmpty }.joined(separator: ":")
             env["NO_COLOR"] = "1"
             env["TERM"] = "dumb"
             return env
+        }
+
+        /// Shell values that describe the Terminal session itself rather than the person's setup.
+        private static let terminalOnlyKeys: Set<String> = [
+            "_", "SHLVL", "PWD", "OLDPWD", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "TERM_SESSION_ID",
+            "COLORTERM", "TMUX", "TMUX_PANE", "STY", "WINDOWID", "SSH_TTY",
+        ]
+
+        /// Whether this build of the CLI lists every option NotchApp passes it (`Tool.requiredFlags`).
+        /// A help page that can't be read at all isn't held against it: the request's own error says more.
+        func supportsRequiredFlags(_ tool: Tool, executable: String, env: [String: String]) async -> Bool {
+            let resolved = URL(fileURLWithPath: executable).resolvingSymlinksInPath().path
+            let modified = (try? FileManager.default.attributesOfItem(atPath: resolved)[.modificationDate] as? Date)?
+                .timeIntervalSince1970 ?? 0
+            let key = "\(resolved)@\(modified)"
+            if let known = flagSupport[key] { return known }
+            let r = await CLIAgent.run(executable, tool.helpArguments, env: env, timeout: 15)
+            guard !r.out.isEmpty else { return true }
+            let listed = Set(r.out.split(whereSeparator: { $0.isWhitespace || ",[]=()<>".contains($0) }).map(String.init))
+            let supported = tool.requiredFlags.allSatisfy(listed.contains)
+            flagSupport[key] = supported
+            return supported
         }
 
         func cachedAvailability(_ tool: Tool) -> Availability? {
@@ -481,25 +663,58 @@ extension CLIAgent {
             return entry.value
         }
 
-        func store(_ value: Availability, for tool: Tool) { availability[tool] = (value, Date()) }
-
-        func forget(_ tool: Tool) {
-            availability[tool] = nil
-            executables[tool] = nil
+        /// Saves a check's result and, when it changed, tells Settings and the Search tab.
+        func store(_ value: Availability, for tool: Tool) {
+            let changed = availability[tool]?.value != value
+            availability[tool] = (value, Date())
+            guard changed else { return }
+            Task { @MainActor in
+                NotificationCenter.default.post(name: CLIAgent.availabilityChanged, object: nil, userInfo: ["tool": tool.rawValue])
+                AssistantStore.shared.refreshStatus()
+            }
         }
 
-        /// The PATH an interactive login shell sets up (nvm, Homebrew, Volta…), read once.
-        private func loginShellPATH() async -> String {
-            if let shellPATH { return shellPATH }
+        /// Looks again for the CLIs and re-reads the shell's environment, for a CLI installed or a
+        /// shell profile changed since NotchApp opened.
+        func reloadShell() {
+            shellEnvironment = nil
+            executables.removeAll()
+        }
+
+        /// The environment an interactive login shell sets up (PATH from nvm, Homebrew, Volta…, and
+        /// whatever else the profile exports), read once and kept until `reloadShell`. Read with
+        /// plain `env` between markers, so it works the same in zsh, bash and fish, and anything a
+        /// profile prints around it is ignored.
+        private func loginShellEnvironment() async -> [String: String] {
+            if let shellEnvironment { return shellEnvironment }
             let shell = ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
-            let marker = "__NOTCHAPP_PATH__"
-            let r = await CLIAgent.run(shell, ["-ilc", "printf '\(marker)%s\(marker)' \"$PATH\""],
-                                       env: ProcessInfo.processInfo.environment, timeout: 5)
-            var path = ""
+            let marker = "__NOTCHAPP_ENV__"
+            let r = await CLIAgent.run(shell, ["-ilc", "printf '\(marker)'; /usr/bin/env; printf '\(marker)'"],
+                                       env: ProcessInfo.processInfo.environment, timeout: 10)
             let parts = r.out.components(separatedBy: marker)
-            if parts.count >= 3 { path = parts[1] }
-            shellPATH = path
-            return path
+            let found = parts.count >= 3 ? Self.parseEnv(parts[1]) : [:]
+            shellEnvironment = found
+            return found
+        }
+
+        /// Reads `env` output: one NAME=value per line, where a line that doesn't start with a name
+        /// continues the value above it (a value with a line break in it).
+        static func parseEnv(_ text: String) -> [String: String] {
+            var found: [String: String] = [:]
+            var current: String?
+            for line in text.components(separatedBy: "\n") {
+                if let eq = line.firstIndex(of: "="), eq != line.startIndex,
+                   line[..<eq].allSatisfy({ $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) }) {
+                    let key = String(line[..<eq])
+                    found[key] = String(line[line.index(after: eq)...])
+                    current = key
+                } else if let key = current {
+                    found[key, default: ""] += "\n" + line
+                }
+            }
+            // The newline `env` ends with isn't part of the last value.
+            if let key = current, let value = found[key], value.hasSuffix("\n") { found[key] = String(value.dropLast()) }
+            return found
         }
     }
 }

@@ -2982,6 +2982,9 @@ private struct AIStatusLine: View {
                         if availability == .signedOut {
                             Button("Sign in to \(tool.name)") { CLIAgent.openSignIn(tool) }
                                 .buttonStyle(NotchLinkButtonStyle())
+                        } else if availability == .outdated {
+                            Button("Update \(tool.name)") { CLIAgent.openUpdate(tool) }
+                                .buttonStyle(NotchLinkButtonStyle())
                         } else {
                             Link("Get \(tool.name)", destination: tool.installURL)
                                 .foregroundStyle(ActionColor.link)

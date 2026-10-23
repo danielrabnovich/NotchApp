@@ -1038,10 +1038,17 @@ private struct CLIProviderSettings: View {
                       prompt: Text("Found automatically")) {
                 RowLabel(title: "Location", subtitle: "Only if \(tool.command) is somewhere unusual. Press Return to check it.")
             }
-            .onSubmit(check)
+            .onSubmit { check(rescan: true) }
         }
-        .onAppear(perform: check)
+        .onAppear { check() }
         .onChange(of: provider) { _, _ in check() }
+        // A sign-in or update finished in Terminal (NotchApp watches for it), or the person came
+        // back to NotchApp from somewhere else: show where things stand without a button press.
+        .onReceive(NotificationCenter.default.publisher(for: CLIAgent.availabilityChanged)) { note in
+            guard note.userInfo?["tool"] as? String == tool.rawValue, !checking else { return }
+            Task { availability = await CLIAgent.availability(tool) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in check() }
     }
 
     @ViewBuilder private var statusLabel: some View {
@@ -1051,6 +1058,8 @@ private struct CLIProviderSettings: View {
             switch availability {
             case .ready?: Label("Signed in", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
             case .signedOut?: Label("Not signed in", systemImage: "person.crop.circle.badge.exclamationmark").foregroundStyle(.orange)
+            case .outdated?: Label("Needs an update", systemImage: "arrow.down.circle.fill").foregroundStyle(.orange)
+            case .checkFailed?: Label("Couldn't check", systemImage: "questionmark.circle").foregroundStyle(.secondary)
             default: Label("Not installed", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
             }
         }
@@ -1060,13 +1069,21 @@ private struct CLIProviderSettings: View {
         switch availability {
         case .signedOut?:
             Button("Sign in…") { CLIAgent.openSignIn(tool) }
-                .help("Opens Terminal on \(tool.command)'s own sign-in. Come back here when it's done.")
-            Button("Check again", action: check)
+                .help("Opens Terminal on \(tool.command)'s own sign-in. This updates by itself when it's done.")
+            Button("Check again") { check(rescan: true) }
         case .notInstalled?:
             Link("Install…", destination: tool.installURL)
-            Button("Check again", action: check)
+            Button("Check again") { check(rescan: true) }
+        case .outdated?:
+            Button("Update…") { CLIAgent.openUpdate(tool) }
+                .help("This version of \(tool.command) is too old for NotchApp. "
+                      + (tool.updateArguments == nil ? "Opens the page that explains updating it." : "Opens Terminal on \(tool.command)'s own update."))
+            Button("Check again") { check(rescan: true) }
+        case .checkFailed?:
+            Button("Check again") { check(rescan: true) }
+                .help("\(tool.command) didn't answer the status check. Questions still go to it, so any real problem shows up there.")
         case .ready?:
-            Button("Check again", action: check).buttonStyle(.borderless).foregroundStyle(.secondary)
+            Button("Check again") { check(rescan: true) }.buttonStyle(.borderless).foregroundStyle(.secondary)
         case nil:
             EmptyView()
         }
@@ -1076,10 +1093,12 @@ private struct CLIProviderSettings: View {
         Binding(get: { s.cloudModel(for: provider) }, set: { s.cloudModels[provider.rawValue] = $0 })
     }
 
-    private func check() {
+    /// `rescan` also looks for the CLI again and re-reads the Terminal setup: for the buttons,
+    /// where someone may just have installed it or changed their shell profile.
+    private func check(rescan: Bool = false) {
         checking = true
         Task {
-            let result = await CLIAgent.availability(tool, refresh: true)
+            let result = await CLIAgent.availability(tool, refresh: true, rescan: rescan)
             path = await CLIAgent.executablePath(tool)
             availability = result
             checking = false
@@ -1468,7 +1487,8 @@ private struct AssistantPane: View {
         case .needsKey: Text("Add an API key above").foregroundStyle(.orange)
         case .appleUnavailable(let why): Text(why).foregroundStyle(.orange)
         case .cliUnavailable(let tool, let availability):
-            Text(availability == .signedOut ? "Sign in to \(tool.name)" : "\(tool.name) isn't installed").foregroundStyle(.orange)
+            Text(availability == .signedOut ? "Sign in to \(tool.name)"
+                 : availability == .outdated ? "Update \(tool.name)" : "\(tool.name) isn't installed").foregroundStyle(.orange)
         }
     }
 

@@ -74,7 +74,7 @@ enum OllamaClient {
         }
         if let tool = provider.cliTool {
             let availability = await CLIAgent.availability(tool)
-            return availability == .ready ? .ready : .cliUnavailable(tool, availability)
+            return availability.usable ? .ready : .cliUnavailable(tool, availability)
         }
         if provider != .local {
             return await CloudLLM.active != nil ? .ready : .needsKey(provider.shortName)
