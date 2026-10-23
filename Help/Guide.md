@@ -41,8 +41,8 @@ Type what you want done: "timer 10 minutes", "pomodoro", "remind me to call mom 
 ## Command bar {assistant}
 The search bar doubles as a command bar: type a setting's name to flip it ("haptics", "shadow off") or open its page, "translate … to Spanish", "define serendipity", web shortcuts ("yt lofi", "gh notchapp"), power commands (sleep, restart, lock), and window layouts ("left half", "maximize"). Menu items of the app in front show up too.
 
-## Calendar questions {calendar}
-Ask "what's on today", "am I free friday at 3", "when is my dentist appointment" or "next meeting": answers come from your real calendars (iCloud, Google, Exchange and others added in System Settings → Internet Accounts). Adding, moving and cancelling events works from the search bar too. Pick which calendar new events go to in Settings → Calendar & Meetings → Search bar.
+## Calendar questions {home}
+Ask "what's on today", "am I free friday at 3", "when is my dentist appointment" or "next meeting": answers come from your real calendars (iCloud, Google, Exchange and others added in System Settings → Internet Accounts). Adding, moving and cancelling events works from the search bar too. Pick which calendar new events go to in Settings → Home → Calendar & meetings.
 
 ## Questions about your screen {assistant}
 Ask "what's the right answer to this question", "explain this error", "summarize this page" or "what am I looking at": NotchApp captures the screen behind the notch (in memory only, never saved), reads its text and answers, searching the web when it needs facts. Press ⌃⌥S ("Ask about this") to capture the window in front first and then ask about it. Needs Screen Recording permission (System Settings → Privacy & Security → Screen & System Audio Recording; it's a different list from Accessibility). Turn it off in Settings → Search → Your screen.
@@ -74,8 +74,8 @@ Press ⌃⌥J and talk (or type) everything on your mind; Ramble turns it into t
 ## Glances {live}
 Glances are small live readouts beside the closed notch: now playing, a timer or countdown, battery, a world clock, weather, CPU and memory rings, Focus, downloads in progress, unread counts and more. Rest the pointer on one for details. Choose which ones show, and which pop up by themselves, in Settings → Glances.
 
-## Music and sound {media}
-With the Music add-on on, Home shows what's playing in Music, Spotify or a browser, with album art, controls, a scrubbable progress bar and a visualizer, and you can switch the audio output. The Mixer tab sets each app's volume separately. Settings → Media & Sound.
+## Music and sound {home}
+With the Music add-on on, Home shows what's playing in Music, Spotify or a browser, with album art, controls, a scrubbable progress bar and a visualizer, and you can switch the audio output. The Mixer tab sets each app's volume separately. Settings → Home (music) and Settings → Volume & Brightness (the mixer).
 
 ## Volume, brightness and charging {hud}
 Volume and brightness changes show in the notch instead of macOS's overlay (Settings → Volume & Brightness; needs Accessibility so the keys can be caught). Plugging in shows a charging animation (Settings → Battery).
@@ -83,8 +83,8 @@ Volume and brightness changes show in the notch instead of macOS's overlay (Sett
 ## Timer and Pomodoro {timer}
 The Timer tab has countdowns, Pomodoro and a stopwatch: drag or scroll the ruler, use ← → to set it and Space to start and pause, or type "timer 25m" in Search. A running timer shows beside the notch.
 
-## Meetings {calendar}
-A heads-up drops down before meetings, with a Join button for Zoom, Meet and Teams links. Meeting mode adds a call timer and mute button beside the notch during calls, and can record the call (it asks first) and transcribe it on this Mac for notes and action items afterwards, with the call to play back from any line. After the call it tells the other side's voices apart (a 21 MB model, downloaded once) and names them when the call makes it clear ("thanks, Priya", "this is Sam"); click a speaker's name in the transcript to rename them, and a voice you've named is recognised in later calls. Type “record meeting” to record one in the room. Settings → Calendar & Meetings.
+## Meetings {home}
+A heads-up drops down before meetings, with a Join button for Zoom, Meet and Teams links. Meeting mode adds a call timer and mute button beside the notch during calls, and can record the call (it asks first) and transcribe it on this Mac for notes and action items afterwards, with the call to play back from any line. After the call it tells the other side's voices apart (a 21 MB model, downloaded once) and names them when the call makes it clear ("thanks, Priya", "this is Sam"); click a speaker's name in the transcript to rename them, and a voice you've named is recognised in later calls. Type “record meeting” to record one in the room. Settings → Home.
 
 ## Controls, Keep Awake and camera {controls}
 The Controls tab holds the quick actions you pick: toggles (dark mode, Wi-Fi, mic, Night Shift), a port viewer, speed test, copy text from the screen, colour picker. Keep Awake stops the Mac sleeping, optionally with the display off or the lid closed. The camera mirror shows a preview of yourself before a call. Settings → Controls & Camera.

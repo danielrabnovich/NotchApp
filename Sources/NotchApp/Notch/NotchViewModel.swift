@@ -40,7 +40,8 @@ extension NotchTab {
     var settingsPane: SettingsPane {
         switch self {
         case .ask: .assistant
-        case .home, .mixer: .media
+        case .home: .home
+        case .mixer: .hud
         case .shelf: .shelf
         case .tasks: .tasks
         case .timer: .timer

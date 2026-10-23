@@ -288,7 +288,7 @@ struct HomeView: View {
                 VStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 22))
-                    Text("Turn on Music, Calendar or Tasks in Settings")
+                    Text(settings.homeCards.isEmpty ? "Add cards to Home in Settings" : "Turn on Music, Calendar or Tasks in Settings")
                         .font(.system(size: 12))
                 }
                 .foregroundStyle(.white.opacity(0.5))

@@ -420,8 +420,8 @@ enum CommandParser {
         let found = MeetingAssistant.shared.search(String(q.dropFirst(prefix.count)), limit: 6)
         guard !found.isEmpty else {
             return MeetingAssistant.shared.meetings.isEmpty
-                ? [Command(action: .settingsPane(.calendar), title: "No recorded calls yet",
-                           subtitle: "Turn on Record calls in Settings → Calendar, or type “record meeting”", icon: "waveform", verb: "Open")]
+                ? [Command(action: .settingsPane(.home), title: "No recorded calls yet",
+                           subtitle: "Turn on Record calls in Settings → Home, or type “record meeting”", icon: "waveform", verb: "Open")]
                 : [Command(action: .template(prefix + " "), title: "No call matches", icon: "waveform", verb: "Edit")]
         }
         return found.map { m in

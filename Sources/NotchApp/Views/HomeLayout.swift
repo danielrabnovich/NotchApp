@@ -204,3 +204,56 @@ struct HomeFit: Equatable {
         return HomeFit(headerHeight: shortHeader, birthdayLine: false)
     }
 }
+
+extension HomeCard {
+    var title: String {
+        switch self {
+        case .music: "Music"
+        case .today: "Today"
+        case .weather: "Weather"
+        case .stats: "Stats"
+        case .batteries: "Batteries"
+        case .clock: "World Clock"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .music: "music.note"
+        case .today: "calendar"
+        case .weather: "cloud.sun.fill"
+        case .stats: "gauge.with.dots.needle.50percent"
+        case .batteries: "battery.75percent"
+        case .clock: "globe"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .music: "What's playing, with its controls. Gone when nothing is."
+        case .today: "Your week, today's events, birthdays and what's due."
+        case .weather: "The weather now and the next few days."
+        case .stats: "How busy the Mac is: CPU, GPU and memory."
+        case .batteries: "The Mac's battery and your Bluetooth devices', emptiest first."
+        case .clock: "The time in another city."
+        }
+    }
+
+    /// The sizes it can be set to, smallest first (none: it takes what's left).
+    var sizes: [HomeCardSize] {
+        switch self {
+        case .today: []
+        case .music: [.small, .large]
+        case .weather, .stats, .batteries, .clock: [.small, .medium]
+        }
+    }
+
+    func name(_ size: HomeCardSize) -> String {
+        switch (self, size) {
+        case (.music, .small): "Small card"
+        case (.music, _): "Half of Home"
+        case (_, .small): "Half height"
+        default: "Full height"
+        }
+    }
+}

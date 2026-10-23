@@ -3,7 +3,7 @@ import AppKit
 import SwiftUI
 
 /// Live captions and call transcripts. Captions (turned on by hand) show what the Mac is playing as
-/// text in a strip under the notch. A call being transcribed (Settings → Calendar → Transcribe
+/// text in a strip under the notch. A call being transcribed (Settings → Home → Record
 /// calls) listens to both sides, the call's audio as "Them" and the microphone as "You", and keeps
 /// the transcript for notes afterwards. Everything is turned into text on this Mac.
 @MainActor

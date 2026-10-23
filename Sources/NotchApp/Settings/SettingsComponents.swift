@@ -305,8 +305,10 @@ extension SettingsPane {
         case .appearance: ["accent", "color", "colour", "animation", "bouncy", "shadow", "theme", "haptic", "haptics", "alerts", "notifications", "banners"]
         case .live: ["glances", "live activities", "compact", "density", "spacing", "pin", "beside the notch", "menu bar", "cpu", "battery", "vpn", "network", "agents", "disk", "keep awake", "layout", "apple shortcuts", "shortcuts app", "duo", "duobar"]
         case .assistant: ["search", "ollama", "ai", "model", "web", "weather", "files", "pictures", "screenshots", "ocr", "notifications"]
-        case .media: ["music", "spotify", "now playing", "visualizer", "volume", "mixer", "sound", "per-app"]
-        case .hud: ["volume", "brightness", "overlay", "osd", "hud"]
+        case .home: ["music", "spotify", "now playing", "visualizer", "cards", "layout", "weather", "clock", "world clock", "batteries",
+                     "calendar", "events", "meetings", "zoom", "meet", "teams", "join", "alerts", "transcribe", "transcripts", "captions",
+                     "notes", "action items", "birthdays", "leave"]
+        case .hud: ["volume", "brightness", "overlay", "osd", "hud", "mixer", "sound", "per-app"]
         case .battery: ["charging", "plug", "power"]
         case .shelf: ["files", "drag", "drop", "airdrop", "taildrop", "tailscale", "screenshots", "downloads", "clipboard", "history", "yt-dlp", "youtube", "video", "convert", "ffmpeg", "gif", "quality"]
         case .tasks: ["todo", "reminders", "notes", "scratchpad", "due", "nudges", "brief"]
@@ -314,7 +316,6 @@ extension SettingsPane {
         case .stats: ["cpu", "gpu", "memory", "ram", "temperature", "fahrenheit", "celsius", "fans", "power"]
         case .tools: ["network", "wifi", "speed test", "vpn", "proton", "pia", "mullvad", "ip", "ping", "cleaner", "disk", "uninstall", "bluetooth", "airpods", "battery", "microphone", "camera", "dev server", "ports", "alerts", "offline"]
         case .agents: ["claude", "claude code", "codex", "opencode", "zcode", "tokens", "usage", "keep awake", "ai agents"]
-        case .calendar: ["events", "meetings", "zoom", "meet", "teams", "join", "alerts", "transcribe", "transcripts", "captions", "notes", "action items", "birthdays", "leave"]
         case .controls: ["quick actions", "tiles", "wifi", "dark mode", "ports", "copy text", "ocr", "night shift", "hidden files", "flush dns", "keep awake", "camera", "mirror"]
         case .mouse: ["scroll", "reverse", "middle click", "trackpad", "three finger"]
         case .updates: ["homebrew", "brew", "sparkle", "upgrade"]
@@ -340,14 +341,11 @@ extension SettingsPane {
     /// Pages whose settings all belong to their feature: while it's off, the page offers to turn it
     /// on instead. (Keyboard Shortcuts and Updates keep their settings in view.)
     var switchHidesPage: Bool {
-        [.assistant, .shelf, .tasks, .timer, .stats, .tools, .agents, .calendar, .controls].contains(self)
+        [.assistant, .shelf, .tasks, .timer, .stats, .tools, .agents, .controls].contains(self)
     }
 
     var offDetail: String {
-        switch self {
-        case .calendar: "Turn it on for today's events on Home and a heads-up before meetings."
-        default: "Turn it on for its tab in the notch, and its settings here."
-        }
+        "Turn it on for its tab in the notch, and its settings here."
     }
 
     /// The feature's master switch, for pages that have one.
@@ -363,11 +361,9 @@ extension SettingsPane {
         case .stats: return bind(\.statsEnabled)
         case .tools: return bind(\.toolsEnabled)
         case .agents: return bind(\.agentsEnabled)
-        case .calendar: return bind(\.calendarEnabled)
         case .controls: return bind(\.controlsEnabled)
         case .updates: return bind(\.updateChecks)
         case .shortcuts: return bind(\.hotKeysEnabled)
-        case .media: return Binding(get: { s.musicEnabled }, set: { s.musicEnabled = $0; s.musicLiveActivity = $0 })
         case .battery: return bind(\.chargingAnimation)
         default: return nil
         }
@@ -493,7 +489,8 @@ private struct PaneShortcuts: View {
     private var actions: [HotKeys.Action] {
         switch pane {
         case .assistant: [.search]
-        case .media: [.home, .mixer]
+        case .home: [.home]
+        case .hud: [.mixer]
         case .shelf: [.shelf, .downloads, .clipboard]
         case .tasks: [.tasks, .notes]
         case .timer: [.timer]

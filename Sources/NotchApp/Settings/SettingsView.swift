@@ -96,11 +96,10 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case addOns = "Add-ons"
     case appearance = "Appearance"
     case live = "Glances"
-    // Features in the order of the notch's pages (Search, Home's music and calendar, Shelf, Tasks,
-    // Timer, Controls, Stats, Tools, Agents), then the ones that aren't pages.
+    // Features in the order of the notch's pages (Search, Home, Shelf, Tasks, Timer, Controls,
+    // Stats, Tools, Agents), then the ones that aren't pages.
     case assistant = "Assistant"
-    case media = "Media"
-    case calendar = "Calendar"
+    case home = "Home"
     case shelf = "Shelf"
     case tasks = "Tasks"
     case timer = "Timer"
@@ -131,11 +130,9 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .assistant: "Search"
-        case .media: "Media & Sound"
         case .hud: "Volume & Brightness"
         case .tasks: "Tasks & Notes"
         case .controls: "Controls & Camera"
-        case .calendar: "Calendar & Meetings"
         case .mouse: "Mouse & Trackpad"
         case .shortcuts: "Keyboard Shortcuts"
         default: rawValue
@@ -148,8 +145,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .appearance: "Accent color and motion."
         case .live: "Keep music, a timer, stats and more beside the notch, one click away."
         case .assistant: "Files, the web and the weather, even without AI; add a model for answers and actions."
-        case .media: "Now playing, the visualizer and per-app volume."
-        case .hud: "Show volume and brightness changes in the notch."
+        case .home: "What's on Home and in what order: music, your day, the weather and more. Plus music, calendar and meeting settings."
+        case .hud: "Volume and brightness changes in the notch, and the Sound tab's per-app volume."
         case .battery: "What the notch does when you plug in."
         case .shelf: "Drag files onto the notch to park them, then out to any app. Screenshots and downloads land here too."
         case .tasks: "Your list, reminders and a scratchpad. Drop text, links or emails on the notch to add them."
@@ -158,7 +155,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .tools: "Network and speed test, a cleaner, an app uninstaller and Bluetooth batteries."
         case .agents: "Claude Code, Codex, OpenCode and ZCode sessions (working, waiting for you or idle) and today's tokens."
         case .addOns: "Search, Shelf and Tasks are always there. Turn on anything else you want."
-        case .calendar: "Today's events on Home, and a heads-up before meetings."
         case .controls: "Volume and brightness, the quick actions you pick, Keep Awake and a camera mirror."
         case .mouse: "Scroll direction and middle click."
         case .updates: "Homebrew and app updates, checked for you."
@@ -174,7 +170,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .appearance: "paintpalette.fill"
         case .live: "capsule.inset.filled"
         case .assistant: "sparkle.magnifyingglass"
-        case .media: "music.note"
+        case .home: "house.fill"
         case .hud: "speaker.wave.2.fill"
         case .battery: "battery.100.bolt"
         case .shelf: "tray.full.fill"
@@ -184,7 +180,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .tools: "wrench.and.screwdriver.fill"
         case .agents: "sparkles.rectangle.stack.fill"
         case .addOns: "puzzlepiece.extension.fill"
-        case .calendar: "calendar"
         case .controls: "switch.2"
         case .mouse: "computermouse.fill"
         case .updates: "arrow.down.app.fill"
@@ -200,7 +195,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .appearance: .purple
         case .live: Color(red: 1, green: 0.42, blue: 0.4)
         case .assistant: .indigo
-        case .media: .pink
+        case .home: .pink
         case .hud: .blue
         case .battery: .green
         case .shelf: .orange
@@ -210,7 +205,6 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .tools: Color(red: 0.95, green: 0.45, blue: 0.55)
         case .agents: .purple
         case .addOns: .indigo
-        case .calendar: .red
         case .controls: Color(red: 0.35, green: 0.35, blue: 0.4)
         case .mouse: Color(red: 0.4, green: 0.45, blue: 0.55)
         case .updates: .blue
@@ -244,7 +238,7 @@ struct SettingsView: View {
                 case .appearance: AppearancePane()
                 case .live: LiveActivitiesPane()
                 case .assistant: AssistantPane()
-                case .media: MediaPane()
+                case .home: HomeSettingsPane()
                 case .hud: HUDPane()
                 case .battery: BatteryPane()
                 case .shelf: ShelfSettingsPane()
@@ -254,7 +248,6 @@ struct SettingsView: View {
                 case .tools: ToolsSettingsPane()
                 case .agents: AgentsSettingsPane()
                 case .addOns: AddOnsPane()
-                case .calendar: CalendarPane()
                 case .controls: ControlsPane()
                 case .mouse: MousePane()
                 case .updates: UpdatesPane()
@@ -456,50 +449,10 @@ private struct AppearancePane: View {
     }
 }
 
-private struct MediaPane: View {
-    @EnvironmentObject private var s: AppSettings
-    @ObservedObject private var mixer = AudioMixer.shared
-
-    var body: some View {
-        SettingsPage(pane: .media) {
-            Section {
-                ToggleRow("Music player", subtitle: "Apple Music, Spotify, Podcasts and browsers. Click the artwork to jump to the app.",
-                          isOn: $s.musicEnabled)
-                if s.musicEnabled {
-                    ToggleRow("Live activity while playing", subtitle: "Artwork and a visualizer beside the closed notch.",
-                              isOn: $s.musicLiveActivity)
-                    ToggleRow("Bigger on Home while playing", subtitle: "The player takes half of Home; otherwise it stays a small card beside your day.",
-                              isOn: $s.homeMusicTakesOver)
-                    ToggleRow("Audio visualizer", subtitle: "Moves with what's actually playing, bass to treble.", isOn: $s.showVisualizer)
-                    if s.showVisualizer {
-                        PermissionRow(title: "System audio recording",
-                                      subtitle: "Lets the visualizer hear the music. It only listens while it's on screen; nothing is recorded or changed. Without it, the bars just animate.",
-                                      state: mixer.permission == .granted ? .granted : mixer.permission == .denied ? .denied : .unknown,
-                                      request: { mixer.requestPermission() },
-                                      openSettings: { AudioCapturePermission.openSettings() })
-                    }
-                }
-            } header: {
-                Text("Now playing")
-            }
-            Section {
-                ToggleRow("Sound tab", subtitle: "System volume, output device and a fader for each app.", isOn: $s.mixerEnabled)
-                if s.mixerEnabled {
-                    PermissionRow(title: "System audio recording",
-                                  subtitle: "Needed to change an app's volume. Apps left at 100% are never touched.",
-                                  state: mixer.permission == .granted ? .granted : mixer.permission == .denied ? .denied : .unknown,
-                                  request: { mixer.requestPermission() },
-                                  openSettings: { AudioCapturePermission.openSettings() })
-                }
-            } header: {
-                Text("Sound mixer")
-            }
-        }
-    }
-}
 
 private struct HUDPane: View {
     @EnvironmentObject private var s: AppSettings
+    @ObservedObject private var mixer = AudioMixer.shared
     @State private var trusted = AXIsProcessTrusted()
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -521,6 +474,18 @@ private struct HUDPane: View {
                 Text("Show in the notch")
             } footer: {
                 FooterText("Hold Shift + Option while pressing a volume or brightness key for finer steps.")
+            }
+            Section {
+                ToggleRow("Sound tab", subtitle: "System volume, output device and a fader for each app.", isOn: $s.mixerEnabled)
+                if s.mixerEnabled {
+                    PermissionRow(title: "System audio recording",
+                                  subtitle: "Needed to change an app's volume. Apps left at 100% are never touched.",
+                                  state: mixer.permission == .granted ? .granted : mixer.permission == .denied ? .denied : .unknown,
+                                  request: { mixer.requestPermission() },
+                                  openSettings: { AudioCapturePermission.openSettings() })
+                }
+            } header: {
+                Text("Sound mixer")
             }
             Section("Permission") {
                 PermissionRow(title: "Accessibility",
@@ -1621,49 +1586,6 @@ private struct StatsPane: View {
     }
 }
 
-private struct CalendarPane: View {
-    @EnvironmentObject private var s: AppSettings
-    @EnvironmentObject private var calendar: CalendarManager
-
-    var body: some View {
-        SettingsPage(pane: .calendar) {
-            Section {
-                if s.calendarEnabled {
-                    ToggleRow("Meeting alerts", subtitle: "A heads-up from the notch before each meeting.", isOn: $s.meetingAlerts)
-                    ToggleRow("Meeting mode", subtitle: "During a call (Zoom, Teams, FaceTime, Meet in a browser…), its time and a mute button beside the notch; after it, jot notes or a follow-up.",
-                              isOn: $s.meetingMode)
-                    if s.meetingMode, LiveCaptions.isSupported {
-                        ToggleRow("Record calls",
-                                  subtitle: "When a call starts, asks whether to record it: both sides kept and turned into text on this Mac, never sent anywhere. Ask “catch me up” during it, hear when someone says your name, and get notes and action items after, with the call to play back from any line. Some places need everyone's consent: tell the people on the call. “Record meeting” in the search bar records one in the room.",
-                                  isOn: $s.transcribeCalls)
-                    }
-                    if s.meetingAlerts {
-                        Stepper(value: $s.meetingAlertMinutes, in: 1...30) {
-                            LabeledContent("Alert before") {
-                                Text("\(s.meetingAlertMinutes) min").monospacedDigit()
-                            }
-                        }
-                    }
-                }
-            }
-            Section {
-                Picker("Add new events to", selection: $s.defaultCalendarID) {
-                    Text("System default").tag("")
-                    ForEach(calendar.hasAccess ? calendar.writableCalendars : [], id: \.calendarIdentifier) { cal in
-                        Text(cal.title + (cal.source.map { " · \($0.title)" } ?? "")).tag(cal.calendarIdentifier)
-                    }
-                }
-            } header: {
-                Text("Search bar")
-            } footer: {
-                FooterText("Type things like “lunch with Sam friday at 1”, “push my 3pm to 4” or “am I free tomorrow afternoon”. Google, Outlook and other calendars work once they're added in System Settings → Internet Accounts.")
-            }
-            Section("Permission") {
-                PermissionRow(title: "Calendar", state: calendar.hasAccess ? .granted : .unknown) { calendar.requestAccess() }
-            }
-        }
-    }
-}
 
 private struct ToolsSettingsPane: View {
     @EnvironmentObject private var s: AppSettings
