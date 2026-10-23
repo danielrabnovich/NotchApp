@@ -272,8 +272,7 @@ final class MicSource {
 
     init?(onBuffer: @escaping (AVAudioPCMBuffer) -> Void) {
         let node = engine.inputNode
-        let format = node.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else { return nil }
+        guard let format = node.tappableFormat else { return nil }
         node.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in onBuffer(buffer) }
         do { try engine.start() } catch { node.removeTap(onBus: 0); return nil }
     }
@@ -284,4 +283,16 @@ final class MicSource {
     }
 
     deinit { invalidate() }
+}
+
+extension AVAudioInputNode {
+    /// The format to tap the mic in, if it's settled: while the input device is switching (headphones
+    /// connecting), the node's format can disagree with the hardware's, or have no channels, and
+    /// installTap then throws an Objective-C exception, which crashes the app.
+    var tappableFormat: AVAudioFormat? {
+        let format = outputFormat(forBus: 0), hardware = inputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0,
+              format.sampleRate == hardware.sampleRate, format.channelCount == hardware.channelCount else { return nil }
+        return format
+    }
 }

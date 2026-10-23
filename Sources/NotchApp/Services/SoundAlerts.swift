@@ -33,6 +33,7 @@ final class SoundAlerts {
     private var engine: AVAudioEngine?
     private var analyzer: SNAudioStreamAnalyzer?
     private var observer: Observer?
+    private var changes: NSObjectProtocol?
     private let queue = DispatchQueue(label: "com.notchapp.sounds", qos: .utility)
     private var lastAlert: [String: Date] = [:]
     private var cancellables: [Any] = []
@@ -40,7 +41,11 @@ final class SoundAlerts {
     func start() {
         cancellables.append(AppSettings.shared.$toolsEnabled.sink { _ in DispatchQueue.main.async { SoundAlerts.shared.reconcile() } })
         cancellables.append(AppSettings.shared.$soundAlerts.sink { _ in DispatchQueue.main.async { SoundAlerts.shared.reconcile() } })
-        cancellables.append(AudioOutputManager.shared.$currentID.sink { _ in DispatchQueue.main.async { SoundAlerts.shared.reconcile() } })
+        // Headphones connecting switch the mic too: wait for that to settle, or the tap's format no
+        // longer matches the hardware's and AVAudioEngine throws (an exception Swift can't catch).
+        cancellables.append(AudioOutputManager.shared.$currentID.sink { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { SoundAlerts.shared.reconcile() }
+        })
     }
 
     /// Headphones on: Bluetooth ones, or a pair in the headphone jack.
@@ -64,8 +69,7 @@ final class SoundAlerts {
     private func listen() {
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, let request = try? SNClassifySoundRequest(classifierIdentifier: .version1) else { return }
+        guard let format = input.tappableFormat, let request = try? SNClassifySoundRequest(classifierIdentifier: .version1) else { return }
         request.windowDuration = CMTime(seconds: 1.5, preferredTimescale: 48_000)
         request.overlapFactor = 0.5
         let analyzer = SNAudioStreamAnalyzer(format: format)
@@ -77,6 +81,14 @@ final class SoundAlerts {
         }
         do { try engine.start() } catch { input.removeTap(onBus: 0); DebugHooks.log("SoundAlerts: mic didn't start: \(error)"); return }
         DebugHooks.log("SoundAlerts: listening (\(AudioOutputManager.shared.current?.name ?? "?"))")
+        // The mic changed under the engine (it stops itself): listen again on the new one.
+        changes = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine,
+                                                         queue: .main) { _ in
+            MainActor.assumeIsolated {
+                SoundAlerts.shared.stop()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { SoundAlerts.shared.reconcile() }
+            }
+        }
         self.engine = engine
         self.analyzer = analyzer
         self.observer = observer
@@ -84,6 +96,8 @@ final class SoundAlerts {
 
     private func stop() {
         DebugHooks.log("SoundAlerts: stopped listening")
+        if let changes { NotificationCenter.default.removeObserver(changes) }
+        changes = nil
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
