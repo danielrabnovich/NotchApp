@@ -114,6 +114,7 @@ extension ControlAction {
         case .speedTest: SpeedTest.shared.phase.isRunning ? SpeedTest.shared.cancel() : SpeedTest.shared.start()
         case .scanQR: later { QRScanner.scan() }
         case .captions: LiveCaptions.shared.toggleCaptions()
+        case .cleanKeyboard: KeyboardCleaner.shared.toggle()
         case .keepAwake, .ports, .cleaner, .clipboard, .saveVideo: break // these open their own UI in the notch
         }
     }
@@ -140,6 +141,17 @@ private struct CaptionsTile: View {
             captions.toggleCaptions()
         }
         .help("What's playing, as text under the notch")
+    }
+}
+
+/// The keyboard off for a minute, with the seconds left; clicking again turns it back on.
+private struct CleanKeyboardTile: View {
+    @ObservedObject private var cleaner = KeyboardCleaner.shared
+
+    var body: some View {
+        ControlTile(icon: "keyboard", title: cleaner.isActive ? "Keys Off · \(cleaner.remainingText)" : "Clean Keyboard",
+                    on: cleaner.isActive, onTint: .mint) { cleaner.toggle() }
+            .help(cleaner.isActive ? "Click to turn the keyboard back on" : "Turn the keyboard off for a minute to wipe it")
     }
 }
 
@@ -183,6 +195,8 @@ private struct ActionTile: View {
                 .help("Read a QR code anywhere on screen")
         case .captions:
             CaptionsTile()
+        case .cleanKeyboard:
+            CleanKeyboardTile()
         case .ports:
             ControlTile(icon: action.icon, title: "Ports", on: false) {
                 ports.refresh()

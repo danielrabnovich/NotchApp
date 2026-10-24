@@ -240,9 +240,10 @@ final class PrivacyMonitor: ObservableObject {
                   let pid: pid_t = AudioOutputManager.property(object, kAudioProcessPropertyPID), pid > 0 else { continue }
             let owner = AppIdentity.responsiblePID(for: pid)
             guard owner != own, pid != own else { continue }
+            // System helpers (Siri's "Hey Siri" listener, dictation, corespeechd) aren't worth flagging.
+            // The owner, not the process: an app running an Apple tool that records is still that app.
+            if AppIdentity.isSystem(pid: owner) { continue }
             let identity = AppIdentity.of(pid: owner)
-            // System helpers (Siri's "Hey Siri" listener, dictation) aren't worth flagging.
-            if identity.bundleID?.hasPrefix("com.apple.") == true && identity.bundlePath?.hasPrefix("/System/Library/") == true { continue }
             let app = UsingApp(name: identity.name, bundleID: identity.bundleID, bundlePath: identity.bundlePath)
             if seen.insert(app.id).inserted { apps.append(app) }
         }

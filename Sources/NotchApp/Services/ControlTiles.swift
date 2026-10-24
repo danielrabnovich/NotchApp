@@ -5,7 +5,7 @@ import SwiftUI
 enum ControlAction: String, CaseIterable, Codable, Identifiable {
     case wifi, keepAwake, darkMode, mic, screenshot, colorPicker, lockScreen, emptyTrash
     case copyText, ports, speedTest, cleaner, clipboard, hiddenFiles, desktopIcons, nightShift, flushDNS, saveVideo
-    case scanQR, captions
+    case scanQR, captions, cleanKeyboard
 
     var id: String { rawValue }
 
@@ -31,6 +31,7 @@ enum ControlAction: String, CaseIterable, Codable, Identifiable {
         case .saveVideo: "Save Video"
         case .scanQR: "Scan QR Code"
         case .captions: "Live Captions"
+        case .cleanKeyboard: "Clean Keyboard"
         }
     }
 
@@ -56,6 +57,7 @@ enum ControlAction: String, CaseIterable, Codable, Identifiable {
         case .saveVideo: "Download the video link you copied, with yt-dlp."
         case .scanQR: "Read a QR code anywhere on screen, then open or copy it."
         case .captions: "What's playing, as text under the notch."
+        case .cleanKeyboard: "Turn the keyboard off for a minute to wipe it."
         }
     }
 
@@ -81,6 +83,7 @@ enum ControlAction: String, CaseIterable, Codable, Identifiable {
         case .saveVideo: "arrow.down.circle.fill"
         case .scanQR: "qrcode.viewfinder"
         case .captions: "captions.bubble.fill"
+        case .cleanKeyboard: "keyboard"
         }
     }
 
@@ -104,6 +107,7 @@ enum ControlAction: String, CaseIterable, Codable, Identifiable {
         case .saveVideo: .red
         case .scanQR: .blue
         case .captions: .indigo
+        case .cleanKeyboard: .mint
         }
     }
 

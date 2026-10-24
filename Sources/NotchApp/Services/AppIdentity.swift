@@ -54,6 +54,15 @@ enum AppIdentity {
         return info
     }
 
+    /// Part of macOS itself: an executable on the read-only system volume (Siri's listener,
+    /// dictation, corespeechd), bundled or not.
+    static func isSystem(pid: pid_t) -> Bool {
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return false }
+        let path = String(cString: buffer)
+        return ["/System/", "/usr/libexec/", "/usr/sbin/", "/usr/bin/", "/sbin/", "/bin/"].contains { path.hasPrefix($0) }
+    }
+
     /// Drops cached entries for processes that are gone (pids get reused).
     static func prune(keeping alive: Set<pid_t>) {
         lock.lock()
