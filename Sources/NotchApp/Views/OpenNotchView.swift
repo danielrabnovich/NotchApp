@@ -200,7 +200,7 @@ private struct TabIndicator: View {
 
                 HStack(spacing: spacing) {
                     ForEach(tabs) { tab in
-                        Button { viewModel.select(tab) } label: {
+                        Button { viewModel.select(tab); Tips.shared.note(.tabPicked(tab)) } label: {
                             Image(systemName: tab.icon)
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.white.opacity(0.45))

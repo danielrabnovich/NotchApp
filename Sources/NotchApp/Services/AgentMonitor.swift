@@ -43,6 +43,9 @@ final class AgentMonitor: ObservableObject {
     }
 
     struct Session: Identifiable, Equatable {
+        /// Claude Code's own ID for the session (what its hooks report by).
+        var claudeID: String? { tool == .claude ? String(id.dropFirst("claude:".count)) : nil }
+
         enum State: Equatable { case working, waiting, idle }
         let id: String
         let tool: Tool
@@ -129,6 +132,22 @@ final class AgentMonitor: ObservableObject {
         }
     }
 
+    private var hookRefresh: DispatchWorkItem?
+
+    /// A hook says a session started or stopped working, or wants you: look again now rather
+    /// than at the next poll, and once more shortly after (Claude Code's own status file can lag
+    /// the event a moment).
+    func hookEvent() {
+        guard AppSettings.shared.agentsEnabled, hookRefresh == nil else { return }
+        let work = DispatchWorkItem {
+            AgentMonitor.shared.hookRefresh = nil
+            AgentMonitor.shared.refreshSessions()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { AgentMonitor.shared.refreshSessions() }
+        }
+        hookRefresh = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
     private var lastWorking: Date?
     /// Turned off by hand while agents were working: don't turn it back on until they've stopped.
     private var awakeDeclined = false
@@ -179,7 +198,9 @@ final class AgentMonitor: ObservableObject {
                         ? [.init(title: "Answer in Terminal", primary: true) { AgentMonitor.shared.focus(session) }]
                         : [.init(title: "Reply", primary: true) { NotchPresenter.shared.open(tab: .agents) },
                            .init(title: "Go to Terminal") { AgentMonitor.shared.focus(session) }]))
-            } else if before == .working, session.state == .idle {
+            } else if before == .working, session.state == .idle,
+                      !(session.claudeID.map(AgentHooks.shared.reports) ?? false) {
+                // (Sessions with hooks get a fuller Banner from them, as the turn ends.)
                 ActivityCenter.shared.show(.notice(title: "\(session.tool.name) finished", detail: session.project, icon: "sparkles.rectangle.stack.fill"), for: 4)
             }
         }
@@ -297,25 +318,7 @@ final class AgentMonitor: ObservableObject {
     /// Brings the session forward: its own pane where that can be found, else the terminal it runs
     /// in, or the tool's own app.
     func focus(_ session: Session) {
-        if AgentReply.reveal(session) { return }
-        if let pid = session.pid {
-            let owner = AppIdentity.responsiblePID(for: pid)
-            if let app = NSRunningApplication(processIdentifier: owner), app.activationPolicy == .regular {
-                app.activate()
-                return
-            }
-            // Walk up to the first ancestor that's an app (the terminal).
-            var current = pid
-            for _ in 0..<12 {
-                let parent = Self.parentPID(of: current)
-                guard parent > 1 else { break }
-                if let app = NSRunningApplication(processIdentifier: parent), app.activationPolicy == .regular {
-                    app.activate()
-                    return
-                }
-                current = parent
-            }
-        }
+        if let pid = session.pid, focus(pid: pid) { return }
         for id in session.tool.appBundleIDs {
             if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
                 NSWorkspace.shared.openApplication(at: url, configuration: .init())
@@ -323,6 +326,30 @@ final class AgentMonitor: ObservableObject {
             }
         }
         if let dir = session.directory { NSWorkspace.shared.open(URL(fileURLWithPath: dir)) }
+    }
+
+    /// Brings forward the pane a process runs in, else the terminal app it's in. False when
+    /// neither can be found (the process is gone, or isn't in a terminal).
+    @discardableResult
+    func focus(pid: pid_t) -> Bool {
+        if AgentReply.reveal(pid: pid) { return true }
+        let owner = AppIdentity.responsiblePID(for: pid)
+        if let app = NSRunningApplication(processIdentifier: owner), app.activationPolicy == .regular {
+            app.activate()
+            return true
+        }
+        // Walk up to the first ancestor that's an app (the terminal).
+        var current = pid
+        for _ in 0..<12 {
+            let parent = Self.parentPID(of: current)
+            guard parent > 1 else { break }
+            if let app = NSRunningApplication(processIdentifier: parent), app.activationPolicy == .regular {
+                app.activate()
+                return true
+            }
+            current = parent
+        }
+        return false
     }
 
     func openFolder(_ session: Session) {
@@ -338,12 +365,39 @@ final class AgentMonitor: ObservableObject {
 
     // MARK: - Helpers
 
-    nonisolated private static func parentPID(of pid: pid_t) -> pid_t {
+    nonisolated static func parentPID(of pid: pid_t) -> pid_t {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return 0 }
         return info.kp_eproc.e_ppid
+    }
+
+    /// The agent a process belongs to: itself or one of its nearest ancestors, by command name
+    /// (an MCP server's parent is the agent; a shell's may be).
+    nonisolated static func tool(owning pid: pid_t) -> Tool? {
+        var current = pid
+        for _ in 0..<4 where current > 1 {
+            var info = kinfo_proc()
+            var size = MemoryLayout<kinfo_proc>.stride
+            var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, current]
+            guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+            var comm = info.kp_proc.p_comm
+            let name = withUnsafePointer(to: &comm) { $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXCOMLEN) + 1) { String(cString: $0) } }
+            // Claude Code's native install runs from ~/.local/share/claude/versions/<version>, so
+            // its process is named after the version: the path says what it is.
+            var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+            if proc_pidpath(current, &path, UInt32(path.count)) > 0, String(cString: path).contains("/claude/versions/") { return .claude }
+            // Exactly: the desktop apps ("Claude", "Codex") host other things too.
+            switch name {
+            case "claude": return .claude
+            case "codex": return .codex
+            case "opencode": return .opencode
+            case "zcode": return .zcode
+            default: current = info.kp_eproc.e_ppid
+            }
+        }
+        return nil
     }
 
     nonisolated private static func pids(matching name: String) -> [pid_t] {

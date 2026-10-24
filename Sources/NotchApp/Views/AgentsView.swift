@@ -166,6 +166,7 @@ struct AgentGlyph: View {
 private struct SessionRow: View {
     let session: AgentMonitor.Session
     @EnvironmentObject private var agents: AgentMonitor
+    @ObservedObject private var hooks = AgentHooks.shared
     @State private var hovering = false
 
     @State private var reply = ""
@@ -238,6 +239,11 @@ private struct SessionRow: View {
     }
 
     private var subtitle: String {
+        // At work with hooks: what it's doing right now says more than the model.
+        if let live = hooks.live(for: session), let activity = live.activity {
+            let helpers = live.subagents > 0 ? " · \(live.subagents) subagent\(live.subagents == 1 ? "" : "s")" : ""
+            return activity + helpers
+        }
         var parts = [session.tool.name]
         if session.project != session.title { parts.append(session.title) }
         if let model = session.model { parts.append(model) }

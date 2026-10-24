@@ -23,7 +23,8 @@ enum BannerActions {
         case let .message(id, _, _, _, _, _):
             if let item = NotificationMirror.shared.item(id) { NotchPresenter.shared.presentReply(to: item) }
         default:
-            break // informational: the click just clears it
+            // Informational: the click just clears it, unless it came with somewhere to go.
+            ActivityCenter.shared.takeTap(for: banner)?()
         }
     }
 }

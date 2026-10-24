@@ -185,6 +185,7 @@ final class ClipboardHistory: ObservableObject {
     }
 
     private func add(_ clip: Clip) {
+        Tips.shared.note(.copied)
         var list = clips
         // Copying the same thing again moves it to the front (keeping its pin).
         if let i = list.firstIndex(where: { same($0, clip) }) {

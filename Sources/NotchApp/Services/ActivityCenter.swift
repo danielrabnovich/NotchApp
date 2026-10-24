@@ -107,6 +107,22 @@ final class ActivityCenter: ObservableObject {
     /// The pointer is on the Banner: it stays until the pointer leaves.
     private var holding = false
 
+    /// What clicking a Banner does, for those shown with an action of their own (by title).
+    private var taps: [String: @MainActor () -> Void] = [:]
+
+    /// A Banner whose click goes somewhere (the terminal a command ran in, an agent's pane).
+    func show(_ peek: SneakPeek, for duration: TimeInterval, onClick: @escaping @MainActor () -> Void) {
+        let title = peek.bannerText.title
+        if taps.count > 8 { taps = taps.filter { $0.key == banner?.bannerText.title } }
+        taps[title] = onClick
+        show(peek, for: duration)
+    }
+
+    /// The click action a Banner was shown with, used up.
+    func takeTap(for peek: SneakPeek) -> (@MainActor () -> Void)? {
+        taps.removeValue(forKey: peek.bannerText.title)
+    }
+
     func show(_ peek: SneakPeek, for duration: TimeInterval) {
         if peek.tier == .flash { return flash(peek, for: duration) }
         let level = AppSettings.shared.alertLevel

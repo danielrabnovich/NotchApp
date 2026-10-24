@@ -927,7 +927,10 @@ private struct ClipboardStrip: View {
                 .horizontalScrollRegion("clipboard", in: viewModel, active: overflows)
             }
         }
-        .onAppear { if viewModel.openReason == .keyboard { highlight = shown.first?.id } }
+        .onAppear {
+            if viewModel.openReason == .keyboard { highlight = shown.first?.id }
+            if viewModel.isOpen, viewModel.tab == .shelf { Tips.shared.note(.clipboardOpened) }
+        }
         .modifier(TabKeyboard(viewModel: viewModel, tab: .shelf, held: $held, handle: handle))
         // A new search highlights its first match, so ↩ pastes it.
         .onChange(of: query) { _, _ in highlight = self.shown.first?.id }

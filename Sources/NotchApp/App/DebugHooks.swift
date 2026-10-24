@@ -92,6 +92,13 @@ enum DebugHooks {
         case "duesoon":
             TaskStore.shared.add(TaskItem(title: "Send updated deck to Sarah", due: Date().addingTimeInterval(95 * 60)))
         case "brief": BriefingService.shared.maybeShowBrief(force: true)
+        case "hooksfile": // hooksfile <path> on|off: Claude Code hooks written into that settings file instead of the real one
+            do { try AgentHooks.write(parts[safe: 2] != "off", to: URL(fileURLWithPath: parts[safe: 1] ?? "")); log("HOOKS ok") } catch { log("HOOKS \(error)") }
+        case "agentlive": log("AGENTLIVE \(AgentHooks.shared.live)")
+        case "tipnote": // tipnote glanceClicked|glanceHeld|shelfDrop|trayShaken|copied|clipboardOpened [count]
+            let events: [String: Tips.Event] = ["glanceClicked": .glanceClicked, "glanceHeld": .glanceHeld, "shelfDrop": .shelfDrop,
+                                                "trayShaken": .trayShaken, "copied": .copied, "clipboardOpened": .clipboardOpened]
+            if let event = events[parts[safe: 1] ?? ""] { for _ in 0..<(Int(parts[safe: 2] ?? "") ?? 1) { Tips.shared.note(event) } }
         case "state":
             log("STATE appActive=\(NSApp.isActive) panelKey=\(c.panelContentView?.window?.isKeyWindow ?? false) frontmost=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "-")")
         case "frames":

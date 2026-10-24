@@ -31,6 +31,8 @@ echo "▸ Assembling bundle…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
+# The `notch` command (scripts, coding agents' hooks and MCP) lives beside it.
+cp .build/release/notch "$APP/Contents/MacOS/notch"
 cp build/MediaAdapter.dylib MediaAdapter/adapter.pl "$APP/Contents/Resources/"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 # Packages' resources (FluidAudio's): their code looks for them in the app's Resources.
@@ -98,7 +100,7 @@ PLIST
 
 # The linker leaves a map back to this Mac's build folders (for debuggers here); copies elsewhere
 # would carry its paths, user name included.
-strip -S "$APP/Contents/MacOS/$APP_NAME"
+strip -S "$APP/Contents/MacOS/$APP_NAME" "$APP/Contents/MacOS/notch"
 
 echo "▸ Signing…"
 # A stable identity keeps macOS privacy grants (Accessibility, Calendar…) across rebuilds;

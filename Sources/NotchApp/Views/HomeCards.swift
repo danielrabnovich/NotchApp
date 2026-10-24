@@ -318,6 +318,7 @@ struct ClockCard: View {
 struct AgentsCard: View {
     var small = false
     @ObservedObject private var agents = AgentMonitor.shared
+    @ObservedObject private var hooks = AgentHooks.shared
 
     var body: some View {
         let active = agents.waiting + agents.working
@@ -357,6 +358,12 @@ struct AgentsCard: View {
                         Text(session.project)
                             .font(HomeType.row.weight(.medium))
                             .foregroundStyle(.white.opacity(session.state == .waiting ? 1 : 0.8))
+                            .layoutPriority(1)
+                        if !small, let activity = hooks.live(for: session)?.activity {
+                            Text(activity)
+                                .font(HomeType.detail)
+                                .foregroundStyle(HomeType.secondary)
+                        }
                         Spacer(minLength: 0)
                     }
                     .lineLimit(1)

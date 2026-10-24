@@ -68,6 +68,11 @@ enum AgentReply {
     /// TTY. False when it can't tell which, and the caller brings the app forward instead.
     @MainActor static func reveal(_ session: AgentMonitor.Session) -> Bool {
         guard let pid = session.pid else { return false }
+        return reveal(pid: pid)
+    }
+
+    /// The same for any process in a terminal (a shell that ran `notch run`, an agent's MCP server).
+    @MainActor static func reveal(pid: pid_t) -> Bool {
         if let cmux = cmuxTarget(pid: pid) {
             if let workspace = cmux.workspace { _ = Shell.runSync(cmux.cli, ["select-workspace", "--workspace", workspace], timeout: 3) }
             guard Shell.runSync(cmux.cli, ["focus-panel", "--panel", cmux.panel] + (cmux.workspace.map { ["--workspace", $0] } ?? []), timeout: 3).ok else { return false }

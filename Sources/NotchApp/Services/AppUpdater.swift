@@ -135,6 +135,7 @@ final class AppUpdater: ObservableObject {
                 state = .installing("Checking it…")
                 try await Self.verify(app)
                 state = .installing("Restarting…")
+                Tips.rememberRelease(version: release.version, notes: release.notes, page: release.page)
                 try Self.swap(in: app)
             } catch {
                 state = .failed(error.localizedDescription)

@@ -60,6 +60,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppUpdater.shared.start()
         MeetingMonitor.shared.start()
         ProgressCenter.shared.start()
+        CommandBridge.shared.start()
+        AgentHooks.shared.repairIfMoved()
+        Tips.shared.start()
         settings.$screenshotSearch.removeDuplicates().sink { on in
             DispatchQueue.main.async { ScreenshotText.shared.apply(on) }
         }.store(in: &cancellables)
@@ -151,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AudioMixer.shared.stop()
         KeepAwake.shared.stop(announce: false)
         LidSleep.restoreNow()
+        CommandBridge.shared.stop()
     }
 
     // MARK: - Windows

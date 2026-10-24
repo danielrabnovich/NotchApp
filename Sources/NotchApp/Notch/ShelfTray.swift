@@ -60,6 +60,7 @@ final class ShelfTray: ObservableObject {
         // The Shelf takes files (and screenshots dragged from their thumbnail, which carry one).
         guard NSPasteboard(name: .drag).canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) else { return }
         DebugHooks.log("TRAY shaken at \(Int(p.x)),\(Int(p.y))")
+        Tips.shared.note(.trayShaken)
         show(at: p)
     }
 

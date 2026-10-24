@@ -41,6 +41,7 @@ struct DropZonesView: View {
                         detailIcon: nil, tint: .orange,
                         enabled: preview?.hasFiles == true) {
                     guard ShelfStore.shared.addDrop(from: NSPasteboard(name: .drag)) else { return false }
+                    Tips.shared.note(.shelfDrop)
                     finish(on: .shelf)
                     return true
                 }

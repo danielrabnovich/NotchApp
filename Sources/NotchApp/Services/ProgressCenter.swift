@@ -23,6 +23,8 @@ final class ProgressCenter: ObservableObject {
         var label: String? = nil
         /// More for the card that drops on hover.
         var detail: String? = nil
+        /// A process in a terminal (`notch run`'s shell, an agent): a click brings its pane forward.
+        var focusPID: pid_t? = nil
     }
 
     @Published private(set) var items: [Item] = []
@@ -99,6 +101,37 @@ final class ProgressCenter: ObservableObject {
         rebuild()
     }
 
+    // MARK: - From the notch command and agents
+
+    /// Rings asked for over the command bridge, with the process they're for: gone when it is, or
+    /// when nothing has updated one for half an hour.
+    private var external: [String: (item: Item, owner: pid_t?, updated: Date)] = [:]
+    private var pruneTimer: Timer?
+
+    func setExternal(_ item: Item, owner: pid_t?) {
+        external[item.id] = (item, owner, Date())
+        if pruneTimer == nil {
+            pruneTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+                MainActor.assumeIsolated { ProgressCenter.shared.pruneExternal() }
+            }
+        }
+        rebuild()
+    }
+
+    func removeExternal(_ id: String) {
+        guard external.removeValue(forKey: id) != nil else { return }
+        rebuild()
+    }
+
+    private func pruneExternal() {
+        external = external.filter { _, entry in
+            let alive = entry.owner.map { kill($0, 0) == 0 || errno != ESRCH } ?? true
+            return alive && Date().timeIntervalSince(entry.updated) < 30 * 60
+        }
+        if external.isEmpty { pruneTimer?.invalidate(); pruneTimer = nil }
+        rebuild()
+    }
+
     // MARK: - Exporting apps
 
     private func scanExporters() {
@@ -162,6 +195,8 @@ final class ProgressCenter: ObservableObject {
             all += files.values.sorted { $0.id < $1.id }
             all += exporting
         }
+        // Asked for by name, so shown whatever the setting (which is about watching other apps).
+        all += external.values.map(\.item).sorted { $0.id < $1.id }
         if all != items { items = all }
     }
 
@@ -197,6 +232,7 @@ final class ProgressCenter: ObservableObject {
 
     /// Clicking the Glance: the file or app it's for, else the Downloads list.
     func open() {
+        if let pid = lead?.focusPID, AgentMonitor.shared.focus(pid: pid) { return }
         if let target = lead?.target {
             if target.pathExtension == "app" { NSWorkspace.shared.open(target) } else { NSWorkspace.shared.activateFileViewerSelecting([target]) }
         } else {

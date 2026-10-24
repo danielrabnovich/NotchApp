@@ -1757,6 +1757,11 @@ private struct ToolsSettingsPane: View {
 private struct AgentsSettingsPane: View {
     @EnvironmentObject private var s: AppSettings
     @ObservedObject private var agents = AgentMonitor.shared
+    @ObservedObject private var hooks = AgentHooks.shared
+    @State private var hookError: String?
+    @State private var link = CommandBridge.installedLink
+    @State private var linkError: String?
+    @State private var copiedMCP = false
 
     var body: some View {
         SettingsPage(pane: .agents) {
@@ -1765,9 +1770,39 @@ private struct AgentsSettingsPane: View {
                     ToggleRow("Alerts", subtitle: "A heads-up when an agent finishes, or stops to ask you something.", isOn: $s.agentAlerts)
                     ToggleRow("Keep the Mac awake while agents work", subtitle: "Turns on Keep Awake while any session is working, and off two minutes after the last one stops.",
                               isOn: $s.agentsKeepAwake)
+                    ToggleRow("Live activity from Claude Code",
+                              subtitle: hookError ?? "Adds read-only hooks to Claude Code's settings, so the notch shows what each session is doing right now and how many subagents it has out, and says what it changed when it's done. They never answer anything for you.",
+                              isOn: Binding(get: { hooks.installed }, set: { on in
+                                  do { try hooks.setInstalled(on); hookError = nil } catch { hookError = error.localizedDescription }
+                              }))
                 }
             } footer: {
                 FooterText("Pin “Agents” in Glances to keep a working count beside the notch. Click a session to jump to its terminal.")
+            }
+            .onAppear { hooks.refreshInstalled() }
+            Section {
+                LabeledContent {
+                    Button(link == nil ? "Install" : "Installed") {
+                        do { link = try CommandBridge.installLink(); linkError = nil } catch { linkError = error.localizedDescription }
+                    }
+                    .disabled(link != nil)
+                } label: {
+                    RowLabel(title: "The notch command",
+                             subtitle: linkError ?? "notch run make shows a ring beside the notch while it runs and a Banner when it ends (click it to go back to the terminal). notch banner, progress, shelf and ask work from any script. \(link.map { "Linked at \($0.path)." } ?? "Adds a link to it on your PATH.")")
+                }
+                LabeledContent {
+                    Button(copiedMCP ? "Copied" : "Copy Command") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(CommandBridge.mcpSetupCommand, forType: .string)
+                        ClipboardHistory.shared.ignoreCurrent()
+                        copiedMCP = true
+                    }
+                } label: {
+                    RowLabel(title: "MCP server for agents",
+                             subtitle: "Lets coding agents show progress and Banners in the notch, put files they made on the Shelf, and ask you quick choices (never permissions). Paste the copied command in a terminal to add it to Claude Code; other agents run “notch mcp”.")
+                }
+            } header: {
+                Text("Command line")
             }
             Section {
                 // One form row holding all four: as separate rows, the form drew the last one

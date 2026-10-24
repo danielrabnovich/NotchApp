@@ -92,6 +92,15 @@ The Controls tab holds the quick actions you pick: toggles (dark mode, Wi-Fi, mi
 ## Stats, tools and agents {stats}
 Stats shows CPU, GPU, memory, temperatures and where the power goes. Tools has network info and a speed test, a cleaner, an app uninstaller and Bluetooth device batteries (Settings → Tools). Agents follows Claude Code, Codex and other coding-agent sessions, tells you when one is waiting, and lets you reply from the notch (Settings → Agents).
 
+## Live agent activity (Claude Code hooks) {agents}
+Turn on "Live activity from Claude Code" in Settings → Agents and NotchApp adds read-only hooks to ~/.claude/settings.json. A working session then shows what it's doing right now ("Editing Pager.swift", "Build the app") and how many subagents it has out, in the Agents tab, the Home card and the Agents Glance's peek. When a turn ends, a Banner says which files it edited and how long it took; click it to go to that session's pane. The hooks never answer anything for Claude Code (there is no permission hook), and turning the switch off takes them out again. The first change keeps a copy of the file as settings.json.notchapp-backup.
+
+## The notch command and MCP {agents}
+NotchApp ships a command, notch (Settings → Agents → Install puts it on your PATH). notch run <command> runs it with a ring beside the notch and a Banner when it ends, with the exit code and how long it took; click the Banner to go back to that terminal. notch banner "Title" "detail" shows a Banner, notch progress 0.4 "Uploading" shows a ring (notch progress --done takes it away), notch shelf <files> puts files on the Shelf, and notch ask "Question?" A B waits for your choice in the notch and prints it. For coding agents, notch mcp is an MCP server: agents can report progress, show a Banner, put files they made on the Shelf, and ask you a quick multiple-choice question. Questions that ask for permission are refused: permissions are answered in the terminal only. Settings → Agents → Copy Command copies the line that adds it to Claude Code.
+
+## Tips and what's new {general}
+Now and then, after you've done something the long way a few times, a Banner shows a shorter way (a tab's shortcut, holding a Glance, shaking a file mid-drag, the clipboard history). Each tip shows once, at most one a day, and never during a call. After NotchApp updates itself, a Prompt says what's new, with a button to the full notes.
+
 ## Keyboard shortcuts {shortcuts}
 Every tab and many actions have a shortcut, by default ⌃⌥ (Control-Option) plus a key. Change the shared modifier keys, rebind any shortcut or turn one off in Settings → Keyboard Shortcuts. If a shortcut doesn't work, another app may already use it: Settings shows which ones couldn't be registered.
 

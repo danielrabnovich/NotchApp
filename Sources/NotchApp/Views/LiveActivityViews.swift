@@ -76,12 +76,14 @@ struct GlanceButton<Label: View>: View {
                 viewModel.endGlancePeek()
                 Haptics.tap()
                 GlanceActions.perform(item, in: viewModel)
+                Tips.shared.note(.glanceClicked)
             }
             // Press and hold: open the notch on this Glance's details instead.
             .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 6) {
                 longPressed = true
                 Haptics.level()
                 GlanceActions.openDetail(item, in: viewModel)
+                Tips.shared.note(.glanceHeld)
             } onPressingChanged: { pressed = $0 }
             .contextMenu { GlanceMenu(item: item, viewModel: viewModel) }
             .animation(.easeOut(duration: 0.12), value: hovering)
@@ -1067,7 +1069,9 @@ private struct AgentsReading: View {
                     .foregroundStyle(waiting > 0 ? .orange : .white.opacity(0.92))
             }
         }
-        .help(agents.sessions.filter { $0.state != .idle }.map { "\($0.tool.name) · \($0.project)" }.joined(separator: "\n"))
+        .help(agents.sessions.filter { $0.state != .idle }.map { session in
+            "\(session.tool.name) · \(session.project)" + (AgentHooks.shared.live(for: session)?.activity.map { ": \($0)" } ?? "")
+        }.joined(separator: "\n"))
     }
 }
 

@@ -428,6 +428,7 @@ final class HotKeys: ObservableObject {
             return
         }
         guard let target, vm.tabs.contains(target) else { return }
+        Tips.shared.note(.tabShortcut(target))
         if vm.isOpen && vm.tab == target && !vm.mirror {
             vm.close()
         } else {

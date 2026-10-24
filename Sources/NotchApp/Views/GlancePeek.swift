@@ -101,7 +101,20 @@ enum GlancePeek {
             let peek = ProgressCenter.shared.peek
             c.title = peek.title
             c.detail = peek.detail
-        case .worldClock, .goldenHour, .countdown, .agents, .vpn, .timer, .keepAwake, .disk, .meeting:
+        case .agents:
+            // What the first one at work is doing, when its hooks say.
+            let agents = AgentMonitor.shared
+            if agents.waiting.isEmpty, let session = agents.working.first(where: { AgentHooks.shared.live(for: $0)?.activity != nil }),
+               let live = AgentHooks.shared.live(for: session) {
+                c.title = "\(session.project): \(live.activity ?? "")"
+                let others = agents.working.count - 1
+                c.detail = [live.subagents > 0 ? "\(live.subagents) subagent\(live.subagents == 1 ? "" : "s")" : nil,
+                            others > 0 ? "\(others) more at work" : nil].compactMap { $0 }.joined(separator: " · ").nilIfEmpty
+                    ?? GlanceActions.hint(for: item)
+            } else {
+                c.detail = GlanceActions.hint(for: item)
+            }
+        case .worldClock, .goldenHour, .countdown, .vpn, .timer, .keepAwake, .disk, .meeting:
             c.detail = GlanceActions.hint(for: item)
         case .focus:
             let f = FocusMonitor.shared

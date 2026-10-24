@@ -136,6 +136,24 @@ Claude Code, Codex, OpenCode and ZCode sessions (working, waiting for you, idle)
 **Usage** shows tokens, the API-equivalent dollar value and how many times over your plan paid off, by day, week,
 month or all time. Read-only, from each tool's local files.
 
+With **live activity** on (Settings › Agents), read-only Claude Code hooks tell the notch what each session is doing
+right now and how many subagents it has out, and a Banner says what it edited and how long it took when it's done.
+The hooks never answer anything for you.
+
+### The `notch` command and MCP
+
+```bash
+notch run cargo build                 # a ring beside the notch, then a Banner with the exit code (click: back to the terminal)
+notch banner "Deploy done" "api is live" --success
+notch progress 0.4 "Uploading" --label 2/5   # notch progress --done to clear it
+notch shelf dist/app.dmg
+notch ask "Rebase or merge?" Rebase Merge     # prints the choice
+claude mcp add --scope user notchapp -- /Applications/NotchApp.app/Contents/MacOS/notch mcp
+```
+
+`notch mcp` lets coding agents report progress, show Banners, put files on the Shelf and ask quick multiple-choice
+questions. Permission questions are refused; those stay in the terminal. Settings › Agents installs the command on your PATH.
+
 ## And also
 
 | | |
@@ -197,6 +215,7 @@ Sources/NotchApp/
   Views/      SwiftUI views (collapsed activities, open panel, music, calendar, shelf)
   Services/   media, audio devices, HUD/media keys, battery, shelf, screenshots, calendar, system sensors
   Settings/   preferences model + settings window
+Sources/notch/  the `notch` command (scripts, Claude Code hooks, MCP server), shipped in Contents/MacOS
 MediaAdapter/ MediaRemote bridge (ObjC + perl loader)
 scripts/      icon generator, debug command sender
 docs/         README screenshots

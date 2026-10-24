@@ -21,7 +21,9 @@ let package = Package(
                               "-Xfrontend", "\(Context.packageDirectory)/Resources/appintents-protocols.json"]),
             ],
             linkerSettings: [.linkedLibrary("IOReport")]
-        )
+        ),
+        // The `notch` command, shipped inside the app (Contents/MacOS/notch).
+        .executableTarget(name: "notch", path: "Sources/notch"),
     ],
     swiftLanguageModes: [.v5]
 )
