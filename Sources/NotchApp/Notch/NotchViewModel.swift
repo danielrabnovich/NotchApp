@@ -146,9 +146,8 @@ final class NotchViewModel: ObservableObject {
     /// The camera mirror is showing in place of the tabs.
     @Published var mirror = false
 
-    /// Areas (in hosting-view coordinates, top-left origin) that scroll horizontally on their own,
-    /// keyed by whoever registered them.
-    var horizontalScrollRegions: [String: CGRect] = [:]
+    /// Rows that scroll sideways on their own, as "<page>:<row>": their page keeps horizontal swipes.
+    var horizontalScrollRegions: Set<String> = []
 
     /// Corner radii for the black shape (top flare / bottom rounding).
     var topRadius: CGFloat { isOpen ? 14 : 6 }
@@ -426,6 +425,7 @@ final class NotchViewModel: ObservableObject {
         // A captured window is for questions asked now; the next open starts with plain search.
         AssistantStore.shared.clearContext()
         wantsKeyboard = false
+        pager.container?.releaseHover()
         pager.builtCenter = nil
         pager.fromIndex = nil
         pager.reset(to: tabIndex)

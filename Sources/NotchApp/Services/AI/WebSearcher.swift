@@ -35,7 +35,8 @@ enum WebSearcher {
     private static let gate = Gate()
 
     /// `screenContext` is set when the question is about what's on screen (see `ScreenQuestion`).
-    static func answer(_ question: String, searchQuery: String, useAI: Bool = true, screenContext: String? = nil,
+    /// `conversation`: the chat so far, when the question is a follow-up in one.
+    static func answer(_ question: String, searchQuery: String, useAI: Bool = true, screenContext: String? = nil, conversation: String? = nil,
                        progress: @escaping @Sendable (String) async -> Void,
                        partial: @escaping @Sendable (String, [WebSource]) async -> Void) async throws -> (answer: String, sources: [WebSource]) {
         await progress("Searching the web")
@@ -74,15 +75,17 @@ enum WebSearcher {
         You are a concise research assistant. Answer the user's question using ONLY the numbered web sources. \
         Today is \(Date().formatted(date: .complete, time: .omitted)). \
         Start with a one-sentence direct answer. Then, only if useful, add up to 4 short "• " bullet lines with key details. \
-        Plain text only: no markdown, no headings, no bold. Under 110 words. Cite sources inline like [1] or [2][3]. \
+        Plain text only: no markdown, no headings, no bold. Under \(conversation == nil ? 110 : 180) words. Cite sources inline like [1] or [2][3]. \
         When sources disagree or the question is about the latest/most recent thing, trust the newest information \
         relative to today's date. If the sources don't answer the question, say so briefly.
         """ + (screenContext == nil ? "" : " The question is about what's on the user's screen, described before the sources; " +
             "use that to understand it. For a quiz or multiple-choice question, start with the right option exactly as " +
             "it appears on screen, letter included (\"B) Seattle Seahawks\"), then the evidence.")
+            + (conversation == nil ? "" : " The question follows on from the conversation given before the sources: answer it in that light.")
         let sources = Array(results.prefix(6))
         let screen = screenContext.map { "On the user's screen: \($0)\n\n" } ?? ""
-        let text = try await OllamaClient.chatStream(system: system, user: "Question: \(question)\n\n\(screen)Sources:\n\(context)") { soFar in
+        let earlier = conversation.map { "Conversation so far:\n\($0)\n\n" } ?? ""
+        let text = try await OllamaClient.chatStream(system: system, user: "\(earlier)Question: \(question)\n\n\(screen)Sources:\n\(context)") { soFar in
             await partial(soFar, sources)
         }
         return (text, sources)

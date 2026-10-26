@@ -158,6 +158,36 @@ enum DebugHooks {
         case "askstate": // where the last question is up to, and its answer
             let job = AssistantStore.shared.current
             log("ASKSTATE status=\(AssistantStore.shared.status) route=\(String(describing: job?.route)) state=\(String(describing: job?.state)) answer=\((job?.answer ?? "").prefix(300))")
+        case "chat": // chat [follow-up]: carries the current answer on in the chat window
+            if let job = AssistantStore.shared.current { ChatWindow.shared.open(from: job) }
+            let text = parts.dropFirst().joined(separator: " ")
+            if !text.isEmpty { ChatStore.shared.send(text) }
+        case "hittest": // hittest <x> <y>: the view under a point in the notch window (top-left origin, points)
+            if let window = c.panelContentView?.window, let root = window.contentView,
+               let x = Double(parts[safe: 1] ?? ""), let y = Double(parts[safe: 2] ?? "") {
+                let p = NSPoint(x: x, y: window.frame.height - y)
+                var chain: [String] = []
+                var v = root.hitTest(root.superview?.convert(p, from: nil) ?? p)
+                while let view = v {
+                    let areas = view.trackingAreas.map { "[\($0.rect.integral) opts=\($0.options.rawValue)]" }.joined()
+                    chain.append("\(type(of: view)) \(view.convert(view.bounds, to: nil).integral) vis=\(view.visibleRect.integral) \(areas)")
+                    v = view.superview
+                }
+                log("HITTEST \(p): " + chain.joined(separator: " < "))
+            }
+        case "newchat": ChatWindow.shared.toggleNewChat()
+        case "chatsend": ChatStore.shared.send(parts.dropFirst().joined(separator: " "))
+        case "chatstop": ChatStore.shared.stop()
+        case "chatretry": ChatStore.shared.retry()
+        case "chatopen": // chatopen <n>: the nth earlier chat, newest first
+            if let saved = ChatStore.shared.history[safe: Int(parts[safe: 1] ?? "") ?? -1] { ChatStore.shared.open(saved) }
+        case "chatdelete": // chatdelete <n>
+            if let saved = ChatStore.shared.history[safe: Int(parts[safe: 1] ?? "") ?? -1] { ChatStore.shared.delete(saved) }
+        case "chatclose": ChatWindow.shared.close()
+        case "chatclear": ChatStore.shared.clearHistory()
+        case "chathistory": log("CHATS " + ChatStore.shared.history.map { "\($0.title) (\($0.lines.count))" }.joined(separator: " | "))
+        case "chatstate":
+            for m in ChatStore.shared.messages { log("CHAT \(m.role) \(m.state) route=\(m.job?.route.map { $0.rawValue } ?? "-") ran=\(m.job?.ranTitle ?? "-") sources=\(m.sources.count): \(m.text.prefix(300))") }
         case "plan": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "), route: .actions)
         case "doinapp": AssistantStore.shared.run(parts.dropFirst().joined(separator: " "), route: .app)
         case "cmd": CommandCenter.shared.run(Array(CommandParser.parse(parts.dropFirst().joined(separator: " ")).prefix(1)))
@@ -223,7 +253,7 @@ enum DebugHooks {
                                               windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
                                               pressure: type == .leftMouseUp ? 0 : 1) { NSApp.postEvent(e, atStart: false) }
             }
-        case "nbounds": log("NBOUNDS \(c.panelContentView?.bounds ?? .zero) flipped=\(c.panelContentView?.isFlipped ?? false) ignores=\(c.panelContentView?.window?.ignoresMouseEvents ?? true)")
+        case "nbounds": log("NBOUNDS shape=\(c.viewModel.shapeSize) open=\(c.viewModel.openSize) \(c.panelContentView?.bounds ?? .zero) flipped=\(c.panelContentView?.isFlipped ?? false) ignores=\(c.panelContentView?.window?.ignoresMouseEvents ?? true)")
         case "cliprun": // cliprun <index> <action id>: runs a clip's suggestion like the card does
             let clips = ClipboardHistory.shared.clips
             guard let i = Int(parts[safe: 1] ?? ""), clips.indices.contains(i) else { break }

@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import ImageIO
+import os
 import Vision
 
 /// Lets file search find pictures by what's in them. Images in the user's folders are run through
@@ -14,9 +15,14 @@ final class ImageIndex: ObservableObject {
     @Published private(set) var indexed = 0
     /// Images still to look at in the current pass.
     @Published private(set) var remaining = 0
-    /// How many the current pass set out to look at, and when it started (for time left).
+    /// How many the current pass set out to look at.
     @Published private(set) var passTotal = 0
-    private var passStarted = Date()
+    /// For time left: when the current stretch of steady progress began and how much was done by
+    /// then, and the last report. A gap (the Mac slept, Low Power Mode) starts a new stretch, so
+    /// time spent not indexing isn't counted as time per picture.
+    private var stretchStarted = Date()
+    private var stretchFrom = 0
+    private var lastReport = Date()
 
     var isIndexing: Bool { remaining > 0 && passTotal > 0 }
     var passDone: Int { max(passTotal - remaining, 0) }
@@ -24,8 +30,9 @@ final class ImageIndex: ObservableObject {
 
     /// "about 6 min left", once enough pictures are done to tell.
     var timeLeft: String? {
-        guard isIndexing, passDone >= 5 else { return nil }
-        let seconds = Date().timeIntervalSince(passStarted) / Double(passDone) * Double(remaining)
+        let done = passDone - stretchFrom
+        guard isIndexing, done >= 5, Date().timeIntervalSince(lastReport) < 180 else { return nil }
+        let seconds = lastReport.timeIntervalSince(stretchStarted) / Double(done) * Double(remaining)
         if seconds < 60 { return "under a minute left" }
         if seconds < 3600 { return "about \(Int((seconds / 60).rounded())) min left" }
         return "about \(Int((seconds / 3600).rounded())) h left"
@@ -85,10 +92,16 @@ final class ImageIndex: ObservableObject {
                 await MainActor.run {
                     let index = ImageIndex.shared
                     // The first report of a pass says how much there is to do.
+                    let now = Date()
                     if index.passTotal == 0 || remaining > index.passTotal {
                         index.passTotal = remaining
-                        index.passStarted = Date()
+                        index.stretchStarted = now
+                        index.stretchFrom = 0
+                    } else if now.timeIntervalSince(index.lastReport) > 120 {
+                        index.stretchStarted = now
+                        index.stretchFrom = index.passTotal - remaining
                     }
+                    index.lastReport = now
                     index.indexed = indexed
                     index.remaining = remaining
                 }
@@ -141,8 +154,8 @@ final class ImageIndex: ObservableObject {
     private nonisolated static func run(_ folders: [String], cloud: [String],
                                         progress: @escaping @Sendable (Int, Int) async -> Void) async {
         let store = ImageIndexStore.shared
-        let files = scan(folders, cloud: cloud)
-        store.prune(keeping: Set(files.keys))
+        let (files, unreachable) = scan(folders, cloud: cloud)
+        store.prune(keeping: Set(files.keys), under: unreachable)
         // Whether MobileCLIP is here, without loading it: most passes find nothing to do.
         let canEmbed = VisualSearch.isUsable
         // New or changed pictures, plus (once MobileCLIP is here) ones indexed before it was.
@@ -160,7 +173,13 @@ final class ImageIndex: ObservableObject {
             // Fetched per picture (not held for the pass) so it counts as in use, and a search
             // meanwhile shares this copy rather than loading a second one.
             let clip = canEmbed ? VisualSearch.model : nil
-            let entry = autoreleasepool { analyze(URL(fileURLWithPath: path), modified: modified, existing: existing, clip: clip) }
+            guard let entry = autoreleasepool(invoking: { analyze(URL(fileURLWithPath: path), modified: modified, existing: existing, clip: clip) }) else {
+                // Vision hung on this picture. Remember it as done (so the next pass doesn't hang on it
+                // too) and stop: the next pass, in ten minutes, carries on with fresh Vision requests.
+                DebugHooks.log("ImageIndex: Vision hung on \(path), skipping it")
+                store.set(path, existing ?? ImageIndexStore.Entry(modified: modified, labels: [:], text: ""))
+                break
+            }
             store.set(path, entry)
             if i % 5 == 4 { await progress(store.count, todo.count - i - 1) }
             if i % 50 == 49 { store.save() }
@@ -172,32 +191,43 @@ final class ImageIndex: ObservableObject {
     private nonisolated static let scanKeys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey,
                                                                   .ubiquitousItemDownloadingStatusKey]
 
-    private nonisolated static func scan(_ folders: [String], cloud: [String]) -> [String: Date] {
+    /// The pictures found, plus the folders that came back empty. A folder can read as empty while
+    /// the Mac is locked (Spotlight doesn't answer for cloud folders) or a drive isn't mounted yet;
+    /// what's indexed under those is kept rather than forgotten and done over.
+    private nonisolated static func scan(_ folders: [String], cloud: [String]) -> ([String: Date], [String]) {
         var found: [String: Date] = [:]
-        func consider(_ url: URL) {
+        var unreachable: [String] = []
+        /// Whether it's a picture to index (already found by another folder or not).
+        @discardableResult func consider(_ url: URL) -> Bool {
             guard extensions.contains(url.pathExtension.lowercased()), FileFinder.isInteresting(url.path),
                   let values = try? url.resourceValues(forKeys: Set(scanKeys)), values.isRegularFile == true,
                   // Icons and UI assets aren't worth it; nor are cloud files that would have to download first.
                   (values.fileSize ?? 0) >= 15_000,
                   values.ubiquitousItemDownloadingStatus == nil || values.ubiquitousItemDownloadingStatus == .current,
                   !isDataless(url.path)
-            else { return }
+            else { return false }
             found[url.path] = values.contentModificationDate ?? .distantPast
+            return true
         }
         for folder in folders {
             guard let walker = FileManager.default.enumerator(at: URL(fileURLWithPath: folder), includingPropertiesForKeys: scanKeys,
                                                               options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { continue }
             // The walker's URLs (and their cached resource values) are autoreleased: drain them as
             // it goes, or a whole home folder's worth is held until the walk ends.
+            // Pictures seen, not new ones: a folder walked twice (Desktop as the screenshot folder too) isn't empty.
+            var saw = false
             while let url = autoreleasepool(invoking: { walker.nextObject() as? URL }) {
-                autoreleasepool { consider(url) }
+                if autoreleasepool(invoking: { consider(url) }) { saw = true }
             }
+            if !saw { unreachable.append(folder) }
         }
         for folder in cloud {
-            spotlightImages(in: folder).forEach(consider)
+            let images = spotlightImages(in: folder)
+            if images.isEmpty { unreachable.append(folder) }
+            images.forEach { consider($0) }
         }
-        guard found.count > maxImages else { return found }
-        return Dictionary(uniqueKeysWithValues: found.sorted { $0.value > $1.value }.prefix(maxImages).map { ($0.key, $0.value) })
+        guard found.count > maxImages else { return (found, unreachable) }
+        return (Dictionary(uniqueKeysWithValues: found.sorted { $0.value > $1.value }.prefix(maxImages).map { ($0.key, $0.value) }), unreachable)
     }
 
     /// A cloud placeholder whose contents aren't on this Mac: reading it would download it.
@@ -222,8 +252,9 @@ final class ImageIndex: ObservableObject {
 
     /// What Vision (and MobileCLIP, when downloaded) sees in one image. Unreadable or tiny images get
     /// an empty entry so they aren't retried. With `existing`, Vision already ran: only the vector is added.
+    /// Nil when Vision didn't answer in time.
     private nonisolated static func analyze(_ url: URL, modified: Date, existing: ImageIndexStore.Entry?,
-                                            clip: CLIPModel?) -> ImageIndexStore.Entry {
+                                            clip: CLIPModel?) -> ImageIndexStore.Entry? {
         var entry = existing ?? ImageIndexStore.Entry(modified: modified, labels: [:], text: "")
         let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
                                         kCGImageSourceCreateThumbnailWithTransform: true,
@@ -243,17 +274,36 @@ final class ImageIndex: ObservableObject {
         // Accurate reads screenshots well in a few hundred ms; automatic language detection made
         // the same screenshot take ~45s, so the system languages are used instead.
         text.recognitionLevel = .accurate
-        do {
-            try VNImageRequestHandler(cgImage: image).perform([classify, text])
-        } catch {
-            return entry
-        }
+        guard let succeeded = perform([classify, text], on: image) else { return nil }
+        guard succeeded else { return entry }
         for label in (classify.results ?? []).filter({ $0.confidence >= 0.3 }).prefix(15) {
             entry.labels[label.identifier] = (label.confidence * 100).rounded() / 100
         }
         let lines = (text.results ?? []).compactMap { $0.topCandidates(1).first?.string }
         entry.text = String(lines.joined(separator: " ").prefix(1500))
         return entry
+    }
+}
+
+extension ImageIndex {
+    private nonisolated static let visionQueue = DispatchQueue(label: "ImageIndex.vision", qos: .utility, attributes: .concurrent)
+
+    /// Runs Vision with a time limit. Text recognition has been seen to wait forever inside the
+    /// framework (a whole night on one picture), which froze the pass with its time left climbing.
+    /// Nil on a timeout; the stuck request is cancelled and its thread left behind.
+    nonisolated static func perform(_ requests: [VNRequest], on image: CGImage, timeout: TimeInterval = 60) -> Bool? {
+        let done = DispatchSemaphore(value: 0)
+        let succeeded = OSAllocatedUnfairLock(initialState: false)
+        visionQueue.async {
+            let ok = (try? VNImageRequestHandler(cgImage: image).perform(requests)) != nil
+            succeeded.withLock { $0 = ok }
+            done.signal()
+        }
+        guard done.wait(timeout: .now() + timeout) == .success else {
+            requests.forEach { $0.cancel() }
+            return nil
+        }
+        return succeeded.withLock { $0 }
     }
 }
 
@@ -372,9 +422,11 @@ final class ImageIndexStore: @unchecked Sendable {
         lock.withLock { items[path] = indexed; dirty = true }
     }
 
-    func prune(keeping paths: Set<String>) {
+    /// Forgets pictures that are gone, except those under `unreachable` folders (they may be back).
+    func prune(keeping paths: Set<String>, under unreachable: [String]) {
+        let prefixes = unreachable.map { $0.hasSuffix("/") ? $0 : $0 + "/" }
         lock.withLock {
-            let gone = items.keys.filter { !paths.contains($0) }
+            let gone = items.keys.filter { path in !paths.contains(path) && !prefixes.contains { path.hasPrefix($0) } }
             gone.forEach { items[$0] = nil }
             if !gone.isEmpty { dirty = true }
         }

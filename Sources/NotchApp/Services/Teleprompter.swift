@@ -122,7 +122,10 @@ final class Teleprompter: ObservableObject {
         guard running, !paused else { return }
         if followsVoice {
             // Eases toward the spoken word, so it glides instead of jumping.
+            // Snaps the last bit: an ease alone never quite arrives, and the highlight (which rounds
+            // down) would sit a word behind.
             position += (voiceTarget - position) * min(1, dt * 8)
+            if abs(voiceTarget - position) < 0.05 { position = voiceTarget }
         } else {
             position += wordsPerMinute / 60 * dt
         }

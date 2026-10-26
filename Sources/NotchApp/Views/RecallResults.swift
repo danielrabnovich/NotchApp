@@ -7,6 +7,8 @@ import SwiftUI
 struct RecallResults: View {
     let answer: RecallAnswer
     @Binding var selection: Int
+    /// The list of moments under the one shown rather than beside it, for a narrow place (a chat).
+    var stacked = false
 
     var body: some View {
         if answer.hits.isEmpty {
@@ -17,7 +19,7 @@ struct RecallResults: View {
             .foregroundStyle(.white.opacity(0.8))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            let index = min(selection, answer.hits.count - 1)
+            let index = max(0, min(selection, answer.hits.count - 1))
             VStack(alignment: .leading, spacing: 8) {
                 if let sentence = answer.sentence, !sentence.isEmpty {
                     // Two lines at most, so the moments and the footer keep their room; all of it on hover.
@@ -31,7 +33,8 @@ struct RecallResults: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .transition(.opacity)
                 }
-                HStack(alignment: .top, spacing: 16) {
+                let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 10)) : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
+                layout {
                     RecallMoment(hit: answer.hits[index], label: index == 0 ? "Best match" : "Match \(index + 1) of \(answer.hits.count)",
                                  hits: answer.hits, index: index)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -63,7 +66,8 @@ struct RecallResults: View {
                                                      startPoint: .top, endPoint: .bottom))
                             }
                         }
-                        .frame(width: 230, alignment: .leading)
+                        .frame(width: stacked ? nil : 230, alignment: .leading)
+                        .frame(maxWidth: stacked ? .infinity : nil, maxHeight: stacked ? 130 : nil, alignment: .topLeading)
                     }
                 }
             }

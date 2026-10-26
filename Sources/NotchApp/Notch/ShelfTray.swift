@@ -305,19 +305,30 @@ struct ShelfTrayView: View {
 /// the way round, under a shade dark enough for white text. Black when the notch has no glass.
 /// Its layers never move on their own (the window's content scales as one), so they can't drift
 /// from the SwiftUI drawn above them.
-private struct TrayGlass: NSViewRepresentable {
+struct TrayGlass: NSViewRepresentable {
     let look: DynamicGlass.Look
     let glass: Bool
+    var radius = ShelfTray.radius
+    /// How far in from the edge the glass bends; by default most of a small card's height.
+    var band: CGFloat?
+    /// The darkest the shade may be lighter than: a window full of text needs more than a card.
+    var minShade: CGFloat = 0
 
     func makeNSView(context: Context) -> GlassView { GlassView() }
 
     func updateNSView(_ view: GlassView, context: Context) {
         view.state = (look, glass)
+        view.radius = radius
+        view.band = band
+        view.minShade = minShade
         view.relayout()
     }
 
     final class GlassView: NSView {
         var state: (look: DynamicGlass.Look, glass: Bool)?
+        var radius = ShelfTray.radius
+        var band: CGFloat?
+        var minShade: CGFloat = 0
         private let root = CALayer()
         private let clip = CALayer()
         private let shade = CALayer()
@@ -363,7 +374,7 @@ private struct TrayGlass: NSViewRepresentable {
             defer { CATransaction.commit() }
             let scale = window?.backingScaleFactor ?? 2
             for l in [root, clip, shade, rim] { l.contentsScale = scale }
-            let r = ShelfTray.radius
+            let r = radius
             let on = glass && lens != nil
             clip.isHidden = !on
             clip.frame = bounds
@@ -374,12 +385,12 @@ private struct TrayGlass: NSViewRepresentable {
                 lens.element.cornerRadius = r
                 lens.element.superlayer?.frame = clip.bounds
                 // A small card's bend: shallow enough not to turn the page behind upside down.
-                lens.tune(look, band: bounds.height * 0.6)
+                lens.tune(look, band: band ?? bounds.height * 0.6)
             }
             // A dark glass bottle: the level's shade, raised the way a small card's is so white text reads.
             shade.frame = bounds
             shade.cornerRadius = r
-            shade.backgroundColor = NSColor.black.withAlphaComponent(on ? look.shade + (1 - look.shade) * 0.5 : 1).cgColor
+            shade.backgroundColor = NSColor.black.withAlphaComponent(on ? max(minShade, look.shade + (1 - look.shade) * 0.5) : 1).cgColor
             rim.frame = bounds
             rim.path = CGPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), cornerWidth: r - 0.5, cornerHeight: r - 0.5, transform: nil)
             rim.strokeColor = NSColor.white.withAlphaComponent(on ? look.rim * 0.6 : 0.12).cgColor

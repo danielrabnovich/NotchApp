@@ -62,6 +62,18 @@ enum FileFinder {
             plan.keywords = description.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
                 .map(String.init).filter { $0.count > 2 && !stopWords.contains($0.lowercased()) }
         }
+        plan.keywords = contentWords(plan)
+        // Only a type and/or a time ("screenshots I took today", "PDFs from this week"): nothing to
+        // match by name or to look for in a picture, so it's a list, newest first. Judged by the
+        // user's own words: the planner adds synonyms ("report", "paper") to anything.
+        var own = plan
+        own.keywords = description.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+            .filter { $0.count > 2 && !stopWords.contains($0.lowercased()) && !Self.requestWords.contains($0.lowercased()) }
+        if contentWords(own).isEmpty, plan.people.isEmpty, !plan.kinds.isEmpty || plan.daysAgoMax != nil {
+            let listed = listing(plan)
+            DebugHooks.log("FileFinder listing (\(ContinuousClock.now - clock)): \(listed.prefix(8).map(\.url.lastPathComponent))")
+            return (listed.map { FileHit(url: $0.url, reason: nil) }, !listed.isEmpty, nil)
+        }
         // A described scene wants pictures, not files that happen to share its words ("game", "table").
         if !plan.visual, looksLikeScene(description, kinds: plan.kinds) { plan.visual = true }
         // "image of the cubicle training manual opened", "photo of…": an image was asked for by name.
@@ -88,7 +100,14 @@ enum FileFinder {
         // Describing a picture: let a model that can see look at the best few pictures itself. Labels
         // and CLIP can't tell "a person at a desk with a card game" from a game card in a "desk" folder.
         if plan.visual, await OllamaClient.supportsVision() {
-            let pictures = pictureShortlist(candidates)
+            // The model sees only the pictures, not their dates: when a time was named, it's shown
+            // pictures from then (if there are any).
+            let since = cutoff(plan.daysAgoMax)
+            let current = since.map { since in candidates.filter { c in
+                let item = NSMetadataItem(url: c.url)
+                return dateKeys.contains { (item?.value(forAttribute: $0) as? Date).map { $0 >= since } ?? false }
+            } } ?? []
+            let pictures = pictureShortlist(pictureShortlist(current).isEmpty ? candidates : current)
             if !pictures.isEmpty {
                 await progress("Looking at \(pictures.count) pictures")
                 var seen: [FileHit] = []
@@ -239,11 +258,11 @@ enum FileFinder {
         // A described scene is about what's pictured, not words printed in the picture.
         let hits = ImageIndexStore.shared.search(plan.keywords, limit: 30, textWeight: plan.visual ? 2 : 3.5)
         guard !hits.isEmpty else { return }
-        let cutoff = plan.daysAgoMax.map { Date().addingTimeInterval(-Double($0) * 86_400) }
+        let cutoff = cutoff(plan.daysAgoMax)
         var byPath = Dictionary(candidates.map { ($0.url.path, $0) }, uniquingKeysWith: { a, _ in a })
         for hit in hits {
             var score = hit.score * (wantsImages ? 1.5 : 1)
-            if let cutoff, hit.modified >= cutoff { score += 2 }
+            if let cutoff { score += hit.modified >= cutoff ? 4 : -6 }
             byPath[hit.url.path, default: Candidate(url: hit.url, score: 0)].score += score
         }
         candidates = byPath.values.sorted { $0.score > $1.score }
@@ -275,6 +294,69 @@ enum FileFinder {
 
     // MARK: - Spotlight
 
+    /// Words that say what's in the file: time words ("today", "October 25") and the type asked
+    /// for ("screenshots") are left to the date and kind hints, where they mean something.
+    private static func contentWords(_ plan: Plan) -> [String] {
+        var timeWords: Set<String> = ["today", "tonight", "yesterday", "tomorrow", "ago", "recent", "recently", "latest", "newest",
+                                      "took", "taken", "made", "saved", "downloaded"]
+        // Names of days and months only when a date hint stands in for them; without one ("the
+        // invoice from March", "Monday standup notes") they're the best word in the name.
+        if plan.daysAgoMax != nil {
+            timeWords.formUnion(["week", "weeks", "month", "months", "year", "years", "last", "earlier", "morning", "afternoon", "evening",
+                                 "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+                                 "january", "february", "march", "april", "may", "june", "july", "august", "september",
+                                 "october", "november", "december"])
+        }
+        // With a type given, generic type nouns ("image", "document") add nothing but noise.
+        let generic: Set<String> = plan.kinds.isEmpty ? [] : ["image", "images", "picture", "pictures", "photo", "photos", "file", "files",
+                                                              "document", "documents", "doc", "docs", "item", "items"]
+        let kindWords = generic.union(plan.kinds.flatMap { kind -> [String] in
+            switch kind {
+            case "screenshot": ["screenshot", "screenshots", "screen", "shot", "shots", "capture", "captures"]
+            case "image": ["image", "images", "picture", "pictures", "photo", "photos", "pic", "pics"]
+            case "video": ["video", "videos", "recording", "recordings"]
+            default: [kind, kind + "s"]
+            }
+        })
+        return plan.keywords.filter { word in
+            let w = word.lowercased()
+            if timeWords.contains(w) || kindWords.contains(w) { return false }
+            // A day of the month beside a time ("October 25") is the date, not part of a name.
+            if plan.daysAgoMax != nil, w.allSatisfy(\.isNumber), let n = Int(w), n <= 31 { return false }
+            return true
+        }
+    }
+
+    /// Words that ask rather than describe ("find the…", "show me…").
+    private static let requestWords: Set<String> = ["find", "show", "get", "open", "where", "what", "which", "all", "any", "some",
+                                                    "took", "taken", "made", "saved", "got", "have", "had", "did", "you", "can", "please"]
+
+    /// Since when, for a request that says when: the start of that day.
+    private static func cutoff(_ days: Int?) -> Date? {
+        days.map { Calendar.current.date(byAdding: .day, value: -$0, to: Calendar.current.startOfDay(for: Date())) ?? Date() }
+    }
+
+    private static let dateKeys = ["kMDItemContentCreationDate", "kMDItemContentModificationDate", "kMDItemLastUsedDate", "kMDItemDateAdded"]
+
+    /// The files of a kind and/or from a time, newest first.
+    private static func listing(_ plan: Plan) -> [Candidate] {
+        guard let query = [kindQuery(plan.kinds), dateQuery(plan.daysAgoMax)].compactMap({ $0 }).joined(separator: " && ") as String?,
+              !query.isEmpty else { return [] }
+        let since = cutoff(plan.daysAgoMax)
+        let dated = mdfind(query, limit: 200).compactMap { url -> (URL, Date)? in
+            let item = NSMetadataItem(url: url)
+            let dates = dateKeys.compactMap { item?.value(forAttribute: $0) as? Date }
+            // The date the file was made counts first: a screenshot opened today isn't from today.
+            guard let date = (item?.value(forAttribute: "kMDItemContentCreationDate") as? Date) ?? dates.max() else { return nil }
+            // Made, changed or added then; only opened then doesn't make it from then.
+            let made = ["kMDItemContentCreationDate", "kMDItemContentModificationDate", "kMDItemDateAdded"]
+                .compactMap { item?.value(forAttribute: $0) as? Date }
+            if let since, !made.contains(where: { $0 >= since }) { return nil }
+            return (url, date)
+        }
+        return dated.sorted { $0.1 > $1.1 }.prefix(resultTarget * 2).map { Candidate(url: $0.0, score: 0) }
+    }
+
     private static func gather(_ plan: Plan) -> [Candidate] {
         let words = plan.keywords.map { $0.lowercased() }
         let textWords = words.filter { $0.count >= 3 && !$0.allSatisfy(\.isNumber) }
@@ -297,8 +379,10 @@ enum FileFinder {
         let hints = [kindQuery(plan.kinds), dateQuery(plan.daysAgoMax)].compactMap { $0 }
         if let anyText, !hints.isEmpty {
             queries.append((([anyText] + hints).joined(separator: " && "), 3))
-        } else if anyText == nil, !hints.isEmpty {
-            queries.append((hints.joined(separator: " && "), 1))
+        }
+        // The type and time on their own too: a screenshot named "CleanShot …" has no keyword in it.
+        if !hints.isEmpty {
+            queries.append((hints.joined(separator: " && "), anyText == nil ? 1 : 2))
         }
         for person in plan.people.prefix(2) {
             queries.append(("kMDItemAuthors == \"*\(person)*\"cd || kMDItemWhereFroms == \"*\(person)*\"cd || kMDItemTextContent == \"\(person)\"cdw", 2))
@@ -320,7 +404,7 @@ enum FileFinder {
         }
 
         // Local scoring: names, numbers, and the soft type/date hints.
-        let cutoff = plan.daysAgoMax.map { Date().addingTimeInterval(-Double($0) * 86_400) }
+        let cutoff = cutoff(plan.daysAgoMax)
         let wantedTypes = Set(plan.kinds.flatMap { kindTypes[$0] ?? [] })
         for (path, var c) in byPath {
             let name = c.url.deletingPathExtension().lastPathComponent.lowercased()
@@ -335,20 +419,34 @@ enum FileFinder {
 
             if let item = NSMetadataItem(url: c.url) {
                 let tree = item.value(forAttribute: "kMDItemContentTypeTree") as? [String] ?? []
-                if !wantedTypes.isEmpty, !wantedTypes.isDisjoint(with: tree) { c.score += 2.5 }
+                // A type the user named is what they want: "PDFs from this week" never means a .md file.
+                if !wantedTypes.isEmpty, wantedTypes.isDisjoint(with: tree) {
+                    byPath[path] = nil
+                    continue
+                }
+                if !wantedTypes.isEmpty { c.score += 2.5 }
                 if plan.visual, !tree.contains("public.image") { c.score -= 6 }
                 if plan.kinds.contains("screenshot"), (item.value(forAttribute: "kMDItemIsScreenCapture") as? Bool) == true { c.score += 3 }
                 if tree.contains("public.source-code"), !plan.kinds.contains("code"),
                    !codeExtensions.contains(c.url.pathExtension.lowercased()) { c.score -= 4 }
+                // A time the user named matters: from then counts for a lot, from before against.
                 if let cutoff {
-                    let dates = ["kMDItemContentModificationDate", "kMDItemLastUsedDate", "kMDItemDateAdded"]
-                        .compactMap { item.value(forAttribute: $0) as? Date }
-                    if dates.contains(where: { $0 >= cutoff }) { c.score += 2 }
+                    let dates = dateKeys.compactMap { item.value(forAttribute: $0) as? Date }
+                    c.score += dates.contains(where: { $0 >= cutoff }) ? 4 : -6
                 }
             }
             byPath[path] = c
         }
-        return byPath.values.filter { $0.score > 0 }.sorted { $0.score > $1.score }
+        var found = byPath.values.filter { $0.score > 0 }
+        // A time the user named rules out what's older, as long as something is from then.
+        if let cutoff {
+            let current = found.filter { c in
+                let item = NSMetadataItem(url: c.url)
+                return dateKeys.contains { (item?.value(forAttribute: $0) as? Date).map { $0 >= cutoff } ?? false }
+            }
+            if !current.isEmpty { found = current }
+        }
+        return found.sorted { $0.score > $1.score }
     }
 
     private static func mdfind(_ query: String, limit: Int) -> [URL] {
@@ -446,9 +544,7 @@ enum FileFinder {
     }
 
     private static func dateQuery(_ days: Int?) -> String? {
-        days.map { d in
-            "(kMDItemContentModificationDate >= $time.today(-\(d)) || kMDItemLastUsedDate >= $time.today(-\(d)) || kMDItemDateAdded >= $time.today(-\(d)))"
-        }
+        days.map { d in "(" + dateKeys.map { "\($0) >= $time.today(-\(d))" }.joined(separator: " || ") + ")" }
     }
 
     // MARK: - Rank

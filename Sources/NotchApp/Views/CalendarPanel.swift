@@ -273,11 +273,13 @@ private struct WeatherNow: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text("\(Int(report.currentTemp.rounded()))°")
                     .font(HomeType.figure)
+                    .foregroundStyle(report.tint(report.currentTemp))
                     .rollingNumber(Int(report.currentTemp.rounded()))
                 if let today = report.days.first {
-                    Text("H \(Int(today.high.rounded()))°  L \(Int(today.low.rounded()))°")
+                    (Text("H \(Int(today.high.rounded()))°").foregroundColor(report.tint(today.high))
+                     + Text("  L \(Int(today.low.rounded()))°").foregroundColor(report.tint(today.low)))
                         .font(HomeType.detail.weight(.medium))
-                        .foregroundStyle(HomeType.secondary)
+                        .opacity(0.85)
                 }
             }
         }
@@ -298,15 +300,16 @@ private struct WeatherTile: View {
                     .font(.system(size: 18))
                 Text("\(Int(report.currentTemp.rounded()))°")
                     .font(HomeType.figure)
+                    .foregroundStyle(report.tint(report.currentTemp))
                     .rollingNumber(Int(report.currentTemp.rounded()))
                 Spacer(minLength: 2)
                 if let today = report.days.first {
                     VStack(alignment: .trailing, spacing: 0) {
-                        Text("H \(Int(today.high.rounded()))°")
-                        Text("L \(Int(today.low.rounded()))°")
+                        Text("H \(Int(today.high.rounded()))°").foregroundStyle(report.tint(today.high))
+                        Text("L \(Int(today.low.rounded()))°").foregroundStyle(report.tint(today.low))
                     }
                     .font(.system(size: 9.5, weight: .medium).monospacedDigit())
-                    .foregroundStyle(HomeType.secondary)
+                    .opacity(0.85)
                 }
             }
             WeatherHeadline(report: report)
@@ -350,6 +353,7 @@ private struct WeatherHeadline: View {
 /// rain under them all once any of them is likely enough to matter.
 private struct HourlyStrip: View {
     let hours: [WeatherReport.Hour]
+    let report: WeatherReport
 
     var body: some View {
         let rainy = hours.contains { $0.rainChance >= 30 }
@@ -365,6 +369,7 @@ private struct HourlyStrip: View {
                         .frame(height: 14)
                     Text("\(Int(hour.temp.rounded()))°")
                         .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(report.tint(hour.temp))
                     if rainy {
                         Text(hour.rainChance >= 30 ? "\(hour.rainChance)%" : " ")
                             .font(.system(size: 9, weight: .medium).monospacedDigit())
@@ -408,7 +413,7 @@ private struct Forecast: View {
             }
             .padding(.bottom, 2)
             if !hours.isEmpty {
-                HourlyStrip(hours: hours)
+                HourlyStrip(hours: hours, report: report)
                     .padding(.bottom, 2)
             }
             ForEach(report.days.dropFirst().prefix(days)) { day in
@@ -422,12 +427,17 @@ private struct Forecast: View {
                         .font(.system(size: 11))
                         .frame(width: 18)
                     Spacer(minLength: 0)
-                    Text("\(Int(day.high.rounded()))°")
-                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    // As Weather does: the low, a bar for the day within the week's range, the high.
                     Text("\(Int(day.low.rounded()))°")
                         .font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.45))
+                        .foregroundStyle(report.tint(day.low).opacity(0.8))
                         .frame(width: 26, alignment: .trailing)
+                    TempRange(report: report, low: day.low, high: day.high,
+                              coldest: report.days.map(\.low).min() ?? day.low, warmest: report.days.map(\.high).max() ?? day.high, width: 30)
+                    Text("\(Int(day.high.rounded()))°")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(report.tint(day.high))
+                        .frame(width: 26, alignment: .leading)
                 }
                 .help(WeatherReport.describe(day.code) + (day.rainChance > 0 ? ", \(day.rainChance)% chance of rain" : ""))
             }

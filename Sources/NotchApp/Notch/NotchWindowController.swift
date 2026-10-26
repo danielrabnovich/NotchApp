@@ -185,6 +185,12 @@ final class NotchWindowController {
 
         // Each change is a window-server round trip, so only set it when it differs.
         if panel.ignoresMouseEvents == inside { panel.ignoresMouseEvents = !inside }
+        if kind == .moved, viewModel.isOpen, pointerMoved, let pager = viewModel.pager.container,
+           let event = NSEvent.mouseEvent(with: .mouseMoved, location: panel.convertPoint(fromScreen: p), modifierFlags: NSEvent.modifierFlags,
+                                          timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: panel.windowNumber,
+                                          context: nil, eventNumber: 0, clickCount: 0, pressure: 0) {
+            pager.pointerMoved(event)
+        }
 
         if kind == .up, viewModel.isDragActive {
             // Give the drop handler a moment to run, then return to normal.
@@ -368,13 +374,14 @@ final class NotchWindowController {
         }
     }
 
+    /// A page with a row that scrolls sideways keeps horizontal swipes over all of its content, so
+    /// what a swipe does doesn't depend on landing exactly on the row; the tab bar above the pages
+    /// still switches. Other pages switch from anywhere.
     private func isInHorizontalScrollRegion(_ e: NSEvent) -> Bool {
-        // The regions are measured in the page's own hosting view, which covers the pager exactly.
         guard let host = viewModel.pagesHost else { return false }
-        var p = host.convert(e.locationInWindow, from: nil)
-        if !host.isFlipped { p.y = host.bounds.height - p.y }
+        let p = host.convert(e.locationInWindow, from: nil)
         let prefix = viewModel.tab.rawValue + ":"
-        return viewModel.horizontalScrollRegions.contains { $0.key.hasPrefix(prefix) && $0.value.contains(p) }
+        return host.bounds.contains(p) && viewModel.horizontalScrollRegions.contains { $0.hasPrefix(prefix) }
     }
 
     /// Resists dragging past the first/last tab, like iOS scroll views.

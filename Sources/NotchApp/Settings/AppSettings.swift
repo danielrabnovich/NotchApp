@@ -189,6 +189,8 @@ final class AppSettings: ObservableObject {
     @Published var threeFingerMiddleClick: Bool { didSet { defaults.set(threeFingerMiddleClick, forKey: "threeFingerMiddleClick") } }
     @Published var cameraMirrorEnabled: Bool { didSet { defaults.set(cameraMirrorEnabled, forKey: "cameraMirrorEnabled") } }
     @Published var hotKeysEnabled: Bool { didSet { defaults.set(hotKeysEnabled, forKey: "hotKeysEnabled") } }
+    /// Caps Lock held is ⌃⌥⇧⌘ (see `HyperKey`).
+    @Published var capsLockHyper: Bool { didSet { defaults.set(capsLockHyper, forKey: "capsLockHyper") } }
     @Published var hotKeyModifiers: HotKeys.Modifiers { didSet { defaults.set(hotKeyModifiers.rawValue, forKey: "hotKeyModifiers") } }
     /// Shortcuts rebound one by one, by action; the rest use the shared modifiers and their default key.
     @Published var hotKeyOverrides: [String: HotKeys.Combo] {
@@ -354,6 +356,7 @@ final class AppSettings: ObservableObject {
             "cameraMirrorEnabled": false,
             "hotKeysEnabled": true,
             "hotKeyModifiers": HotKeys.Modifiers.controlOption.rawValue,
+            "capsLockHyper": false,
             "statsEnabled": false,
             "toolsEnabled": false,
             "clipboardHistory": false,
@@ -467,6 +470,7 @@ final class AppSettings: ObservableObject {
         cameraMirrorEnabled = defaults.bool(forKey: "cameraMirrorEnabled")
         hotKeysEnabled = defaults.bool(forKey: "hotKeysEnabled")
         hotKeyModifiers = HotKeys.Modifiers(rawValue: defaults.string(forKey: "hotKeyModifiers") ?? "") ?? .controlOption
+        capsLockHyper = defaults.bool(forKey: "capsLockHyper")
         hotKeyOverrides = defaults.data(forKey: "hotKeyOverrides").flatMap { try? JSONDecoder().decode([String: HotKeys.Combo].self, from: $0) } ?? [:]
         shelfKeyOverrides = defaults.data(forKey: "shelfKeyOverrides").flatMap { try? JSONDecoder().decode([String: HotKeys.Combo].self, from: $0) } ?? [:]
         statsEnabled = defaults.bool(forKey: "statsEnabled")

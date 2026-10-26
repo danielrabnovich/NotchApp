@@ -236,7 +236,9 @@ enum CommandParser {
         guard !needle.isEmpty else { return nil }
         let me = ProcessInfo.processInfo.processIdentifier
         let apps = NSWorkspace.shared.runningApplications
-            .filter { $0.activationPolicy == .regular && $0.processIdentifier != me && !$0.isTerminated }
+            // Menu bar apps (Tinycast, Rectangle…) too, but not the helpers living inside other apps.
+            .filter { $0.activationPolicy != .prohibited && $0.processIdentifier != me && !$0.isTerminated
+                && $0.bundleURL?.pathExtension == "app" && $0.bundleURL?.path.contains(".app/") == false }
             .compactMap { app in app.localizedName.map { (app, $0) } }
             .filter { $0.1.lowercased().contains(needle) }
             // Names that start with what was typed first, then shorter names.

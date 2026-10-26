@@ -410,6 +410,28 @@ final class ClipboardHistory: ObservableObject {
         clip.imageFile.flatMap { NSImage(contentsOf: folder.appendingPathComponent($0)) }
     }
 
+    /// A card-sized copy of a picture, decoded once and kept. Read from the file on every redraw
+    /// (each hover, scroll step or arrow press), the full picture flashed and made the strip lag.
+    func thumbnail(for clip: Clip) -> NSImage? {
+        guard let file = clip.imageFile else { return nil }
+        if let cached = thumbnails.object(forKey: file as NSString) { return cached }
+        let url = folder.appendingPathComponent(file)
+        let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                        kCGImageSourceCreateThumbnailWithTransform: true,
+                                        kCGImageSourceThumbnailMaxPixelSize: 400]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        thumbnails.setObject(image, forKey: file as NSString)
+        return image
+    }
+
+    private let thumbnails: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 200
+        return cache
+    }()
+
     // MARK: - Storage
 
     private func remove(fileOf clip: Clip) {

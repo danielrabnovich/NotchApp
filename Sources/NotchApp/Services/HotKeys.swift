@@ -94,6 +94,7 @@ final class HotKeys: ObservableObject {
         case windowTop, windowBottom, windowPreviousDisplay
         case windowLeftThird, windowCenterThird, windowRightThird, windowLeftTwoThirds, windowRightTwoThirds
         case windowTopLeft, windowTopRight, windowBottomLeft, windowBottomRight
+        case chat
 
         /// Center and the thirds and quarters start off: their keys (Rectangle's) are tabs' with ⌃⌥.
         var onByDefault: Bool {
@@ -164,6 +165,7 @@ final class HotKeys: ObservableObject {
             case .windowTopRight: "I"
             case .windowBottomLeft: "J"
             case .windowBottomRight: "K"
+            case .chat: "N"
             }
         }
 
@@ -186,6 +188,7 @@ final class HotKeys: ObservableObject {
             case .clipboard: "Clipboard history"
             case .copyText: "Copy text from the screen"
             case .askScreen: "Ask about what's on screen"
+            case .chat: "New chat"
             case .windowLeft: "Window: left half"
             case .windowRight: "Window: right half"
             case .windowMaximize: "Window: maximize"
@@ -248,6 +251,7 @@ final class HotKeys: ObservableObject {
             case .windowTopRight: UInt32(kVK_ANSI_I)
             case .windowBottomLeft: UInt32(kVK_ANSI_J)
             case .windowBottomRight: UInt32(kVK_ANSI_K)
+            case .chat: UInt32(kVK_ANSI_N)
             }
         }
     }
@@ -416,6 +420,9 @@ final class HotKeys: ObservableObject {
         case .askScreen:
             Self.askAboutScreen(vm, reason: .keyboard)
             return
+        case .chat:
+            ChatWindow.shared.toggleNewChat()
+            return
         case .ramble:
             let ramble = RambleStore.shared
             if vm.isOpen, ramble.active { ramble.close(); vm.close() } else { ramble.open(vm) }
@@ -438,5 +445,29 @@ final class HotKeys: ObservableObject {
             // to the tab and makes the notch stay put like one the shortcut opened.
             vm.open(tab: target, reason: .keyboard)
         }
+    }
+}
+
+/// Which app holds a shortcut, where that can be read from its settings. macOS doesn't say who
+/// registered a hot key, so this only knows apps whose settings are readable (Tinycast so far).
+enum HotKeyOwners {
+    static func owner(of combo: HotKeys.Combo) -> String? {
+        // Tinycast keeps "hotkey.<what>" = {"combo":{"_0":{"carbonModifiers":…,"carbonKeyCode":…}}},
+        // even for features turned off.
+        guard let prefs = UserDefaults(suiteName: "com.tinycast.app")?.dictionaryRepresentation() else { return nil }
+        for (key, value) in prefs where key.hasPrefix("hotkey.") {
+            guard let json = (value as? String)?.data(using: .utf8),
+                  let root = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
+                  let keys = (root["combo"] as? [String: Any])?["_0"] as? [String: Any],
+                  (keys["carbonModifiers"] as? NSNumber)?.uint32Value == combo.modifiers,
+                  (keys["carbonKeyCode"] as? NSNumber)?.uint32Value == combo.keyCode else { continue }
+            let what = key.dropFirst("hotkey.".count)
+            if what.hasPrefix("app."), let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: String(what.dropFirst(4))) {
+                return "Tinycast, to open \(FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: ""))"
+            }
+            let name = what.split(separator: ":").last.map { $0.replacingOccurrences(of: "-", with: " ") } ?? ""
+            return name.isEmpty ? "Tinycast" : "Tinycast, for \(name)"
+        }
+        return nil
     }
 }

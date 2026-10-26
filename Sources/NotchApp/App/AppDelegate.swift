@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HotKeys.shared.start()
         UpdateChecker.shared.start()
         MouseUtilities.shared.start()
+        HyperKey.shared.start()
         VisualSearch.shared.start()
         ImageIndex.shared.start()
         Cleaner.shared.start()
@@ -155,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeepAwake.shared.stop(announce: false)
         LidSleep.restoreNow()
         CommandBridge.shared.stop()
+        HyperKey.shared.stop()
     }
 
     // MARK: - Windows

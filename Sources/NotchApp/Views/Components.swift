@@ -339,30 +339,26 @@ struct NotchIconButtonStyle: ButtonStyle {
 }
 
 extension View {
-    /// Lets two-finger horizontal scrolls over this view scroll it instead of switching tabs.
-    func horizontalScrollRegion(_ id: String, in viewModel: NotchViewModel, active: Bool = true) -> some View {
-        modifier(HorizontalScrollRegion(id: id, viewModel: viewModel, active: active))
+    /// Marks a row that scrolls sideways. While its page shows, two-finger horizontal swipes over
+    /// the page scroll instead of switching tabs (the tab bar above still switches), so a swipe that
+    /// starts a little off the row, or on a row that happens to fit, doesn't flip the page.
+    func horizontalScrollRegion(_ id: String, in viewModel: NotchViewModel) -> some View {
+        modifier(HorizontalScrollRegion(id: id, viewModel: viewModel))
     }
 }
 
-/// Every page is laid out in the same place (the pager moves them), so a region is kept under
-/// its page's name and only counts while that page is the one showing.
+/// Every page is built at once (the pager moves them), so a region is kept under its page's
+/// name and only counts while that page is the one showing.
 private struct HorizontalScrollRegion: ViewModifier {
     let id: String
     let viewModel: NotchViewModel
-    let active: Bool
     @Environment(\.notchPage) private var page
 
     func body(content: Content) -> some View {
         let key = "\(page?.rawValue ?? "-"):\(id)"
-        return content.background(GeometryReader { geo in
-            let frame = geo.frame(in: .global)
-            Color.clear
-                .onAppear { viewModel.horizontalScrollRegions[key] = active ? frame : nil }
-                .onChange(of: frame) { _, f in viewModel.horizontalScrollRegions[key] = active ? f : nil }
-                .onChange(of: active) { _, a in viewModel.horizontalScrollRegions[key] = a ? frame : nil }
-                .onDisappear { viewModel.horizontalScrollRegions[key] = nil }
-        })
+        return content
+            .onAppear { viewModel.horizontalScrollRegions.insert(key) }
+            .onDisappear { viewModel.horizontalScrollRegions.remove(key) }
     }
 }
 

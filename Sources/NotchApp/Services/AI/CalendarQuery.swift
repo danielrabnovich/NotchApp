@@ -20,6 +20,7 @@ enum CalendarQuery {
     static func answer(_ question: String, useAI: Bool) async throws -> CalendarAnswer {
         var query = parseWithoutAI(question)
         if useAI, let smart = try? await parse(question) { query = smart }
+        query = narrowed(query, to: question)
         DebugHooks.log("CalendarQuery: \(question) → \(query.kind.rawValue) \(query.start)–\(query.end) search=\(query.search ?? "-") exact=\(query.exactTime)")
         do {
             if !UserDefaults.standard.bool(forKey: "debugDryRun") { try CalendarManager.shared.ensureAccess() }
@@ -85,6 +86,21 @@ enum CalendarQuery {
         }
         if q.end <= q.start { q.end = q.start.addingTimeInterval(Double(max(q.minutes, 60) * 60)) }
         return q
+    }
+
+    /// "Tomorrow afternoon": a whole day narrowed to that part of it, whichever way the day was found.
+    static func narrowed(_ q: Query, to question: String) -> Query {
+        let cal = Calendar.current
+        guard !q.exactTime, q.start == cal.startOfDay(for: q.start),
+              q.end == cal.date(byAdding: .day, value: 1, to: q.start) else { return q }
+        let lower = question.lowercased()
+        let hours: (Int, Int)? = lower.contains("morning") ? (5, 12) : lower.contains("afternoon") ? (12, 17)
+            : lower.contains("evening") || lower.contains("tonight") ? (17, 24) : nil
+        guard let (from, to) = hours else { return q }
+        var out = q
+        out.start = cal.date(byAdding: .hour, value: from, to: q.start)!
+        out.end = cal.date(byAdding: .hour, value: to, to: q.start)!
+        return out
     }
 
     /// Keyword version for when no model is available.
@@ -154,19 +170,23 @@ enum CalendarQuery {
                     : CalendarAnswer(headline: "You're busy then", detail: when, events: clashes)
             }
             // Working hours on the day(s) asked about, from now if that's today.
+            // (Within the part of the day asked about, for "free tomorrow afternoon".)
             var slots: [DateInterval] = []
             var day = cal.startOfDay(for: q.start)
+            let first = max(cal.date(bySettingHour: 9, minute: 0, second: 0, of: day)!, q.start)
+            let last = min(cal.date(bySettingHour: 18, minute: 0, second: 0, of: day)!, q.end)
             while day < q.end, slots.count < 8 {
-                let open = max(cal.date(bySettingHour: 9, minute: 0, second: 0, of: day)!, Date())
-                let close = cal.date(bySettingHour: 18, minute: 0, second: 0, of: day)!
+                let open = max(cal.date(bySettingHour: 9, minute: 0, second: 0, of: day)!, q.start, Date())
+                let close = min(cal.date(bySettingHour: 18, minute: 0, second: 0, of: day)!, q.end)
                 if open < close { slots += calendar.freeSlots(from: open, to: close, minutes: q.minutes) }
                 day = cal.date(byAdding: .day, value: 1, to: day)!
             }
             let label = rangeLabel(q.start, q.end)
+            let hours = "\(first.formatted(t)) – \(last.formatted(t))"
             return slots.isEmpty
-                ? CalendarAnswer(headline: "No free \(q.minutes)-minute gaps", detail: "\(label), 9 AM – 6 PM")
+                ? CalendarAnswer(headline: "No free \(q.minutes)-minute gaps", detail: "\(label), \(hours)")
                 : CalendarAnswer(headline: "Free \(label.lowercased() == "today" ? "today" : "on " + label)",
-                                 detail: "Gaps of \(q.minutes) min or more, 9 AM – 6 PM", free: slots)
+                                 detail: "Gaps of \(q.minutes) min or more, \(hours)", free: slots)
 
         case .list:
             let events = calendar.summaries(from: q.start, to: q.end, matching: q.search)

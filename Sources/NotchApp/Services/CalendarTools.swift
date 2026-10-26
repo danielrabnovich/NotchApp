@@ -22,6 +22,8 @@ struct EventSummary: Identifiable, Equatable, Sendable {
     let allDay: Bool
     let location: String?
     let calendar: String
+    /// The calendar's colour (red, green, blue, 0–1), for the bar beside the event.
+    var color: [Double]? = nil
 
     var timeText: String {
         if allDay { return "All day" }
@@ -199,7 +201,8 @@ extension CalendarManager {
     static func summary(_ e: EKEvent) -> EventSummary {
         EventSummary(id: e.eventIdentifier ?? UUID().uuidString, title: e.title ?? "Untitled", start: e.startDate,
                      end: e.endDate, allDay: e.isAllDay, location: e.location?.isEmpty == false ? e.location : nil,
-                     calendar: e.calendar?.title ?? "")
+                     calendar: e.calendar?.title ?? "",
+                     color: e.calendar?.color?.usingColorSpace(.sRGB).map { [Double($0.redComponent), Double($0.greenComponent), Double($0.blueComponent)] })
     }
 
     /// How well an event's title matches a description (shared words, ignoring filler).

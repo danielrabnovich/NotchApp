@@ -329,6 +329,17 @@ struct AskView: View {
         return .handled
     }
 
+    /// ⌘↩ on a written answer carries it on in a chat window; a follow-up typed into the bar first
+    /// is asked there straight away.
+    private func continueInChat() -> KeyPress.Result {
+        guard let job = assistant.current, ChatStore.canContinue(job) else { return .ignored }
+        let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        ChatWindow.shared.open(from: job)
+        if !typed.isEmpty, typed != job.query { ChatStore.shared.send(typed) }
+        query = ""
+        return .handled
+    }
+
     /// ⌘Y previews the selected file full size, or closes the preview.
     private func quickLookSelected() -> KeyPress.Result {
         if QuickLook.shared.isVisible { QuickLook.shared.close(); return .handled }
@@ -387,10 +398,12 @@ struct AskView: View {
                 } else {
                     // One size, scaled down for the compact bar: a symbol that changes size redraws in
                     // place, where a scale moves along with the bar.
+                    // In the colour of where the answer came from, once there's one.
                     Image(systemName: routeIcon)
                         .font(.system(size: 17, weight: .medium))
                         .scaleEffect(compact ? 14.0 / 17 : 1)
-                        .foregroundStyle(.white.opacity(looksFocused ? 0.8 : 0.45))
+                        .foregroundStyle(assistant.current?.route.map { AnyShapeStyle($0.tint) }
+                                         ?? AnyShapeStyle(.white.opacity(looksFocused ? 0.8 : 0.45)))
                         .contentTransition(.symbolEffect(.replace))
                 }
             }
@@ -442,7 +455,9 @@ struct AskView: View {
                 .onKeyPress(.downArrow) { moveSelection(1); return .handled }
                 .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
                 .onKeyPress(keys: [.return]) { press in
-                    press.modifiers.contains(.command) ? revealSelected() : .ignored
+                    guard press.modifiers.contains(.command) else { return .ignored }
+                    let revealed = revealSelected()
+                    return revealed == .handled ? revealed : continueInChat()
                 }
                 .onKeyPress(keys: ["y"]) { press in
                     press.modifiers.contains(.command) ? quickLookSelected() : .ignored
@@ -543,7 +558,7 @@ struct AskView: View {
 
 // MARK: - Results
 
-private struct CalendarResult: View {
+struct CalendarResult: View {
     let answer: CalendarAnswer
 
     var body: some View {
@@ -574,7 +589,10 @@ private struct CalendarResult: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(answer.events) { event in
                         HStack(spacing: 10) {
-                            RoundedRectangle(cornerRadius: 1.5).fill(.white.opacity(0.35)).frame(width: 3, height: 26)
+                            // The calendar's own colour, as Calendar shows it.
+                            RoundedRectangle(cornerRadius: 1.5)
+                                .fill(event.color.map { Color(red: $0[0], green: $0[1], blue: $0[2]) } ?? .white.opacity(0.35))
+                                .frame(width: 3, height: 26)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(event.title).font(.system(size: 12.5, weight: .medium)).lineLimit(1)
                                 Text(CommandParser.eventText(event.start, event.end, allDay: event.allDay)
@@ -657,7 +675,7 @@ private struct TaskCheckRow: View {
 }
 
 /// An answer from the app's notes and tasks, with the lines it came from.
-private struct NotesResult: View {
+struct NotesResult: View {
     let answer: NotesAnswer
     @EnvironmentObject private var tasks: TaskStore
 
@@ -719,17 +737,24 @@ private struct NotesResult: View {
     }
 }
 
-private struct WeatherCard: View {
+struct WeatherCard: View {
     let report: WeatherReport
     let accent: Color
+    /// The days under the summary rather than beside it, for a narrow place (a chat).
+    var stacked = false
 
     var body: some View {
-        HStack(spacing: 22) {
+        let layout = stacked ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12)) : AnyLayout(HStackLayout(spacing: 22))
+        let shown = Array(report.days.prefix(stacked ? 7 : 5))
+        // The week's range, so each day's bar sits where its temperatures fall within it.
+        let coldest = shown.map(\.low).min() ?? 0, warmest = shown.map(\.high).max() ?? 1
+        layout {
             let focus = report.days.indices.contains(report.focusDay) ? report.days[report.focusDay] : nil
             HStack(spacing: 14) {
                 Image(systemName: WeatherReport.symbol(report.focusDay == 0 ? report.currentCode : focus?.code ?? report.currentCode))
-                    .symbolRenderingMode(.monochrome)
+                    .symbolRenderingMode(.multicolor)
                     .font(.system(size: 46))
+                    .shadow(color: glow(report.focusDay == 0 ? report.currentCode : focus?.code ?? report.currentCode).opacity(0.45), radius: 16)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(report.place)
                         .font(.system(size: 12, weight: .semibold))
@@ -737,12 +762,15 @@ private struct WeatherCard: View {
                     if report.focusDay == 0 {
                         Text("\(Int(report.currentTemp.rounded()))°")
                             .font(.system(size: 40, weight: .semibold, design: .rounded))
+                            .foregroundStyle(tint(report.currentTemp))
                         Text("\(WeatherReport.describe(report.currentCode)) · feels \(Int(report.feelsLike.rounded()))°")
                             .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.6))
                     } else if let focus {
                         Text(report.focusDay == 1 ? "Tomorrow" : focus.date.formatted(.dateTime.weekday(.wide)))
                             .font(.system(size: 13, weight: .medium))
-                        Text("\(Int(focus.high.rounded()))° / \(Int(focus.low.rounded()))°")
+                        (Text("\(Int(focus.high.rounded()))°").foregroundColor(tint(focus.high))
+                         + Text(" / ").foregroundColor(.white.opacity(0.35))
+                         + Text("\(Int(focus.low.rounded()))°").foregroundColor(tint(focus.low)))
                             .font(.system(size: 32, weight: .semibold, design: .rounded))
                         Text("\(WeatherReport.describe(focus.code)) · \(focus.rainChance)% rain")
                             .font(.system(size: 11.5)).foregroundStyle(.white.opacity(0.6))
@@ -752,37 +780,50 @@ private struct WeatherCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 6) {
-                ForEach(Array(report.days.prefix(5).enumerated()), id: \.element.id) { i, day in
+                ForEach(Array(shown.enumerated()), id: \.element.id) { i, day in
                     VStack(spacing: 6) {
                         Text(i == 0 ? "Today" : day.date.formatted(.dateTime.weekday(.abbreviated)))
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(.white.opacity(i == report.focusDay ? 0.95 : 0.5))
                         Image(systemName: WeatherReport.symbol(day.code))
-                            .symbolRenderingMode(.monochrome)
+                            .symbolRenderingMode(.multicolor)
                             .font(.system(size: 17))
                             .frame(height: 22)
                         Text("\(Int(day.high.rounded()))°")
                             .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(tint(day.high))
+                        range(day, coldest: coldest, warmest: warmest)
                         Text("\(Int(day.low.rounded()))°")
                             .font(.system(size: 11).monospacedDigit())
-                            .foregroundStyle(.white.opacity(0.45))
+                            .foregroundStyle(tint(day.low).opacity(0.75))
                         if day.rainChance >= 20 {
                             Text("\(day.rainChance)%")
                                 .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(.white.opacity(0.55))
+                                .foregroundStyle(Color(red: 0.45, green: 0.75, blue: 1))
                         } else {
                             Text(" ").font(.system(size: 9.5))
                         }
                     }
-                    .frame(width: 46)
+                    .frame(width: stacked ? nil : 46)
+                    .frame(maxWidth: stacked ? .infinity : nil)
                     .padding(.vertical, 8)
                     .background {
-                        if i == report.focusDay { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.09)) }
+                        if i == report.focusDay {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(LinearGradient(colors: [glow(day.code).opacity(0.22), .white.opacity(0.05)], startPoint: .top, endPoint: .bottom))
+                        }
                     }
                 }
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private func tint(_ temp: Double) -> Color { report.tint(temp) }
+    private func glow(_ code: Int) -> Color { WeatherReport.glow(code) }
+
+    private func range(_ day: WeatherReport.Day, coldest: Double, warmest: Double) -> some View {
+        TempRange(report: report, low: day.low, high: day.high, coldest: coldest, warmest: warmest)
     }
 }
 
@@ -1166,6 +1207,7 @@ private struct RouteFooter: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: source.icon)
+                .foregroundStyle(job.route?.tint ?? .white.opacity(0.5))
             Text(source.text)
             // With a list showing, its header says this instead.
             if job.findingMore, job.files.count < 2 {
@@ -1183,6 +1225,12 @@ private struct RouteFooter: View {
                     .buttonStyle(NotchPillButtonStyle(primary: true, height: 20))
                     .padding(.leading, 4)
             }
+            if ChatStore.canContinue(job) {
+                Button("Follow up") { ChatWindow.shared.open(from: job) }
+                    .buttonStyle(NotchPillButtonStyle(primary: job.followUpTitle == nil, height: 20))
+                    .padding(.leading, job.followUpTitle == nil ? 4 : 0)
+                    .help("Keep talking about this answer in a chat window (⌘↩). Type a follow-up first to ask it there.")
+            }
             if job.route == .write || job.actionTitle != nil, let answer = job.answer, job.state == .done {
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
@@ -1195,7 +1243,7 @@ private struct RouteFooter: View {
                     assistant.switchRoute()
                 }
                 .buttonStyle(NotchPillButtonStyle(height: 20))
-                .padding(.leading, job.followUpTitle == nil || job.state != .done ? 4 : 0)
+                .padding(.leading, (job.followUpTitle == nil || job.state != .done) && !ChatStore.canContinue(job) ? 4 : 0)
             }
             Spacer()
             if !assistant.aiAvailable && job.route != .weather && job.route != .recall && assistant.pullingModel == nil {
@@ -1395,7 +1443,7 @@ private struct ShelfButton: View {
     }
 }
 
-private struct FileRow: View {
+struct FileRow: View {
     let hit: FileHit
     var selected = false
     /// A click previews the file; a double-click opens it.
@@ -1489,13 +1537,7 @@ private struct WebResults: View {
                     .help("Copy answer")
                 }
                 .padding(.leading, 6)
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 2) {
-                        ForEach(Array(job.sources.prefix(5).enumerated()), id: \.element.id) { i, source in
-                            SourceRow(index: i + 1, source: source, selected: i == selection)
-                        }
-                    }
-                }
+                SourceList(sources: Array(job.sources.prefix(5)), selection: selection)
             }
             .frame(width: 200)
             }
@@ -1545,13 +1587,7 @@ private struct ScreenResults: View {
                         .padding(.leading, 6)
                 }
                 if !job.sources.isEmpty {
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(spacing: 2) {
-                            ForEach(Array(job.sources.prefix(3).enumerated()), id: \.element.id) { i, source in
-                                SourceRow(index: i + 1, source: source, selected: i == selection)
-                            }
-                        }
-                    }
+                    SourceList(sources: Array(job.sources.prefix(3)), selection: selection)
                 }
             }
             .frame(width: 200)
@@ -1690,11 +1726,13 @@ private struct ShelfIconButton: View {
 }
 
 /// Answer text with citation markers like [2] drawn as small accent badges.
-private struct AnswerText: View {
+struct AnswerText: View {
     let text: String
     let accent: Color
     /// "Settings → Shelf → Quick drops" becomes a link to that page (help answers).
     var settingsLinks = false
+    /// Every paragraph the same size (a chat reply), rather than the first one leading.
+    var uniform = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -1707,8 +1745,8 @@ private struct AnswerText: View {
                         Circle().fill(.white.opacity(0.5)).frame(width: 3.5, height: 3.5).offset(y: -3)
                     }
                     styled(para.text)
-                        .font(.system(size: i == 0 && !para.isBullet ? 14.5 : 12.5, weight: i == 0 && !para.isBullet ? .medium : .regular))
-                        .foregroundStyle(.white.opacity(i == 0 ? 0.95 : 0.78))
+                        .font(uniform ? .system(size: 13) : .system(size: i == 0 && !para.isBullet ? 14.5 : 12.5, weight: i == 0 && !para.isBullet ? .medium : .regular))
+                        .foregroundStyle(.white.opacity(uniform ? 0.9 : i == 0 ? 0.95 : 0.78))
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
@@ -1836,6 +1874,28 @@ private struct CodeBlock: View {
     }
 }
 
+/// Numbered sources beside an answer; the one the arrow keys are on is scrolled into view.
+private struct SourceList: View {
+    let sources: [WebSource]
+    let selection: Int
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 2) {
+                    ForEach(Array(sources.enumerated()), id: \.element.id) { i, source in
+                        SourceRow(index: i + 1, source: source, selected: i == selection).id(i)
+                    }
+                }
+            }
+            .onChange(of: selection) { _, i in
+                guard sources.indices.contains(i) else { return }
+                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(i) }
+            }
+        }
+    }
+}
+
 private struct SourceRow: View {
     let index: Int
     let source: WebSource
@@ -1845,19 +1905,19 @@ private struct SourceRow: View {
     var body: some View {
         Button { NSWorkspace.shared.open(source.url) } label: {
             HStack(alignment: .top, spacing: 8) {
-                Text("\(index)")
-                    .font(.system(size: 9, weight: .bold).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(width: 16, height: 16)
-                    .background(Circle().fill(.white.opacity(0.14)))
-                    .padding(.top, 1)
+                // The site's own icon; its number (what the answer cites) stays beside the address.
+                Favicon(host: source.host) {
+                    Image(systemName: "globe").font(.system(size: 11)).foregroundStyle(.white.opacity(0.5))
+                        .frame(width: 16, height: 16)
+                }
+                .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(source.title)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.85))
                         .lineLimit(1)
-                    Text(source.host)
-                        .font(.system(size: 9.5))
+                    Text("\(index) · \(source.host)")
+                        .font(.system(size: 9.5).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.4))
                         .lineLimit(1)
                 }
@@ -1876,10 +1936,12 @@ private struct SourceRow: View {
 }
 
 /// AI-proposed actions to review: untick any you don't want, then run the rest.
-private struct PlanView: View {
+struct PlanView: View {
     let plan: CommandPlanner.Plan
     @Binding var excluded: Set<UUID>
     let apply: (CommandPlanner.Plan) -> Void
+    /// Cancel; by default it clears the Search tab's result.
+    var cancel: (() -> Void)?
     @EnvironmentObject private var assistant: AssistantStore
 
     private var included: [Command] { plan.commands.filter { !excluded.contains($0.id) } }
@@ -1912,7 +1974,7 @@ private struct PlanView: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(.white.opacity(0.32))
                 Spacer()
-                Button("Cancel") { assistant.clear() }
+                Button("Cancel") { if let cancel { cancel() } else { assistant.clear() } }
                     .buttonStyle(NotchPillButtonStyle())
                 Button { apply(plan) } label: {
                     HStack(spacing: 6) {
@@ -2375,7 +2437,7 @@ private struct SweepingEdge: View {
 /// Status text that gently pulses while work is happening. The pulse comes from a timeline rather
 /// than a repeating animation: one started on appear also caught the layout settling around it
 /// and kept replaying that, drawing the text twice.
-private struct ShimmerText: View {
+struct ShimmerText: View {
     let text: String
 
     var body: some View {
@@ -2517,7 +2579,9 @@ private struct SuggestionList: View {
             if case .quitApp(let pid) = c.action, let icon = NSRunningApplication(processIdentifier: pid)?.icon {
                 Image(nsImage: icon).resizable()
             } else {
-                Image(systemName: c.icon).font(.system(size: 13, weight: .semibold)).foregroundStyle(.white.opacity(highlighted ? 1 : 0.75))
+                // In what it does' colour; white on the highlight, which is the accent colour.
+                Image(systemName: c.icon).font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(highlighted ? AnyShapeStyle(.white) : c.tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.white.opacity(0.75)))
             }
         case .plan:
             Image(systemName: "sparkles").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white.opacity(highlighted ? 1 : 0.75))

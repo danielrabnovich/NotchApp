@@ -185,12 +185,16 @@ final class AssistantStore: ObservableObject {
         var followUpTitle: String?
         /// A kept call's notes: shown beside its transcript, to play from any line.
         var meeting: UUID?
+        /// What ran straight away instead of an answer ("Timer 10 min"), for a chat to say so.
+        var ranTitle: String?
         let startedAt = Date()
 
         var isRunning: Bool { if case .running = state { true } else { false } }
     }
 
     @Published private(set) var current: Job?
+    /// The screen the last screen question looked at, so a chat carried on from it still sees it.
+    private(set) var lastScreen: ScreenContext?
 
     /// The window captured by "Ask about this": questions go to it (follow-ups too) until it's
     /// removed or left unused for a few minutes.
@@ -418,13 +422,7 @@ final class AssistantStore: ObservableObject {
         }
         // Exact commands ("timer 10m", "volume 40", "event lunch friday 1pm") run instantly, no model needed.
         if forced == nil {
-            let instant = CommandParser.parse(trimmed).filter {
-                if case .template = $0.action { return false }
-                // "recall …" is a search: it's routed below, with its results kept.
-                if case .recall = $0.action { return false }
-                if case .show = $0.action { return $0.title.hasPrefix("Show") }
-                return true
-            }
+            let instant = Self.instantCommands(trimmed)
             if instant.count == 1, instant[0].runsWithoutReview {
                 task?.cancel()
                 CommandCenter.shared.run(instant)
@@ -448,122 +446,175 @@ final class AssistantStore: ObservableObject {
         job.actionIcon = action?.icon
         withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { current = job }
 
-        task = Task {
-            let id = job.id
-            let progress: @Sendable (String) async -> Void = { stage in
-                await MainActor.run { AssistantStore.shared.update(id) { $0.state = .running(stage: stage) } }
-            }
-            var pendingMore: FileFinder.More?
-            do {
-                let useAI = self.aiAvailable
-                if aboutScreen {
-                    try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
-                    throw Finished()
-                }
-                var chosen = forced
-                if forced == .app {
-                    if try await doInApp(trimmed, id: id, useAI: useAI, progress: progress) { throw Finished() }
-                    // Not something the app's menus do: search for it instead.
-                    chosen = nil
-                    update(id) { $0.route = nil; $0.state = .running(stage: "Thinking") }
-                }
-                // "What was that error in Terminal yesterday": what was on screen before.
-                if chosen == .recall || (chosen == nil && RecallSearch.looksLikeRecall(trimmed)) {
-                    try await answerRecall(trimmed, id: id, progress: progress)
-                    throw Finished()
-                }
-                // "What can you do", "where's the setting for…", "what's new": NotchApp's own help.
-                if chosen == .help || (chosen == nil && HelpBrain.isAvailable && Router.isAboutApp(trimmed)) {
-                    try await answerHelp(trimmed, id: id, useAI: useAI, progress: progress)
-                    throw Finished()
-                }
-                var understanding = Router.understandWithoutAI(trimmed)
-                if useAI, let smart = try? await Router.understand(trimmed) { understanding = smart }
-                understanding.dayOffset = Router.weekendAdjusted(trimmed, dayOffset: understanding.dayOffset)
-                var route = chosen ?? understanding.route
-                if route == .screen, !AppSettings.shared.screenQuestions { route = .web }
-                update(id) { $0.route = route }
-                switch route {
-                case .files:
-                    let (hits, confident, more) = try await FileFinder.find(trimmed, plan: understanding.plan, useAI: useAI, progress: progress)
-                    try Task.checkCancellation()
-                    update(id) { $0.files = hits; $0.confident = confident; $0.state = .done; $0.findingMore = more != nil }
-                    pendingMore = more
-                case .web:
-                    let (answer, sources) = try await WebSearcher.answer(trimmed, searchQuery: understanding.webQuery, useAI: useAI,
-                                                                         progress: progress) { soFar, sources in
-                        await MainActor.run { AssistantStore.shared.update(id, animated: false) { $0.answer = soFar; $0.sources = sources } }
-                    }
-                    try Task.checkCancellation()
-                    update(id) { $0.answer = answer; $0.sources = sources; $0.state = .done }
-                case .actions:
-                    await progress("Planning")
-                    var windowText: String?
-                    if actOnScreen {
-                        await contextTask?.value
-                        if let c = screenContext {
-                            let body = c.hasSelection ? (c.selection ?? "") : c.text
-                            windowText = [c.header, String(body.prefix(4000))].filter { !$0.isEmpty }.joined(separator: "\n")
-                        }
-                    }
-                    let plan = try await CommandPlanner.plan(trimmed, context: windowText)
-                    try Task.checkCancellation()
-                    guard !plan.commands.isEmpty else { throw OllamaClient.OllamaError(message: "Couldn’t turn that into an action. Try rewording it.") }
-                    // One safe action ("add lunch with Sam friday 1pm", "timer 10 min") just happens, with Undo;
-                    // several actions, or moving/deleting something, are shown for review first.
-                    if plan.commands.count == 1, plan.commands[0].runsWithoutReview {
-                        CommandCenter.shared.run(plan.commands)
-                        DebugHooks.log("JOB [actions] \(trimmed) → ran \(plan.commands.map(\.title))")
-                        clear()
-                        return
-                    }
-                    update(id) { $0.plan = plan; $0.state = .done }
-                case .calendar:
-                    await progress("Checking your calendar")
-                    let answer = try await CalendarQuery.answer(trimmed, useAI: useAI)
-                    try Task.checkCancellation()
-                    update(id) { $0.calendar = answer; $0.state = .done }
-                case .notes:
-                    await progress("Reading your notes")
-                    let answer = await NotesQuery.answer(trimmed, useAI: useAI)
-                    try Task.checkCancellation()
-                    update(id) { $0.notes = answer; $0.state = .done }
-                case .screen:
-                    try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
-                case .help:
-                    try await answerHelp(trimmed, id: id, useAI: useAI, progress: progress)
-                case .recall:
-                    try await answerRecall(trimmed, id: id, progress: progress)
-                case .write, .app:
-                    break // writing jobs run through write(_:), app ones above (run() is handed them by route)
-                case .weather:
-                    await progress("Checking the forecast")
-                    let report = try await WeatherService.report(location: understanding.location, dayOffset: understanding.dayOffset)
-                    try Task.checkCancellation()
-                    update(id) { $0.weather = report; $0.state = .done }
-                }
-            } catch is CancellationError {
-                return
-            } catch is Finished {
-            } catch {
-                update(id) { $0.state = .failed(error.localizedDescription) }
-            }
-            guard let finished = current, finished.id == id else { return }
-            DebugHooks.log("JOB [\(finished.route?.rawValue ?? "?")] \(finished.query) → \(finished.state) \(Int(Date().timeIntervalSince(finished.startedAt)))s | files: \(finished.files.map { $0.url.lastPathComponent + " (" + ($0.reason ?? "") + ")" }) | answer: \(finished.answer ?? "")")
-            announce(finished)
+        task = Task { await self.pipeline(job, forced: forced, aboutScreen: aboutScreen, actOnScreen: actOnScreen) }
+    }
 
-            // The first results are up; find the rest while they're being looked through. New ones go
-            // at the end, so the selection never jumps.
-            if let more = pendingMore {
-                let extra = await FileFinder.more(more)
-                guard !Task.isCancelled else { return }
-                update(id) { job in
-                    let have = Set(job.files.map(\.url))
-                    job.files += extra.filter { !have.contains($0.url) }
-                    job.findingMore = false
-                }
-                DebugHooks.log("JOB more → \(current?.files.map(\.url.lastPathComponent) ?? [])")
+    /// Exact commands ("timer 10m", "volume 40") that run without a model.
+    static func instantCommands(_ query: String) -> [Command] {
+        CommandParser.parse(query).filter {
+            if case .template = $0.action { return false }
+            // "recall …" is a search: it's routed below, with its results kept.
+            if case .recall = $0.action { return false }
+            if case .show = $0.action { return $0.title.hasPrefix("Show") }
+            return true
+        }
+    }
+
+    /// Search for a chat (`ChatStore`): the same routes and answers as the Search tab, but the job is
+    /// the chat's, its progress goes to `sink`, and `current` is left alone. `conversation` is
+    /// what was said before, for a web answer to follow on from.
+    func runForChat(_ query: String, conversation: String?, sink: @escaping (Job) -> Void) -> Task<Void, Never> {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        var job = Job(query: trimmed)
+        let instant = Self.instantCommands(trimmed)
+        let (appName, explicit) = AppIndex.stripLaunchPrefix(trimmed)
+        if explicit, let app = AppIndex.shared.search(appName, limit: 1).first, app.score >= 45 {
+            NSWorkspace.shared.openApplication(at: app.app.url, configuration: .init())
+            AppIndex.shared.noteOpened(app.app.url)
+            job.ranTitle = "Opened \(app.app.name)"
+        } else if instant.count == 1, instant[0].runsWithoutReview {
+            CommandCenter.shared.run(instant)
+            job.ranTitle = instant[0].title
+        }
+        if job.ranTitle != nil {
+            job.state = .done
+            sink(job)
+            return Task {}
+        }
+        let past = RecallSearch.looksLikeRecall(trimmed)
+        let aboutScreen = !past && AppSettings.shared.screenQuestions && Router.isAboutScreen(trimmed)
+        if aboutScreen { job.route = .screen }
+        detached[job.id] = (job, sink)
+        sink(job)
+        return Task {
+            await self.pipeline(job, forced: nil, aboutScreen: aboutScreen, actOnScreen: false, conversation: conversation)
+            self.detached[job.id] = nil
+        }
+    }
+
+    /// Chat jobs, by id, with where their progress goes.
+    private var detached: [UUID: (job: Job, sink: (Job) -> Void)] = [:]
+
+    /// The job with this id: the Search tab's, or a chat's.
+    private func job(_ id: UUID) -> Job? { current?.id == id ? current : detached[id]?.job }
+
+    /// Finds the answer for a job, by whichever route fits, updating it as it goes.
+    private func pipeline(_ job: Job, forced: Route?, aboutScreen: Bool, actOnScreen: Bool, conversation: String? = nil) async {
+        let id = job.id
+        let trimmed = job.query
+        let progress: @Sendable (String) async -> Void = { stage in
+            await MainActor.run { AssistantStore.shared.update(id) { $0.state = .running(stage: stage) } }
+        }
+        var pendingMore: FileFinder.More?
+        do {
+            let useAI = self.aiAvailable
+            if aboutScreen {
+                try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
+                throw Finished()
             }
+            var chosen = forced
+            if forced == .app {
+                if try await doInApp(trimmed, id: id, useAI: useAI, progress: progress) { throw Finished() }
+                // Not something the app's menus do: search for it instead.
+                chosen = nil
+                update(id) { $0.route = nil; $0.state = .running(stage: "Thinking") }
+            }
+            // "What was that error in Terminal yesterday": what was on screen before.
+            if chosen == .recall || (chosen == nil && RecallSearch.looksLikeRecall(trimmed)) {
+                try await answerRecall(trimmed, id: id, progress: progress)
+                throw Finished()
+            }
+            // "What can you do", "where's the setting for…", "what's new": NotchApp's own help.
+            if chosen == .help || (chosen == nil && HelpBrain.isAvailable && Router.isAboutApp(trimmed)) {
+                try await answerHelp(trimmed, id: id, useAI: useAI, progress: progress)
+                throw Finished()
+            }
+            var understanding = Router.understandWithoutAI(trimmed)
+            if useAI, let smart = try? await Router.understand(trimmed) { understanding = smart }
+            understanding.dayOffset = Router.weekendAdjusted(trimmed, dayOffset: understanding.dayOffset)
+            var route = chosen ?? understanding.route
+            if route == .screen, !AppSettings.shared.screenQuestions { route = .web }
+            update(id) { $0.route = route }
+            switch route {
+            case .files:
+                let (hits, confident, more) = try await FileFinder.find(trimmed, plan: understanding.plan, useAI: useAI, progress: progress)
+                try Task.checkCancellation()
+                update(id) { $0.files = hits; $0.confident = confident; $0.state = .done; $0.findingMore = more != nil }
+                pendingMore = more
+            case .web:
+                let (answer, sources) = try await WebSearcher.answer(trimmed, searchQuery: understanding.webQuery, useAI: useAI,
+                                                                     conversation: conversation, progress: progress) { soFar, sources in
+                    await MainActor.run { AssistantStore.shared.update(id, animated: false) { $0.answer = soFar; $0.sources = sources } }
+                }
+                try Task.checkCancellation()
+                update(id) { $0.answer = answer; $0.sources = sources; $0.state = .done }
+            case .actions:
+                await progress("Planning")
+                var windowText: String?
+                if actOnScreen {
+                    await contextTask?.value
+                    if let c = screenContext {
+                        let body = c.hasSelection ? (c.selection ?? "") : c.text
+                        windowText = [c.header, String(body.prefix(4000))].filter { !$0.isEmpty }.joined(separator: "\n")
+                    }
+                }
+                let plan = try await CommandPlanner.plan(trimmed, context: windowText)
+                try Task.checkCancellation()
+                guard !plan.commands.isEmpty else { throw OllamaClient.OllamaError(message: "Couldn’t turn that into an action. Try rewording it.") }
+                // One safe action ("add lunch with Sam friday 1pm", "timer 10 min") just happens, with Undo;
+                // several actions, or moving/deleting something, are shown for review first.
+                if plan.commands.count == 1, plan.commands[0].runsWithoutReview {
+                    CommandCenter.shared.run(plan.commands)
+                    DebugHooks.log("JOB [actions] \(trimmed) → ran \(plan.commands.map(\.title))")
+                    if detached[id] != nil { update(id) { $0.ranTitle = plan.commands[0].title; $0.state = .done } } else { clear() }
+                    return
+                }
+                update(id) { $0.plan = plan; $0.state = .done }
+            case .calendar:
+                await progress("Checking your calendar")
+                let answer = try await CalendarQuery.answer(trimmed, useAI: useAI)
+                try Task.checkCancellation()
+                update(id) { $0.calendar = answer; $0.state = .done }
+            case .notes:
+                await progress("Reading your notes")
+                let answer = await NotesQuery.answer(trimmed, useAI: useAI)
+                try Task.checkCancellation()
+                update(id) { $0.notes = answer; $0.state = .done }
+            case .screen:
+                try await answerAboutScreen(trimmed, id: id, useAI: useAI, progress: progress)
+            case .help:
+                try await answerHelp(trimmed, id: id, useAI: useAI, progress: progress)
+            case .recall:
+                try await answerRecall(trimmed, id: id, progress: progress)
+            case .write, .app:
+                break // writing jobs run through write(_:), app ones above (run() is handed them by route)
+            case .weather:
+                await progress("Checking the forecast")
+                let report = try await WeatherService.report(location: understanding.location, dayOffset: understanding.dayOffset)
+                try Task.checkCancellation()
+                update(id) { $0.weather = report; $0.state = .done }
+            }
+        } catch is CancellationError {
+            return
+        } catch is Finished {
+        } catch {
+            update(id) { $0.state = .failed(error.localizedDescription) }
+        }
+        guard let finished = self.job(id) else { return }
+        DebugHooks.log("JOB [\(finished.route?.rawValue ?? "?")] \(finished.query) → \(finished.state) \(Int(Date().timeIntervalSince(finished.startedAt)))s | files: \(finished.files.map { $0.url.lastPathComponent + " (" + ($0.reason ?? "") + ")" }) | answer: \(finished.answer ?? "")")
+        if detached[id] == nil { announce(finished) }
+
+        // The first results are up; find the rest while they're being looked through. New ones go
+        // at the end, so the selection never jumps.
+        if let more = pendingMore {
+            let extra = await FileFinder.more(more)
+            guard !Task.isCancelled else { return }
+            update(id) { job in
+                let have = Set(job.files.map(\.url))
+                job.files += extra.filter { !have.contains($0.url) }
+                job.findingMore = false
+            }
+            DebugHooks.log("JOB more → \(current?.files.map(\.url.lastPathComponent) ?? [])")
         }
     }
 
@@ -575,9 +626,11 @@ final class AssistantStore: ObservableObject {
             throw OllamaClient.OllamaError(message: "Questions about your screen need an AI model: start Ollama, or add a cloud model's key, in Settings → Search.")
         }
         // The window captured by "Ask about this" (waiting for it if it's still being taken), or a fresh look.
+        // A chat's question always takes its own look and leaves Search's capture and its history alone.
+        let forChat = detached[id] != nil
         let captured: ScreenContext
         var history: [ScreenQuestion.Exchange] = []
-        if context != nil {
+        if context != nil, !forChat {
             await progress("Looking at your screen")
             await contextTask?.value
             if case .failed(let message)? = context { throw OllamaClient.OllamaError(message: message) }
@@ -590,6 +643,7 @@ final class AssistantStore: ObservableObject {
             captured = try await ScreenContext.capture()
         }
         try Task.checkCancellation()
+        if !forChat { lastScreen = captured }
         let preview = captured.image.flatMap(ScreenQuestion.thumbnail)
         update(id) { $0.screen = preview; $0.route = .screen }
         let (answer, sources) = try await ScreenQuestion.answer(query, context: captured, history: history,
@@ -598,7 +652,7 @@ final class AssistantStore: ObservableObject {
         }
         try Task.checkCancellation()
         update(id) { $0.answer = answer; $0.sources = sources; $0.state = .done }
-        if screenContext != nil { contextHistory.append(.init(question: query, answer: answer)) }
+        if screenContext != nil, !forChat { contextHistory.append(.init(question: query, answer: answer)) }
     }
 
     /// Finds moments in Recall, then (for a question, with a model on this Mac) answers it in a sentence
@@ -643,7 +697,11 @@ final class AssistantStore: ObservableObject {
         if choice.sure, let first = choice.picks.first, !AppDo.isRisky(first) {
             CommandCenter.shared.run([first])
             ActivityCenter.shared.show(.notice(title: first.title, detail: "In \(choice.app)", icon: first.icon, tone: .success), for: 2.5)
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { if current?.id == id { current = nil } }
+            if detached[id] != nil {
+                update(id) { $0.ranTitle = "\(first.title) in \(choice.app)"; $0.state = .done }
+            } else {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { if current?.id == id { current = nil } }
+            }
             return true
         }
         update(id) { $0.appPicks = choice.picks; $0.appName = choice.app; $0.state = .done }
@@ -679,6 +737,12 @@ final class AssistantStore: ObservableObject {
     }
 
     private func update(_ id: UUID, animated: Bool = true, _ change: (inout Job) -> Void) {
+        if var entry = detached[id] {
+            change(&entry.job)
+            detached[id] = entry
+            entry.sink(entry.job)
+            return
+        }
         guard current?.id == id, var job = current else { return }
         change(&job)
         if animated {
@@ -761,7 +825,8 @@ enum Router {
         - "help": questions about this app itself (NotchApp, "you"): what it can do, how to use one of its \
         features, where a setting is, its keyboard shortcuts, what's new in it, or why something in it isn't \
         working: "what can you do", "how do I keep screenshots", "where do I change the hover delay", \
-        "how do I add a cloud model", "what's new", "why can't you see my screen".
+        "how do I add a cloud model", "what's new", "why can't you see my screen". \
+        Not other products: "what's new in the latest macOS", "what's new in iOS 26" are web.
         - "web": questions and information from the internet: facts, news, sports, prices, places, hours, how-to, \
         definitions, recommendations.
         Reply with JSON only:
@@ -771,7 +836,7 @@ enum Router {
          "day_offset": 0 for today, 1 for tomorrow, etc. (weather only),
          "keywords": [up to 6 words likely in the file NAME or TEXT; most distinctive first; add synonyms and common abbreviations (marketing→mktg, chapter→ch, assignment→hw)],
          "kinds": [ONLY if the user names a type: pdf, word, excel, powerpoint, image, screenshot, video, audio, text, code, folder, archive],
-         "days_ago_max": integer ONLY if the user mentions when (yesterday→3, last week→14, last month→45), otherwise null,
+         "days_ago_max": integer ONLY if the user mentions when (today→0, yesterday→1, this week→7, last week→14, last month→45), otherwise null. Never put time words or dates in keywords,
          "people": [names of people mentioned],
          "picture": true if they describe what an image shows (people, objects, a scene) rather than a document's name or contents, else false}
         """
@@ -788,7 +853,11 @@ enum Router {
         plan.daysAgoMax = (obj["days_ago_max"] as? NSNumber)?.intValue
         plan.people = strings("people")
         plan.visual = (obj["picture"] as? Bool) ?? false
-        let route = AssistantStore.Route(rawValue: (obj["route"] as? String ?? "").lowercased()) ?? .web
+        var route = AssistantStore.Route(rawValue: (obj["route"] as? String ?? "").lowercased()) ?? .web
+        // A small model hears "what's new" as this app's changelog even when it names something else.
+        if route == .help, !isAboutApp(query), query.lowercased().range(of: #"\bnew (in|with|for) \S"#, options: .regularExpression) != nil {
+            route = .web
+        }
         let webQuery = (obj["web_query"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? query
         let location = (obj["location"] as? String).flatMap { $0.isEmpty || $0.lowercased() == "null" ? nil : $0 }
         let dayOffset = (obj["day_offset"] as? NSNumber)?.intValue ?? 0
@@ -831,10 +900,12 @@ extension Router {
     static func isAboutApp(_ query: String) -> Bool {
         let l = query.lowercased().replacingOccurrences(of: "’", with: "'")
         let phrases = ["notchapp", "notch app", "this app", "what can you do", "what can u do", "what do you do",
-                       "your features", "your capabilities", "capabilities", "what's new", "whats new", "changelog",
-                       "release notes", "recent changes", "in settings", "in the settings", "which setting", "where is the setting",
+                       "your features", "your capabilities", "capabilities", "changelog", "in settings", "in the settings", "which setting", "where is the setting",
                        "where's the setting", "the setting for", "the settings for", "how do i use you", "how do you work",
                        "your shortcuts", "my shortcuts", "glances", "add-ons", "hover delay", "fake notch"]
+        // "What's new" on its own, or in you / this version; "what's new in macOS" is a search.
+        let whatsNew = #"^(so,? )?(what'?s|what is) new( (in|with) (you|this version|the latest version|the update|the latest update))?\??$|^(release notes|recent changes)\??$"#
+        if l.trimmingCharacters(in: .whitespacesAndNewlines).range(of: whatsNew, options: .regularExpression) != nil { return true }
         return phrases.contains { phrase in
             l.range(of: "\\b\(NSRegularExpression.escapedPattern(for: phrase))\\b", options: .regularExpression) != nil
         }
@@ -894,7 +965,8 @@ extension Router {
                                    "file", "files", "document", "last", "week", "month", "yesterday", "today", "sent", "about"]
         let ordered = lower.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
         plan.keywords = ordered.filter { ($0.count > 2 || $0.allSatisfy(\.isNumber)) && !filler.contains($0) && kindWords[$0] == nil }
-        if words.contains("yesterday") { plan.daysAgoMax = 3 }
+        if words.contains("today") || lower.contains("this morning") || lower.contains("just now") { plan.daysAgoMax = 0 }
+        else if words.contains("yesterday") { plan.daysAgoMax = 1 }
         else if lower.contains("last week") || lower.contains("this week") { plan.daysAgoMax = 14 }
         else if lower.contains("last month") || lower.contains("this month") { plan.daysAgoMax = 45 }
         return Understanding(route: isFile ? .files : .web, webQuery: query, plan: plan, location: nil, dayOffset: 0)

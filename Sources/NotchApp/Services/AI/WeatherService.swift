@@ -166,7 +166,8 @@ enum WeatherService {
             .init(name: "temperature_unit", value: fahrenheit ? "fahrenheit" : "celsius"),
             .init(name: "wind_speed_unit", value: fahrenheit ? "mph" : "kmh"),
             .init(name: "timezone", value: "auto"),
-            .init(name: "forecast_days", value: "5"),
+            // A week, so "this weekend" asked on a Monday reaches Saturday.
+            .init(name: "forecast_days", value: "7"),
         ]
         let (data, _) = try await URLSession.shared.data(from: comps.url!)
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],

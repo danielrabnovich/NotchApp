@@ -213,6 +213,7 @@ struct BatteriesCard: View {
                             .font(HomeType.row)
                             .foregroundStyle(.white.opacity(0.7))
                         Spacer(minLength: 4)
+                        gauge(row)
                         level(row)
                     }
                 }
@@ -221,6 +222,16 @@ struct BatteriesCard: View {
             }
         }
         .frame(maxHeight: small ? .infinity : nil)
+    }
+
+    /// How full, at a glance: green, yellow below half, red when low (green while charging).
+    private func gauge(_ row: Row) -> some View {
+        let color: Color = row.charging || row.level > 50 ? .green : row.level > 20 ? .yellow : .red
+        return ZStack(alignment: .leading) {
+            Capsule().fill(.white.opacity(0.12))
+            Capsule().fill(color).frame(width: max(3, 24 * CGFloat(row.level) / 100))
+        }
+        .frame(width: 24, height: 4)
     }
 
     private func level(_ row: Row) -> some View {
@@ -459,7 +470,7 @@ struct TimerCard: View {
                 .animation(.linear(duration: 1), value: timer.progress)
             Image(systemName: (timer.isActive ? timer.runningMode : timer.mode).icon)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(timer.isActive ? AnyShapeStyle(.orange) : AnyShapeStyle(.white.opacity(0.7)))
         }
     }
 
@@ -473,8 +484,9 @@ struct TimerCard: View {
         } label: {
             Image(systemName: timer.state == .running ? "pause.fill" : "play.fill")
                 .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(timer.state == .running ? .white : .orange)
                 .frame(width: 26, height: 26)
-                .background(Circle().fill(.white.opacity(0.14)))
+                .background(Circle().fill(timer.state == .running ? Color.white.opacity(0.14) : Color.orange.opacity(0.2)))
         }
         .buttonStyle(.plain)
         .help(timer.state == .running ? "Pause" : timer.state == .paused ? "Resume" : "Start")
@@ -622,7 +634,7 @@ struct ClipboardCard: View {
     private func row(_ clip: ClipboardHistory.Clip, lines: Int) -> some View {
         Button { clipboard.copy(clip) } label: {
             HStack(alignment: lines > 1 ? .top : .center, spacing: 6) {
-                if clip.isPicture, let image = clipboard.image(for: clip) {
+                if clip.isPicture, let image = clipboard.thumbnail(for: clip) {
                     Image(nsImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
@@ -631,7 +643,7 @@ struct ClipboardCard: View {
                 } else {
                     Image(systemName: icon(clip.kind))
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(Optional(clip.kind).tint ?? .white.opacity(0.5))
                         .frame(width: 18, height: 18)
                 }
                 Text(clip.title.replacingOccurrences(of: "\n", with: " "))
@@ -886,7 +898,7 @@ struct CountdownCard: View {
 
     private var title: some View {
         HStack(spacing: 4) {
-            Image(systemName: "hourglass").font(.system(size: 9.5, weight: .semibold))
+            Image(systemName: "hourglass").font(.system(size: 9.5, weight: .semibold)).foregroundStyle(.orange)
             Text(settings.countdownTitle.isEmpty ? "Countdown" : settings.countdownTitle)
                 .font(HomeType.label)
         }

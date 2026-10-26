@@ -189,11 +189,13 @@ struct ShelfView: View {
                 ForEach([(nil, "square.grid.2x2", "Everything"), (ClipboardHistory.Clip.Kind.text, "text.alignleft", "Text"),
                          (.link, "link", "Links"), (.image, "photo", "Images"), (.files, "doc", "Files")], id: \.1) { kind, icon, help in
                     Button { withAnimation(.easeOut(duration: 0.15)) { clipKind = kind } } label: {
+                        // Each kind in its colour, brighter when it's the one picked.
+                        let tint = kind.tint
                         Image(systemName: icon)
                             .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(.white.opacity(clipKind == kind ? 0.95 : 0.4))
+                            .foregroundStyle(tint.map { $0.opacity(clipKind == kind ? 1 : 0.6) } ?? .white.opacity(clipKind == kind ? 0.95 : 0.4))
                             .frame(width: 22, height: 18)
-                            .background(Capsule().fill(.white.opacity(clipKind == kind ? 0.16 : 0)))
+                            .background(Capsule().fill((tint ?? .white).opacity(clipKind == kind ? 0.2 : 0)))
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -271,7 +273,7 @@ struct ShelfView: View {
     }
 }
 
-/// Horizontally scrolling row of file tiles; two-finger swipes scroll it when it overflows.
+/// Horizontally scrolling row of file tiles; two-finger swipes over the page scroll it.
 private struct TileStrip<Tile: View>: View {
     let items: [ShelfItem]
     let regionID: String
@@ -279,7 +281,6 @@ private struct TileStrip<Tile: View>: View {
     @ObservedObject var viewModel: NotchViewModel
     @ViewBuilder let tile: (ShelfItem, TileMarks) -> Tile
     @EnvironmentObject private var shelf: ShelfStore
-    @State private var overflows = false
     /// Where the keys act. On the shelf, the end of the picked files that the arrows move (the
     /// picked files are the highlight there, as in Finder); in Downloads, a ring.
     @State private var highlight: UUID?
@@ -303,11 +304,6 @@ private struct TileStrip<Tile: View>: View {
                         }
                     }
                     .animation(Motion.small.animation, value: items.map(\.id))
-                    .background(GeometryReader { inner in
-                        Color.clear
-                            .onAppear { overflows = inner.size.width > outer.size.width + 1 }
-                            .onChange(of: inner.size.width > outer.size.width + 1) { _, o in overflows = o }
-                    })
                 }
                 .onChange(of: highlight) { _, id in
                     guard let id else { return }
@@ -315,7 +311,7 @@ private struct TileStrip<Tile: View>: View {
                 }
             }
         }
-        .horizontalScrollRegion(regionID, in: viewModel, active: overflows)
+        .horizontalScrollRegion(regionID, in: viewModel)
         .onAppear {
             // Opened with a shortcut: the first file is where the keys start.
             guard viewModel.openReason == .keyboard, let first = live.first else { return }
@@ -859,7 +855,6 @@ private struct ClipboardStrip: View {
     @Binding var kind: ClipboardHistory.Clip.Kind?
     @EnvironmentObject private var clipboard: ClipboardHistory
     @EnvironmentObject private var settings: AppSettings
-    @State private var overflows = false
     /// The clip the keys act on. Opened with a shortcut it starts on the newest; otherwise the
     /// first arrow press puts it there, so the mouse alone never shows a highlight.
     @State private var highlight: UUID?
@@ -912,11 +907,6 @@ private struct ClipboardStrip: View {
                                 }
                             }
                             .frame(height: outer.size.height)
-                            .background(GeometryReader { inner in
-                                Color.clear
-                                    .onAppear { overflows = inner.size.width > outer.size.width + 1 }
-                                    .onChange(of: inner.size.width > outer.size.width + 1) { _, o in overflows = o }
-                            })
                         }
                         .onChange(of: highlight) { _, id in
                             guard let id else { return }
@@ -924,7 +914,7 @@ private struct ClipboardStrip: View {
                         }
                     }
                 }
-                .horizontalScrollRegion("clipboard", in: viewModel, active: overflows)
+                .horizontalScrollRegion("clipboard", in: viewModel)
             }
         }
         .onAppear {
@@ -1066,7 +1056,8 @@ private struct ClipCard: View {
                 if let id = clip.sourceBundleID, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
                     AppIcon(bundlePath: url.path, size: 11)
                 } else {
-                    Image(systemName: clip.icon).font(.system(size: 8, weight: .semibold)).foregroundStyle(.white.opacity(0.4))
+                    Image(systemName: clip.icon).font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(Optional(clip.kind).tint ?? .white.opacity(0.4))
                 }
                 Text(Date().timeIntervalSince(clip.date) < 60 ? "now" : clip.date.formatted(.relative(presentation: .numeric, unitsStyle: .narrow)))
                     .font(.system(size: 9)).foregroundStyle(.white.opacity(0.35)).lineLimit(1)
@@ -1167,13 +1158,16 @@ private struct ClipCard: View {
             }
         case .link:
             VStack(alignment: .leading, spacing: 2) {
-                Image(systemName: "link").font(.system(size: 10, weight: .semibold)).foregroundStyle(.blue)
+                // The site's own icon, like a browser tab's.
+                Favicon(host: URL(string: clip.title)?.host() ?? "", size: 13) {
+                    Image(systemName: "link").font(.system(size: 10, weight: .semibold)).foregroundStyle(.blue)
+                }
                 Text(URL(string: clip.title)?.host() ?? clip.title)
                     .font(.system(size: 11, weight: .semibold)).lineLimit(1)
                 Text(clip.title).font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.5)).lineLimit(2)
             }
         case .image:
-            if let image = clipboard.image(for: clip) {
+            if let image = clipboard.thumbnail(for: clip) {
                 // Filled over a fixed-size base: a filled image on its own reports its overflowing
                 // size, and the card grows past its neighbours to fit it.
                 Color.clear

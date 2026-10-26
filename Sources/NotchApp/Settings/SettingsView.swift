@@ -2035,9 +2035,19 @@ private struct ShortcutsPane: View {
                         ForEach(HotKeys.Modifiers.allCases) { Text($0.title).tag($0) }
                     } label: {
                         RowLabel(title: "Default modifier keys", subtitle: "For every shortcut you haven't changed, except window keys (always ⌃⌥, as in window tools). ⌥⌘ matches other notch apps but overrides some app shortcuts (⌥⌘D hides the Dock). "
-                                 + "✦ Hyper is ⌃⌥⇧⌘ together, for a Caps Lock remapped with Karabiner or Raycast.")
+                                 + "✦ Hyper is ⌃⌥⇧⌘ together: turn on Caps Lock is Hyper below to press it with one key.")
                     }
                     .pickerStyle(.segmented)
+                }
+                ToggleRow("Caps Lock is Hyper",
+                          subtitle: "Hold Caps Lock for ⌃⌥⇧⌘ (✦), here and in every other app. Caps Lock no longer turns on capitals. "
+                          + "Turn off the Hyper key in Tinycast, Raycast or Hyperkey if you use one there.",
+                          isOn: $s.capsLockHyper)
+                if s.capsLockHyper, !AXIsProcessTrusted() {
+                    PermissionRow(title: "Accessibility", subtitle: "Needed to turn Caps Lock into ⌃⌥⇧⌘.", state: .unknown) {
+                        HUDController.shared.requestAccessibility()
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                    }
                 }
             }
             Section {
@@ -2217,7 +2227,7 @@ private enum ShortcutGroup: CaseIterable, Identifiable {
     /// In the order they're listed (tabs roughly as the tab bar has them).
     var actions: [HotKeys.Action] {
         switch self {
-        case .notch: [.toggle, .search]
+        case .notch: [.toggle, .search, .chat]
         case .tabs: [.home, .shelf, .downloads, .clipboard, .tasks, .notes, .timer, .mixer, .controls, .camera, .stats, .tools, .agents]
         // Plus any new action not given a group yet, so it can't go missing from the pane.
         case .actions: [.copyText, .askScreen, .ramble] + HotKeys.Action.allCases.filter { a in !Self.listed.contains(a) }
@@ -2251,7 +2261,7 @@ private struct ShortcutRecorder: View {
         KeyRecorder(title: action.title, combo: HotKeys.combo(for: action),
                     isRecording: Binding(get: { recording == "hot." + action.rawValue },
                                          set: { recording = $0 ? "hot." + action.rawValue : nil }),
-                    read: { HotKeys.Combo(event: $0) }, set: set)
+                    read: { HotKeys.Combo(event: $0) }, set: set, taken: swapped)
     }
 
     private func set(_ combo: HotKeys.Combo) {
@@ -2281,7 +2291,7 @@ private struct ShelfKeyRecorder: View {
         KeyRecorder(title: key.title, combo: key.combo,
                     isRecording: Binding(get: { recording == "clip." + key.rawValue },
                                          set: { recording = $0 ? "clip." + key.rawValue : nil }),
-                    read: key.record, set: set)
+                    read: key.record, set: set, taken: swapped)
     }
 
     private func set(_ combo: HotKeys.Combo) {
@@ -2307,7 +2317,13 @@ private struct KeyRecorder: View {
     let read: (NSEvent) -> HotKeys.Combo?
     /// Takes new keys, or `.off`.
     let set: (HotKeys.Combo) -> Void
+    /// Says why keys another app holds were recorded but won't work.
+    var taken: (String) -> Void = { _ in }
     @State private var monitor: Any?
+    /// Sees key presses before any app does, so keys another app has taken as its shortcut (which
+    /// never reach this window) still get recorded, with a word on why they won't work.
+    @State private var listener: Int?
+    @State private var lastLocalKey = Date.distantPast
     @State private var held: String = ""
     @State private var hovering = false
     /// Fields recording right now: global shortcuts stay unregistered until none is.
@@ -2403,7 +2419,20 @@ private struct KeyRecorder: View {
                 } else {
                     NSSound.beep()
                 }
+                lastLocalKey = Date()
                 return nil
+            }
+        }
+        listener = KeyListener.start { event in
+            let seen = Date()
+            // The window gets its own presses a moment later; one that never arrives went to another app.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                // Only while Settings is in front: with another app active, its keys are just being typed there.
+                guard isRecording, NSApp.isActive, lastLocalKey < seen, let combo = read(event) else { return }
+                set(combo)
+                isRecording = false
+                let owner = HotKeyOwners.owner(of: combo).map { " (\($0))" } ?? ""
+                taken("\(combo.display) is taken by another app\(owner), so it never reaches NotchApp. Free it there and it'll work.")
             }
         }
     }
@@ -2412,6 +2441,8 @@ private struct KeyRecorder: View {
         guard let monitor else { return }
         NSEvent.removeMonitor(monitor)
         self.monitor = nil
+        if let listener { KeyListener.stop(listener) }
+        listener = nil
         held = ""
         Self.active -= 1
         if Self.active == 0 { HotKeys.shared.suspended = false }
@@ -2518,5 +2549,42 @@ private struct AboutPane: View {
             }
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
         }
+    }
+}
+
+/// A listen-only tap on key presses for the shortcut recorder (needs Accessibility; without it,
+/// there's no tap and keys another app holds just don't record). One field records at a time.
+@MainActor
+private enum KeyListener {
+    nonisolated(unsafe) private static var handler: ((NSEvent) -> Void)?
+    private static var tap: (port: CFMachPort, source: CFRunLoopSource)?
+    private static var generation = 0
+
+    /// Returns a token for `stop`, so a field that stops late can't end the next one's listening.
+    static func start(_ handler: @escaping (NSEvent) -> Void) -> Int {
+        stop(generation)
+        generation += 1
+        guard AXIsProcessTrusted(),
+              let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .tailAppendEventTap, options: .listenOnly,
+                                           eventsOfInterest: 1 << CGEventType.keyDown.rawValue,
+                                           callback: { _, type, event, _ in
+                                               if type == .keyDown, let ns = NSEvent(cgEvent: event) { KeyListener.handler?(ns) }
+                                               return Unmanaged.passUnretained(event)
+                                           }, userInfo: nil),
+              let source = CFMachPortCreateRunLoopSource(nil, port, 0) else { return generation }
+        // On the main run loop, so the handler runs on the main thread.
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        Self.handler = handler
+        tap = (port, source)
+        return generation
+    }
+
+    static func stop(_ token: Int) {
+        guard token == generation, let tap else { return }
+        handler = nil
+        CGEvent.tapEnable(tap: tap.port, enable: false)
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), tap.source, .commonModes)
+        CFMachPortInvalidate(tap.port)
+        Self.tap = nil
     }
 }

@@ -315,6 +315,18 @@ final class PagerContainerView: NSView {
         }
     }
 
+    /// Passes a pointer move to the page showing (see `PagesHostingView.pointerMoved`).
+    @MainActor func pointerMoved(_ event: NSEvent) {
+        guard !pager.isMoving, pager.index < tabs.count, let slot = slots[tabs[pager.index]] else { return }
+        (slot.host as? PagesHostingView<AnyView>)?.pointerMoved(event)
+    }
+
+    /// The notch closed: exits held back for the pointer still being over a page go through now,
+    /// or a card would still look hovered the next time it opens.
+    @MainActor func releaseHover() {
+        for slot in slots.values { (slot.host as? PagesHostingView<AnyView>)?.releaseHeldExits() }
+    }
+
     /// Clicks go to the current page only, and to nothing while pages move (they'd land on the
     /// layout's places, not where things are drawn).
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -470,6 +482,59 @@ final class PageSlotView: NSView {
 /// A page's hosting view.
 final class PagesHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// AppKit follows the pointer for SwiftUI's hover with tracking areas, and places them where
+    /// the page would be without the header above it: they end about a header's height short
+    /// of the page's bottom. Hover stopped there, so buttons shown on hover near the bottom of
+    /// a page (a clip's Paste, Pin and Remove) went away as the pointer reached them. So an
+    /// "exited" that comes while the pointer is still over the page waits until it really
+    /// leaves, and the notch passes every pointer move on (`pointerMoved`).
+    private var heldExits: [NSEvent] = []
+    /// The page has been told the pointer is over it (by AppKit, or here for the strip AppKit misses).
+    private var entered = false
+    /// AppKit's last "entered" for each of SwiftUI's areas, to say it again for the missed strip
+    /// (SwiftUI only listens to events from its own areas).
+    private var enters: [ObjectIdentifier: NSEvent] = [:]
+
+    override func mouseEntered(with event: NSEvent) {
+        entered = true
+        if let area = event.trackingArea { enters[ObjectIdentifier(area)] = event }
+        super.mouseEntered(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) {
+            heldExits.append(event)
+            return
+        }
+        heldExits = []
+        entered = false
+        super.mouseExited(with: event)
+    }
+
+    func releaseHeldExits() {
+        guard !heldExits.isEmpty else { return }
+        let held = heldExits
+        heldExits = []
+        entered = false
+        held.forEach { super.mouseExited(with: $0) }
+    }
+
+    /// A pointer move over the notch's window, wherever AppKit thinks the page is.
+    func pointerMoved(_ event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) {
+            // Come in from below, through the strip AppKit doesn't count: it never said "entered".
+            if !entered {
+                let live = Set(trackingAreas.map(ObjectIdentifier.init))
+                enters = enters.filter { live.contains($0.key) }
+                entered = !enters.isEmpty
+                enters.values.forEach { super.mouseEntered(with: $0) }
+            }
+            mouseMoved(with: event)
+        } else {
+            releaseHeldExits()
+        }
+    }
 }
 
 // Spelled out rather than `@Entry`: that macro's plugin ships with Xcode, not the Command Line Tools.
