@@ -95,6 +95,7 @@ final class HotKeys: ObservableObject {
         case windowLeftThird, windowCenterThird, windowRightThird, windowLeftTwoThirds, windowRightTwoThirds
         case windowTopLeft, windowTopRight, windowBottomLeft, windowBottomRight
         case chat
+        case askArea
 
         /// Center and the thirds and quarters start off: their keys (Rectangle's) are tabs' with ⌃⌥.
         var onByDefault: Bool {
@@ -166,6 +167,7 @@ final class HotKeys: ObservableObject {
             case .windowBottomLeft: "J"
             case .windowBottomRight: "K"
             case .chat: "N"
+            case .askArea: "Z"
             }
         }
 
@@ -189,6 +191,7 @@ final class HotKeys: ObservableObject {
             case .copyText: "Copy text from the screen"
             case .askScreen: "Ask about what's on screen"
             case .chat: "New chat"
+            case .askArea: "Ask about an area of the screen"
             case .windowLeft: "Window: left half"
             case .windowRight: "Window: right half"
             case .windowMaximize: "Window: maximize"
@@ -252,6 +255,7 @@ final class HotKeys: ObservableObject {
             case .windowBottomLeft: UInt32(kVK_ANSI_J)
             case .windowBottomRight: UInt32(kVK_ANSI_K)
             case .chat: UInt32(kVK_ANSI_N)
+            case .askArea: UInt32(kVK_ANSI_Z)
             }
         }
     }
@@ -387,6 +391,21 @@ final class HotKeys: ObservableObject {
         vm.open(tab: .ask, reason: reason)
     }
 
+    /// "Ask about an area": the notch steps aside for the system's area picker, then search opens
+    /// about what you picked. Esc in the picker leaves everything as it was.
+    static func askAboutArea(_ vm: NotchViewModel, reason: OpenReason) {
+        let assistant = AssistantStore.shared
+        guard !assistant.pickingArea else { return }
+        if vm.isOpen { vm.close() }
+        Task { @MainActor in
+            guard await assistant.captureArea() else { return }
+            assistant.clear()
+            vm.mirror = false
+            vm.overlay = nil
+            vm.open(tab: .ask, reason: reason)
+        }
+    }
+
     private func perform(_ action: Action) {
         guard let vm = NotchPresenter.shared.primary else { return }
         let defaults = UserDefaults.standard
@@ -419,6 +438,9 @@ final class HotKeys: ObservableObject {
             return
         case .askScreen:
             Self.askAboutScreen(vm, reason: .keyboard)
+            return
+        case .askArea:
+            Self.askAboutArea(vm, reason: .keyboard)
             return
         case .chat:
             ChatWindow.shared.toggleNewChat()

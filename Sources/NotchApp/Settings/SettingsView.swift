@@ -2230,7 +2230,7 @@ private enum ShortcutGroup: CaseIterable, Identifiable {
         case .notch: [.toggle, .search, .chat]
         case .tabs: [.home, .shelf, .downloads, .clipboard, .tasks, .notes, .timer, .mixer, .controls, .camera, .stats, .tools, .agents]
         // Plus any new action not given a group yet, so it can't go missing from the pane.
-        case .actions: [.copyText, .askScreen, .ramble] + HotKeys.Action.allCases.filter { a in !Self.listed.contains(a) }
+        case .actions: [.copyText, .askScreen, .askArea, .ramble] + HotKeys.Action.allCases.filter { a in !Self.listed.contains(a) }
         case .windows: [.windowLeft, .windowRight, .windowTop, .windowBottom, .windowMaximize, .windowCenter,
                          .windowPreviousDisplay, .windowNextDisplay, .windowRestore,
                          .windowLeftThird, .windowCenterThird, .windowRightThird, .windowLeftTwoThirds, .windowRightTwoThirds,
@@ -2238,7 +2238,7 @@ private enum ShortcutGroup: CaseIterable, Identifiable {
         }
     }
 
-    private static let listed = Set<HotKeys.Action>([.copyText, .askScreen, .ramble] + notch.actions + tabs.actions + windows.actions)
+    private static let listed = Set<HotKeys.Action>([.copyText, .askScreen, .askArea, .ramble] + notch.actions + tabs.actions + windows.actions)
 
     /// The action's name, without what the group heading already says.
     func label(for action: HotKeys.Action) -> String {

@@ -21,6 +21,8 @@ struct ScreenContext: @unchecked Sendable {
     let selection: String?
     let text: String
     let textSource: TextSource
+    /// An area picked by hand ("Ask about an area"), not the whole window.
+    var isArea = false
     let capturedAt = Date()
 
     /// "Safari — Pricing · stripe.com", for the chip and the model.
@@ -81,6 +83,49 @@ extension ScreenContext {
         return ScreenContext(image: image, pid: app?.processIdentifier, appName: app?.localizedName, bundleID: app?.bundleIdentifier,
                              windowTitle: ax?.title, location: ax?.location, selection: ax?.selection,
                              text: text, textSource: source)
+    }
+
+    /// "Ask about an area": the system's own area picker (drag, or Space for a window), then the
+    /// text read off that picture. Nil when cancelled with Esc. The app is the one whose window
+    /// the drag ended over, else the one in front.
+    static func captureArea() async throws -> ScreenContext? {
+        guard CGPreflightScreenCaptureAccess() else {
+            CGRequestScreenCaptureAccess()
+            throw Failure(message: "To see your screen, NotchApp needs Screen Recording (a different list from Accessibility). Turn NotchApp on there, then reopen NotchApp when macOS asks.")
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("notchapp-area-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: file) }
+        // Debug: a saved picture stands in for the area you'd drag.
+        if UserDefaults.standard.bool(forKey: "debugHooks"), let path = UserDefaults.standard.string(forKey: "debugAreaImage") {
+            try? FileManager.default.copyItem(atPath: path, toPath: file.path)
+        } else {
+            _ = await Shell.run("/usr/sbin/screencapture", ["-i", "-x", "-o", file.path], timeout: 120)
+        }
+        guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let app = await MainActor.run { appUnderPointer() ?? frontmostOtherApp() }
+        let ax = await Task.detached(priority: .userInitiated) { app.map { AXReader.read(pid: $0.processIdentifier) } ?? nil }.value
+        return ScreenContext(image: image, pid: app?.processIdentifier, appName: app?.localizedName, bundleID: app?.bundleIdentifier,
+                             windowTitle: ax?.title, location: ax?.location, selection: nil,
+                             text: await recognizeText(in: image), textSource: .ocr, isArea: true)
+    }
+
+    /// The owner of the topmost ordinary window under the pointer (not NotchApp's).
+    @MainActor private static func appUnderPointer() -> NSRunningApplication? {
+        let mouse = NSEvent.mouseLocation
+        // Window bounds are top-left based, on the main display's height.
+        let top = (NSScreen.screens.first?.frame.height ?? 0) - mouse.y
+        let point = CGPoint(x: mouse.x, y: top)
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        for info in list {
+            guard (info[kCGWindowLayer as String] as? Int) == 0,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != getpid(),
+                  let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict), bounds.contains(point),
+                  let app = NSRunningApplication(processIdentifier: pid), FrontmostTracker.isUserApp(app) else { continue }
+            return app
+        }
+        return nil
     }
 
     /// The app in front, or (when NotchApp itself is, after using Settings) the one you were in before.

@@ -174,6 +174,8 @@ final class AssistantStore: ObservableObject {
         var plan: CommandPlanner.Plan?
         /// What the screen looked like, for a question about it (a small preview; nothing is saved).
         var screen: NSImage?
+        /// The screen question was about an area picked by hand, not a whole window.
+        var screenIsArea = false
         /// Started by an action (an AI Command, a chip under the bar) rather than typed: the bar stays
         /// empty and shows this instead, since there's nothing in it to edit and run again.
         var actionTitle: String?
@@ -230,6 +232,29 @@ final class AssistantStore: ObservableObject {
                 withAnimation { context = .failed(error.localizedDescription) }
             }
         }
+    }
+
+    /// The area picker is up ("Ask about an area"), so a second press doesn't start another.
+    private(set) var pickingArea = false
+
+    /// "Ask about an area": you pick part of the screen, then questions go to it like a captured
+    /// window. False when cancelled with Esc (nothing changes then).
+    func captureArea() async -> Bool {
+        guard !pickingArea else { return false }
+        pickingArea = true
+        defer { pickingArea = false }
+        do {
+            guard let captured = try await ScreenContext.captureArea() else { return false }
+            contextTask?.cancel()
+            contextHistory = []
+            let thumb = captured.image.flatMap(ScreenQuestion.thumbnail)
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { context = .ready(captured, thumbnail: thumb) }
+            touchContext()
+        } catch {
+            contextTask?.cancel()
+            withAnimation { context = .failed(error.localizedDescription) }
+        }
+        return true
     }
 
     func clearContext() {
@@ -645,7 +670,7 @@ final class AssistantStore: ObservableObject {
         try Task.checkCancellation()
         if !forChat { lastScreen = captured }
         let preview = captured.image.flatMap(ScreenQuestion.thumbnail)
-        update(id) { $0.screen = preview; $0.route = .screen }
+        update(id) { $0.screen = preview; $0.screenIsArea = captured.isArea; $0.route = .screen }
         let (answer, sources) = try await ScreenQuestion.answer(query, context: captured, history: history,
                                                                 progress: progress) { soFar, sources in
             await MainActor.run { AssistantStore.shared.update(id, animated: false) { $0.answer = soFar; $0.sources = sources } }

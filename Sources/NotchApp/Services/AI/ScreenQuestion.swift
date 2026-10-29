@@ -23,46 +23,64 @@ enum ScreenQuestion {
         await progress(vision ? "Looking at \(context.appName ?? "your screen")" : "Reading \(context.appName ?? "your screen")")
         let images = vision ? [context.image.flatMap { jpeg($0, maxSide: 1600) }].compactMap { $0 } : []
         let screenText = context.text.isEmpty ? "(no readable text)" : String(context.text.prefix(8000))
-        let what = context.image == nil ? "the user's Mac screen" : "the window in front on the user's Mac"
-        // Questions answered from what's there alone don't get the web option at all: small models
-        // reached for it anyway, and a search only made those answers slower and vaguer.
-        let searchRule = isSelfContained(question) ? "" : """
-        Only if the question needs outside facts you aren't sure of (recent events, scores, prices, specific figures), \
-        don't guess: reply with ONLY these two lines and nothing else:
-        SEARCH: <a concise search-engine query>
-        SCREEN: <one sentence on what's on screen that matters for the question>
-
-        """
-        let system = """
-        You can see \(what) as it is right now\(vision ? " (the image)" : ""), and its text\(context.textSource == .accessibility ? " as the app reports it" : ", read from the picture"), \
-        top to bottom. Answer their question about it. Today is \(Date().formatted(date: .complete, time: .omitted)).
-        - If they selected text, "this" means the selection.
-        - A quiz, test or multiple-choice question: give the right answer first (the letter and the option), then one short line on why.
-        - An error or code: say what's wrong and how to fix it.
-        - Summarize / explain / translate / rewrite: do exactly that, nothing else.
-        - Otherwise answer directly from what's there.
-        \(searchRule)Plain text: no headings, no bold. Code goes in a ``` block. Under 130 words, unless code, rewriting or translating needs more.
-        """
+        let what = context.isArea ? "an area of the user's Mac screen that they picked on purpose (\"this\" means all of it)"
+            : context.image == nil ? "the user's Mac screen" : "the window in front on the user's Mac"
         var user = ""
         if !context.header.isEmpty { user += context.header + "\n\n" }
         if let selection = context.selection, context.hasSelection { user += "Selected text:\n\(selection.prefix(6000))\n\n" }
         for exchange in history.suffix(3) { user += "Earlier question: \(exchange.question)\nYour answer: \(exchange.answer.prefix(600))\n\n" }
-        user += "Question: \(question)\n\nText in the window:\n\(screenText)"
+        user += "Question: \(question)\n\nText in \(context.isArea ? "the area" : "the window"):\n\(screenText)"
 
-        // Hold the reply back until it's clear it isn't a search request.
-        let text = try await OllamaClient.chatStream(system: system, user: user, images: images, allowCloud: cloud) { soFar in
-            let head = soFar.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            guard head.count >= 7, !head.hasPrefix("SEARCH:") else { return }
-            await partial(soFar, [])
+        // Only where there's a quiz: given always, small models put "A." in front of everything.
+        let quizRule = looksLikeQuiz(context.hasSelection ? (context.selection ?? "") : context.text)
+            ? "- A quiz, test or multiple-choice question: give the right answer first (the letter and the option), then one short line on why.\n" : ""
+        func ask(allowSearch: Bool) async throws -> String {
+            let searchRule = allowSearch ? """
+            Only if the question needs outside facts you aren't sure of (recent events, scores, prices, specific figures), \
+            don't guess: reply with ONLY these two lines and nothing else:
+            SEARCH: <a concise search-engine query>
+            SCREEN: <one sentence on what's on screen that matters for the question>
+
+            """ : ""
+            let system = """
+            You can see \(what) as it is right now\(vision ? " (the image)" : ""), and its text\(context.textSource == .accessibility ? " as the app reports it" : ", read from the picture"), \
+            top to bottom. Answer their question about it. Today is \(Date().formatted(date: .complete, time: .omitted)).
+            - If they selected text, "this" means the selection.
+            \(quizRule)- An error or code: say what's wrong and how to fix it.
+            - Summarize / explain / translate / rewrite: do exactly that, nothing else.
+            - Compile / list / extract: pull every matching item from the whole window, not just the first part.
+            - Otherwise answer directly from what's there.
+            \(searchRule)Plain text: no headings, no bold. Code goes in a ``` block. Under 130 words, unless code, rewriting, translating or a full list needs more.
+            """
+            // Hold the reply back until it's clear it isn't a search request.
+            return try await OllamaClient.chatStream(system: system, user: user, images: images, allowCloud: cloud) { soFar in
+                let head = soFar.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                guard head.count >= 7, !head.hasPrefix("SEARCH:") else { return }
+                await partial(soFar, [])
+            }
         }
+
+        // Questions answered from what's there alone don't get the web option at all: small models
+        // reached for it anyway, and a search only made those answers slower and vaguer.
+        var text = try await ask(allowSearch: !isSelfContained(question))
         DebugHooks.log("Screen [\(context.label)] \(context.textSource) \(context.text.count) chars: \(question) → \(text.prefix(200))")
-        guard let search = line("SEARCH:", in: text) else { return (text, []) }
+        // "SEARCH: [No search needed]": the model meant to answer from the window. Ask again without the option.
+        if let search = line("SEARCH:", in: text), isPlaceholderQuery(search) {
+            text = try await ask(allowSearch: false)
+        }
+        guard let search = line("SEARCH:", in: text), !isPlaceholderQuery(search) else { return (text, []) }
 
         let seen = line("SCREEN:", in: text) ?? ""
         let excerpt = context.hasSelection ? (context.selection ?? "") : context.text
         let screenContext = "\(seen)\n\(context.header)\nText on screen (excerpt): \(excerpt.prefix(1500))"
         return try await WebSearcher.answer(question, searchQuery: search, screenContext: screenContext,
                                             progress: progress, partial: partial)
+    }
+
+    /// A question with lettered options ("a)", "B.") or quiz words, as the suggestions check.
+    static func looksLikeQuiz(_ text: String) -> Bool {
+        let t = text.lowercased()
+        return t.contains("?") && ["a)", "b)", "a.", "b.", "question", "quiz", "select", "choose"].contains(where: t.contains)
     }
 
     /// "Add this to my tasks", "put it in my calendar": something to do with the window, not a question.
@@ -77,7 +95,8 @@ enum ScreenQuestion {
     static func isSelfContained(_ question: String) -> Bool {
         let q = question.lowercased()
         return ["explain", "summar", "translate", "rewrite", "reword", "fix", "grammar", "spelling", "key points", "tl;dr",
-                "tldr", "simplify", "what's this", "what is this", "error", "code", "reply", "respond", "shorten", "proofread"]
+                "tldr", "simplify", "what's this", "what is this", "error", "code", "reply", "respond", "shorten", "proofread",
+                "compile", "bullet", "extract", "list every", "list all", "list the", "pull out", "gather", "every message", "on my screen"]
             .contains(where: q.contains)
     }
 
@@ -88,6 +107,14 @@ enum ScreenQuestion {
             return "Sent to \(s.aiProvider.shortName) · nothing is saved"
         }
         return "Only on this Mac · nothing is saved"
+    }
+
+    /// A SEARCH line that isn't a query: "[No search needed - all info is in the window]", "none", "N/A".
+    static func isPlaceholderQuery(_ query: String) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        if q.hasPrefix("[") || q.hasPrefix("<") || q.hasPrefix("(") { return true }
+        let markers = ["no search", "not needed", "no need", "none", "n/a", "not required", "not necessary", "in the window", "on screen"]
+        return q.count < 3 || markers.contains(where: q.contains)
     }
 
     private static func line(_ prefix: String, in text: String) -> String? {

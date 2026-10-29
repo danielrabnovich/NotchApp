@@ -309,7 +309,7 @@ final class ChatStore: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.uppercased().hasPrefix("SEARCH:") else { return .answer(uncited(trimmed)) }
         let request = trimmed.dropFirst("SEARCH:".count).split(separator: "\n").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-        return .search(request.isEmpty ? question : request)
+        return .search(request.isEmpty || ScreenQuestion.isPlaceholderQuery(request) ? question : request)
     }
 }
 

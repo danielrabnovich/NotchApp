@@ -531,7 +531,7 @@ struct AskView: View {
 
     private var placeholder: String {
         switch assistant.context {
-        case .ready(let c, _)?: c.hasSelection ? "Ask about the selection" : "Ask about \(c.appName ?? "this window")"
+        case .ready(let c, _)?: c.hasSelection ? "Ask about the selection" : c.isArea ? "Ask about this area" : "Ask about \(c.appName ?? "this window")"
         case .capturing?: "Ask about what's on screen"
         default: pendingAction != nil ? "Add instructions, then ↩ (“focus on deadlines”, “in Spanish”…)"
             : assistant.current?.actionTitle != nil ? "Search something else" : "Search, or type a command"
@@ -1196,7 +1196,8 @@ private struct RouteFooter: View {
         case .weather?: ("cloud.sun", "Open-Meteo forecast")
         case .calendar?: ("calendar", job.calendar?.tasks.isEmpty == false ? "Your calendar and tasks" : "Your calendar")
         case .notes?: ("note.text", "Your notes and tasks")
-        case .screen?: ("macwindow", job.sources.isEmpty ? "Looked at your screen" : "Your screen and the web")
+        case .screen?: ("macwindow", job.screenIsArea ? (job.sources.isEmpty ? "Looked at the area" : "The area and the web")
+                        : job.sources.isEmpty ? "Looked at your screen" : "Your screen and the web")
         case .help?: ("questionmark.circle", "NotchApp help")
         case .recall?: ("clock.arrow.circlepath", "Recall, on this Mac")
         case .write?: ("character.bubble", "Written by \(!AppSettings.shared.aiProvider.isCloud ? "the model on this Mac" : AppSettings.shared.aiProvider.shortName)")
@@ -1563,7 +1564,7 @@ private struct ScreenResults: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("Your screen")
+                    Text(job.screenIsArea ? "The area" : "Your screen")
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.35))
                     Spacer()
@@ -1736,24 +1737,63 @@ struct AnswerText: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            ForEach(Array(paragraphs.enumerated()), id: \.offset) { i, para in
-                if para.isCode {
-                    CodeBlock(code: para.text, language: para.language)
-                } else {
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    if para.isBullet {
-                        Circle().fill(.white.opacity(0.5)).frame(width: 3.5, height: 3.5).offset(y: -3)
-                    }
-                    styled(para.text)
-                        .font(uniform ? .system(size: 13) : .system(size: i == 0 && !para.isBullet ? 14.5 : 12.5, weight: i == 0 && !para.isBullet ? .medium : .regular))
-                        .foregroundStyle(.white.opacity(uniform ? 0.9 : i == 0 ? 0.95 : 0.78))
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                switch block {
+                case let .code(code, language):
+                    CodeBlock(code: code, language: language)
+                case let .prose(paras, first):
+                    // One Text for every paragraph and bullet between code blocks: a selection
+                    // can't cross from one Text into the next, so separate ones let you copy one
+                    // bullet at a time.
+                    prose(paras, startingAt: first)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
-                }
                 }
             }
         }
+    }
+
+    private enum Block {
+        case prose([(text: String, isBullet: Bool)], first: Int)
+        case code(String, language: String?)
+    }
+
+    /// Runs of paragraphs and bullets, split by code blocks. `first` is the run's first paragraph's
+    /// place in the whole answer (the very first one leads, bigger).
+    private var blocks: [Block] {
+        var out: [Block] = []
+        var run: [(text: String, isBullet: Bool)] = []
+        var runStart = 0
+        for (i, para) in paragraphs.enumerated() {
+            if para.isCode {
+                if !run.isEmpty { out.append(.prose(run, first: runStart)); run = [] }
+                out.append(.code(para.text, language: para.language))
+            } else {
+                if run.isEmpty { runStart = i }
+                run.append((para.text, para.isBullet))
+            }
+        }
+        if !run.isEmpty { out.append(.prose(run, first: runStart)) }
+        return out
+    }
+
+    private func prose(_ paras: [(text: String, isBullet: Bool)], startingAt first: Int) -> Text {
+        var result = Text("")
+        for (k, para) in paras.enumerated() {
+            let i = first + k
+            let leads = !uniform && i == 0 && !para.isBullet
+            if k > 0 {
+                // A short blank line between paragraphs, as the old stack's spacing was.
+                result = result + Text("\n") + Text("\n").font(.system(size: 4))
+            }
+            let font: Font = uniform ? .system(size: 13) : .system(size: leads ? 14.5 : 12.5, weight: leads ? .medium : .regular)
+            let color = Color.white.opacity(uniform ? 0.9 : i == 0 ? 0.95 : 0.78)
+            if para.isBullet { result = result + Text("•  ").font(font).foregroundColor(.white.opacity(0.5)) }
+            result = result + styled(para.text).font(font).foregroundColor(color)
+        }
+        return result
     }
 
     /// Lines as paragraphs and bullets, and ``` fenced code as blocks (kept verbatim, indentation
@@ -2709,7 +2749,7 @@ private struct ContextChip: View {
                         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
                         .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
                 }
-                Text(context.hasSelection ? "Selection" : context.appName ?? "Screen")
+                Text(context.hasSelection ? "Selection" : context.isArea ? "Area" : context.appName ?? "Screen")
                     .frame(maxWidth: 120)
             case .failed:
                 Image(systemName: "eye.slash").foregroundStyle(.orange)
@@ -2735,7 +2775,7 @@ private struct ContextChip: View {
     private var helpText: String {
         guard case let .ready(c, _) = state else { return "" }
         let source = c.textSource == .accessibility ? "its text as the app reports it" : "its text read from the picture"
-        return "\(c.label)\nAsking about this window and \(source). \(ScreenQuestion.privacyLine)."
+        return "\(c.label)\nAsking about \(c.isArea ? "the area you picked" : "this window") and \(source). \(ScreenQuestion.privacyLine)."
     }
 }
 
@@ -2884,12 +2924,36 @@ private struct ContextActions: View {
                     }
                 } else {
                     ForEach(Self.suggestions(for: context), id: \.self) { question in
-                        Button(question) { ask(question) }
+                        Button(question) { ask(context.isArea ? Self.areaPrompt(question) : question) }
+                            .buttonStyle(NotchPillButtonStyle())
+                    }
+                    if context.isArea, !context.text.isEmpty {
+                        Button { Self.copyText(context.text) } label: { Label("Copy text", systemImage: "doc.on.doc") }
                             .buttonStyle(NotchPillButtonStyle())
                     }
                 }
             }
         }
+    }
+
+    /// A short button, said in full: small local models took a bare "Bullet points" for a quiz.
+    static func areaPrompt(_ label: String) -> String {
+        switch label {
+        case "Bullet points": "Turn everything in this area into a bulleted list. Keep each point's wording."
+        case "Summarize this": "Summarize what this area says."
+        case "Explain this": "Explain what this area shows."
+        case "Translate to English": "Translate the text in this area to English."
+        default: label
+        }
+    }
+
+    /// The area's text, read off the picture, onto the clipboard (what Copy Text does, after the fact).
+    static func copyText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        Haptics.tap()
+        ActivityCenter.shared.show(.notice(title: "Copied \(text.split(whereSeparator: \.isWhitespace).count) words",
+                                           detail: "From the area", icon: "doc.on.doc", tone: .info), for: 2)
     }
 
     /// A date or time in the text ("Friday", "Oct 14", "3:30 pm"), so "Add to my calendar" makes sense.
@@ -2904,6 +2968,11 @@ private struct ContextActions: View {
             let selection = c.selection ?? ""
             return mentionsDate(selection) ? ["Explain this", "Summarize this", "Add to my calendar", "Add to my tasks"]
                 : ["Explain this", "Summarize this", "Translate to English", "Fix spelling and grammar"]
+        }
+        if c.isArea {
+            guard !c.text.isEmpty else { return ["What's this?", "Describe this"] }
+            return [c.text.count > 600 ? "Summarize this" : "Explain this",
+                    mentionsDate(c.text) ? "Add to my calendar" : "Bullet points", "Translate to English"]
         }
         let text = c.text.lowercased()
         var out: [String] = []
