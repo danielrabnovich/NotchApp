@@ -24,6 +24,8 @@ enum HomeShots {
         var birthdays: [Birthdays.Person] = []
         var call = false
         var weather = true
+        /// No rain in the next hours, so the days show under them.
+        var dry = false
         var cards: [HomeEntry]?
         var editing = false
         var events: (EKEventStore, Date) -> [EKEvent]
@@ -63,7 +65,7 @@ enum HomeShots {
             let shot = shots[i]
             let now = Date()
             Birthdays.shared.preview(shot.fixture.birthdays)
-            TodayWeather.shared.preview(.some(shot.fixture.weather ? weather(now) : nil))
+            TodayWeather.shared.preview(.some(shot.fixture.weather ? weather(now, dry: shot.fixture.dry) : nil))
             CalendarManager.shared.preview(events: shot.fixture.events(CalendarManager.shared.store, now))
             let call = shot.fixture.call
                 ? MeetingMonitor.Call(app: "Zoom", bundleID: "us.zoom.xos", started: now.addingTimeInterval(-300), event: "Writers Meeting")
@@ -120,16 +122,17 @@ enum HomeShots {
         }
     }
 
-    private static func weather(_ now: Date) -> WeatherReport {
+    private static func weather(_ now: Date, dry: Bool = false) -> WeatherReport {
         let cal = Calendar.current
         let days = (0..<5).map { i in
             WeatherReport.Day(date: cal.date(byAdding: .day, value: i, to: cal.startOfDay(for: now))!,
                               code: [0, 3, 3, 61, 2][i], high: [20, 13, 17, 12, 15][i], low: [6, 4, 1, 5, 3][i], rainChance: [0, 10, 0, 70, 20][i])
         }
-        // Rain on its way in a few hours.
+        // Rain on its way in a few hours (unless dry).
         let hours = (0..<12).map { i in
-            WeatherReport.Hour(date: hour(now).addingTimeInterval(Double(i) * 3600), code: [0, 1, 2, 3, 61, 61, 3, 2, 2, 1, 0, 0][i],
-                               temp: [14, 15, 15, 14, 12, 11, 11, 10, 9, 8, 8, 7][i], rainChance: [0, 0, 10, 20, 60, 70, 40, 20, 10, 0, 0, 0][i], uv: 2)
+            WeatherReport.Hour(date: hour(now).addingTimeInterval(Double(i) * 3600), code: dry ? [0, 1, 2, 3, 2, 1, 3, 2, 2, 1, 0, 0][i] : [0, 1, 2, 3, 61, 61, 3, 2, 2, 1, 0, 0][i],
+                               temp: [14, 15, 15, 14, 12, 11, 11, 10, 9, 8, 8, 7][i],
+                               rainChance: dry ? Array(repeating: 0, count: 12)[i] : [0, 0, 10, 20, 60, 70, 40, 20, 10, 0, 0, 0][i], uv: 2)
         }
         return WeatherReport(place: "Test", unit: "°C", currentTemp: 14, feelsLike: 12, currentCode: 0, wind: 8,
                              windUnit: "km/h", humidity: 45, days: days, focusDay: 0, uv: 2, hours: hours)
@@ -208,6 +211,19 @@ enum HomeShots {
         Fixture(name: "edit", cards: [.init(card: .music), .init(card: .today), .init(card: .weather), .init(card: .timer, size: .small)],
                 editing: true) { store, now in
             [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]
+        },
+        Fixture(name: "stats", cards: [.init(card: .today), .init(card: .weather), .init(card: .stats)]) { store, now in
+            [event(store, "intern", hour: hour(now), from: 24, hours: 2)]
+        },
+        Fixture(name: "stats-dry", dry: true, cards: [.init(card: .today), .init(card: .weather), .init(card: .stats)]) { store, now in
+            [event(store, "intern", hour: hour(now), from: 24, hours: 2)]
+        },
+        Fixture(name: "stats-small", cards: [.init(card: .today), .init(card: .weather), .init(card: .stats, size: .small),
+                                              .init(card: .batteries, size: .small)]) { store, now in
+            [event(store, "intern", hour: hour(now), from: 24, hours: 2)]
+        },
+        Fixture(name: "stats-call", call: true, cards: [.init(card: .today), .init(card: .weather), .init(card: .stats)]) { store, now in
+            [event(store, "intern", hour: hour(now), from: 24, hours: 2)]
         },
         Fixture(name: "tiles-call", call: true, cards: [.init(card: .music), .init(card: .today), .init(card: .clock), .init(card: .stats)]) { store, now in
             [event(store, "Writers Meeting", hour: hour(now), from: 0, hours: 1.5)]

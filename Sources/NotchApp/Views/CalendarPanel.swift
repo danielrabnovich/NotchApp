@@ -72,8 +72,10 @@ struct TodayPanel: View {
     private var showsBirthdayLine: Bool { fit.birthdayLine && !birthdays.today.isEmpty }
 
     private func header(now: Date) -> some View {
-        // Narrower days, then no month, when Today is squeezed between other cards.
+        // With room to spare, four days either side of today; narrower days, then no month, when
+        // Today is squeezed between other cards.
         ViewThatFits(in: .horizontal) {
+            headerLine(now: now, month: true, pitch: 30, around: true)
             headerLine(now: now, month: true, pitch: 30)
             headerLine(now: now, month: true, pitch: 26)
             headerLine(now: now, month: false, pitch: 26)
@@ -81,7 +83,7 @@ struct TodayPanel: View {
         .frame(height: fit.letters ? nil : fit.headerHeight)
     }
 
-    private func headerLine(now: Date, month: Bool, pitch: CGFloat) -> some View {
+    private func headerLine(now: Date, month: Bool, pitch: CGFloat, around: Bool = false) -> some View {
         HStack(alignment: .center, spacing: 12) {
             if month {
                 Text(picked ?? now, format: .dateTime.month(.abbreviated))
@@ -93,8 +95,9 @@ struct TodayPanel: View {
                     .help("Open Calendar")
             }
             WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: pitch, letters: fit.letters,
-                      picked: settings.calendarEnabled ? $picked : .constant(nil))
-            Spacer(minLength: 0)
+                      around: around, picked: settings.calendarEnabled ? $picked : .constant(nil))
+                // The days take the room (out to the card's edge, as the month is in from the other).
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -417,28 +420,31 @@ private struct Forecast: View {
                     .padding(.bottom, 2)
             }
             ForEach(report.days.dropFirst().prefix(days)) { day in
-                HStack(spacing: 6) {
+                // In the hours' columns, so it lines up under them and stays inside the card: the
+                // day, its sky, then as Weather does, the low, a bar for the day within the week's
+                // range, and the high.
+                HStack(spacing: 0) {
                     Text(day.date, format: .dateTime.weekday(.abbreviated))
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.white.opacity(0.7))
-                        .frame(width: 30, alignment: .leading)
+                        .frame(maxWidth: .infinity)
                     Image(systemName: WeatherReport.symbol(day.code))
                         .symbolRenderingMode(.multicolor)
                         .font(.system(size: 11))
-                        .frame(width: 18)
-                    Spacer(minLength: 0)
-                    // As Weather does: the low, a bar for the day within the week's range, the high.
+                        .frame(maxWidth: .infinity)
                     Text("\(Int(day.low.rounded()))°")
                         .font(.system(size: 11).monospacedDigit())
                         .foregroundStyle(report.tint(day.low).opacity(0.8))
-                        .frame(width: 26, alignment: .trailing)
+                        .frame(maxWidth: .infinity)
                     TempRange(report: report, low: day.low, high: day.high,
-                              coldest: report.days.map(\.low).min() ?? day.low, warmest: report.days.map(\.high).max() ?? day.high, width: 30)
+                              coldest: report.days.map(\.low).min() ?? day.low, warmest: report.days.map(\.high).max() ?? day.high, width: 20)
+                        .frame(maxWidth: .infinity)
                     Text("\(Int(day.high.rounded()))°")
                         .font(.system(size: 11, weight: .semibold).monospacedDigit())
                         .foregroundStyle(report.tint(day.high))
-                        .frame(width: 26, alignment: .leading)
+                        .frame(maxWidth: .infinity)
                 }
+                .lineLimit(1)
                 .help(WeatherReport.describe(day.code) + (day.rainChance > 0 ? ", \(day.rainChance)% chance of rain" : ""))
             }
         }
@@ -565,7 +571,7 @@ private struct EventRow: View {
                 Text(event.title ?? "Untitled")
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
-                if let detail {
+                if let detail = laterDay.map({ day in [day, detail].compactMap { $0 }.joined(separator: " · ") }) ?? detail {
                     Text(detail)
                         .font(.system(size: 10.5).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.5))
@@ -578,7 +584,7 @@ private struct EventRow: View {
                 Button("Join") { MeetingLinks.join(link) }
                     .buttonStyle(NotchPillButtonStyle(primary: true, height: 20))
                     .help("Join on \(link.service)")
-            } else {
+            } else if laterDay == nil {
                 let (text, soon) = when
                 Text(text)
                     .font(.system(size: 11.5, weight: soon ? .semibold : .regular).monospacedDigit())
@@ -587,6 +593,14 @@ private struct EventRow: View {
             }
         }
         .frame(height: 30)
+    }
+
+    /// "Tomorrow" or "Fri" for an event on a later day, said under its title rather than far off on
+    /// the right.
+    private var laterDay: String? {
+        let cal = Calendar.current
+        guard event.startDate > now, !cal.isDate(event.startDate, inSameDayAs: now) else { return nil }
+        return cal.isDateInTomorrow(event.startDate) ? "Tomorrow" : event.startDate.formatted(.dateTime.weekday(.abbreviated))
     }
 
     /// Where it is (the first line of the address), else its times.
@@ -613,21 +627,25 @@ private struct EventRow: View {
     }
 }
 
-/// This calendar week, a day to a column: today in red, the weekend brighter, dots in the colors
-/// of each day's calendars. Tapping a day picks it; tapping today goes back.
+/// This calendar week (or, `around`, four days either side of today), a day to a column: today in
+/// red, the weekend brighter, dots in the colors of each day's calendars. Tapping a day picks it;
+/// tapping today goes back.
 private struct WeekStrip: View {
     let now: Date
     let events: [EKEvent]
     let pitch: CGFloat
     /// The weekday over each date; without, today is just its red number.
     var letters = true
+    var around = false
     @Binding var picked: Date?
 
     var body: some View {
         let cal = Calendar.current
-        let days = cal.dateInterval(of: .weekOfYear, for: now).map { week in
-            (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: week.start) }
-        } ?? []
+        let days = around
+            ? (-4...4).compactMap { cal.date(byAdding: .day, value: $0, to: cal.startOfDay(for: now)) }
+            : cal.dateInterval(of: .weekOfYear, for: now).map { week in
+                (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: week.start) }
+            } ?? []
         HStack(spacing: 0) {
             ForEach(days, id: \.self) { day in cell(day, cal: cal) }
         }
@@ -667,9 +685,12 @@ private struct WeekStrip: View {
                 }
             }
             .frame(height: 4)
+            // Days gone by fade, their dots with them.
+            .opacity(past ? 0.45 : 1)
         }
         .padding(.vertical, 3)
-        .frame(width: pitch)
+        // Days spread out to fill the card, out to its edge, though not so far that the strip falls apart.
+        .frame(minWidth: pitch, maxWidth: pitch * 2.2)
         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.white.opacity(isPicked ? 0.12 : 0)))
         .contentShape(Rectangle())
         .onTapGesture {

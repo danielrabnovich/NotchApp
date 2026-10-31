@@ -75,7 +75,12 @@ struct StatsCard: View {
         HomeTile {
             // Medium, unless Home's too short for it (a call bar above).
             ViewThatFits(in: .vertical) {
-                if !small { medium(s, readings) }
+                // As many of the apps working hardest as fit.
+                if !small {
+                    medium(s, readings, apps: 3)
+                    medium(s, readings, apps: 2)
+                    medium(s, readings, apps: 1)
+                }
                 ForEach(power.map { [readings + [$0], readings] } ?? [readings], id: \.count) { rows in
                     HStack(spacing: 10) {
                         StatRings(diameter: 36)
@@ -92,7 +97,7 @@ struct StatsCard: View {
         .onDisappear { stats.viewerDisappeared() }
     }
 
-    private func medium(_ s: SystemSnapshot, _ readings: [Reading]) -> some View {
+    private func medium(_ s: SystemSnapshot, _ readings: [Reading], apps: Int) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 4) {
                 StatRings(diameter: 44)
@@ -118,25 +123,29 @@ struct StatsCard: View {
                 }
                 .lineLimit(1)
             }
-            Spacer(minLength: 6)
             numbers(readings, compact: false)
-            if let app = s.topCPU.first {
-                HStack(spacing: 5) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: app.bundlePath ?? "/System/Applications/Utilities/Activity Monitor.app"))
-                        .resizable()
-                        .frame(width: 13, height: 13)
-                    Text(app.name)
-                        .foregroundStyle(HomeType.secondary)
-                    Spacer(minLength: 2)
-                    // Of the whole Mac, like CPU above it (Activity Monitor's share of one core runs past 100%).
-                    Text("\(Int((app.cpu / Double(max(1, s.cores.count)) * 100).rounded()))%")
-                        .foregroundStyle(HomeType.secondary)
+                .padding(.top, 8)
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(s.topCPU.prefix(apps)) { app in
+                    HStack(spacing: 5) {
+                        // In the dots' place, so the names line up with the labels above.
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: app.bundlePath ?? "/System/Applications/Utilities/Activity Monitor.app"))
+                            .resizable()
+                            .frame(width: 12, height: 12)
+                        Text(app.name)
+                            .font(HomeType.label)
+                        Spacer(minLength: 2)
+                        // Of the whole Mac, like CPU above it (Activity Monitor's share of one core runs past 100%).
+                        Text("\(Int((app.cpu / Double(max(1, s.cores.count)) * 100).rounded()))%")
+                            .font(HomeType.detail)
+                    }
+                    .foregroundStyle(HomeType.secondary)
+                    .lineLimit(1)
+                    .help("Working hard: \(app.name)")
                 }
-                .font(HomeType.detail)
-                .lineLimit(1)
-                .padding(.top, 5)
-                .help("Working hardest: \(app.name)")
             }
+            .padding(.top, 7)
+            Spacer(minLength: 0)
         }
         .onAppear { stats.detailAppeared() }
         .onDisappear { stats.detailDisappeared() }
@@ -147,7 +156,7 @@ struct StatsCard: View {
         VStack(alignment: .leading, spacing: compact ? 1 : 3) {
             ForEach(readings, id: \.label) { r in
                 HStack(spacing: 5) {
-                    if !compact { Circle().fill(r.color).frame(width: 6, height: 6) }
+                    if !compact { Circle().fill(r.color).frame(width: 6, height: 6).frame(width: 12) }
                     Text(compact ? r.short : r.label)
                         .font(compact ? .system(size: 9.5, weight: .medium) : HomeType.label)
                         .foregroundStyle(compact ? r.color : HomeType.secondary)

@@ -11,9 +11,11 @@ struct StatRings: View {
     var body: some View {
         let s = stats.snapshot
         let memory = s.memory.total > 0 ? Double(s.memory.used) / Double(s.memory.total) : 0
-        // Whole points keep the rings crisp; at 2 pt the inner ring still has a hole at this size.
-        let line: CGFloat = diameter >= 26 ? 3 : 2
-        let gap: CGFloat = 1
+        // The Glance's proportions at every size (2 pt rings, 1 pt apart at 22 pt), in half points to
+        // stay crisp.
+        let half = { (v: CGFloat) in max(1, (v * 2).rounded() / 2) }
+        let line = half(diameter / 11)
+        let gap = half(diameter / 22)
         ZStack {
             ring(s.cpuTotal, color: StatsPalette.cpu, inset: 0, line: line)
             ring(s.gpu ?? 0, color: StatsPalette.gpu, inset: line + gap, line: line)

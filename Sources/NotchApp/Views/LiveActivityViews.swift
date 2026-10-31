@@ -398,7 +398,9 @@ struct LiveItemView: View {
             MeetingReading(compact: true)
         case .progress:
             ProgressReading(compact: true)
-        case .worldClock, .weather, .goldenHour, .unread, .countdown:
+        case .weather:
+            WeatherGauge(diameter: min(22, notchHeight - 10))
+        case .worldClock, .goldenHour, .unread, .countdown:
             ExtraReading(item: item, compact: true)
         case .tasks, .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
              .quickWiFi, .quickNightShift, .appAction, .shortcuts:
@@ -486,7 +488,9 @@ struct LiveItemView: View {
             MeetingReading()
         case .progress:
             ProgressReading()
-        case .worldClock, .weather, .goldenHour, .unread, .countdown:
+        case .weather:
+            WeatherGauge(diameter: min(22, notchHeight - 10))
+        case .worldClock, .goldenHour, .unread, .countdown:
             ExtraReading(item: item)
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic,
              .quickWiFi, .quickNightShift:
@@ -820,12 +824,11 @@ struct ShortcutTile: View {
     }
 }
 
-/// The world clock, weather, golden hour, unread counts and countdown: a glyph and a reading
+/// The world clock, golden hour, unread counts and countdown: a glyph and a reading
 /// (compact: the reading alone).
 private struct ExtraReading: View {
     let item: LiveItem
     var compact = false
-    @ObservedObject private var weather = TodayWeather.shared
     @ObservedObject private var unread = UnreadBadges.shared
     @ObservedObject private var settings = AppSettings.shared
 
@@ -850,10 +853,6 @@ private struct ExtraReading: View {
                     .font(.system(size: 9.5, weight: .bold, design: .rounded))
                     .foregroundStyle(.white.opacity(0.5))
             }
-        case .weather:
-            Image(systemName: weather.report.map { WeatherReport.symbol($0.currentCode) } ?? "cloud")
-                .symbolRenderingMode(.multicolor)
-                .font(.system(size: 11))
         case .goldenHour:
             if !compact {
                 Image(systemName: GoldenHour.now(date)?.icon ?? "sun.horizon")
@@ -885,8 +884,6 @@ private struct ExtraReading: View {
             var style = Date.FormatStyle(date: .omitted, time: .shortened)
             style.timeZone = TimeZone(identifier: WorldClock.city.zone) ?? .current
             return date.formatted(style).replacingOccurrences(of: " AM", with: "a").replacingOccurrences(of: " PM", with: "p")
-        case .weather:
-            return weather.report.map { "\(Int($0.currentTemp.rounded()))°" } ?? "–"
         case .goldenHour:
             return GoldenHour.now(date)?.text ?? "–"
         case .unread:
@@ -904,6 +901,58 @@ private struct ExtraReading: View {
         case .unread where unread.total > 0: .white
         default: .white.opacity(0.92)
         }
+    }
+}
+
+/// The weather as the Apple Watch's temperature complication: an open ring across today's low to
+/// high, in the colours of the temperatures along it, a dot where it is now, and the temperature
+/// inside.
+private struct WeatherGauge: View {
+    let diameter: CGFloat
+    @ObservedObject private var weather = TodayWeather.shared
+
+    var body: some View {
+        let line = max(2, (diameter / 9 * 2).rounded() / 2)
+        let radius = (diameter - line) / 2
+        ZStack {
+            if let report = weather.report {
+                let low = min(report.days.first?.low ?? report.currentTemp, report.currentTemp)
+                let high = max(report.days.first?.high ?? report.currentTemp, report.currentTemp)
+                let at = high > low ? (report.currentTemp - low) / (high - low) : 0.5
+                // The ring opens at the bottom: from 135° round to 405°, clockwise.
+                let colors = (0...6).map { report.tint(low + (high - low) * Double($0) / 6) }
+                Circle()
+                    .inset(by: line / 2)
+                    .trim(from: 0.125, to: 0.875)
+                    .rotation(.degrees(90))
+                    .stroke(AngularGradient(colors: colors, center: .center, startAngle: .degrees(135), endAngle: .degrees(405)),
+                            style: StrokeStyle(lineWidth: line, lineCap: .round))
+                let angle = Angle.degrees(135 + 270 * at).radians
+                Circle()
+                    .fill(.white)
+                    .overlay(Circle().stroke(.black, lineWidth: 1))
+                    .frame(width: line + 1.5, height: line + 1.5)
+                    .offset(x: radius * cos(angle), y: radius * sin(angle))
+                Text("\(Int(report.currentTemp.rounded()))°")
+                    .font(.system(size: diameter * 0.36, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(.white)
+                    // The degree sign hangs off to the right, as on the watch: the number sits centred.
+                    .offset(x: diameter * 0.05)
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                    .frame(width: diameter - 2 * line)
+                    .rollingDigits(Int(report.currentTemp.rounded()))
+            } else {
+                Circle()
+                    .inset(by: line / 2)
+                    .trim(from: 0.125, to: 0.875)
+                    .rotation(.degrees(90))
+                    .stroke(.white.opacity(0.2), style: StrokeStyle(lineWidth: line, lineCap: .round))
+            }
+        }
+        .frame(width: diameter, height: diameter)
+        .pixelSnapped()
+        .animation(.easeInOut(duration: 0.6), value: weather.report?.currentTemp)
     }
 }
 

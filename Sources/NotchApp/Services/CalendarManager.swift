@@ -9,7 +9,7 @@ final class CalendarManager: ObservableObject {
     @Published private(set) var events: [EKEvent] = []
     /// The first timed event after today (within a week), for Home when today has nothing left.
     @Published private(set) var later: EKEvent?
-    /// Everything in this calendar week, past days too, for Home's week strip.
+    /// Everything in this calendar week and four days either side of today, past days too, for Home's week strip.
     @Published private(set) var week: [EKEvent] = []
     @Published private(set) var status: EKAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
 
@@ -79,8 +79,11 @@ final class CalendarManager: ObservableObject {
             .sorted { ($0.isAllDay ? 0 : 1, $0.startDate) < ($1.isAllDay ? 0 : 1, $1.startDate) }
         let week = store.predicateForEvents(withStart: end, end: cal.date(byAdding: .day, value: 7, to: end)!, calendars: nil)
         later = store.events(matching: week).filter { !$0.isAllDay }.min { $0.startDate < $1.startDate }
+        // The week strip's days: this calendar week, or four days either side of today when it's wide.
         if let days = cal.dateInterval(of: .weekOfYear, for: now) {
-            self.week = store.events(matching: store.predicateForEvents(withStart: days.start, end: days.end, calendars: nil))
+            let from = min(days.start, cal.date(byAdding: .day, value: -4, to: start)!)
+            let to = max(days.end, cal.date(byAdding: .day, value: 5, to: start)!)
+            self.week = store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: nil))
                 .sorted { ($0.isAllDay ? 0 : 1, $0.startDate) < ($1.isAllDay ? 0 : 1, $1.startDate) }
         }
         checkAlerts(now: now)

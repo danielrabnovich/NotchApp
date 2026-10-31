@@ -53,6 +53,14 @@ final class NotificationMirror: ObservableObject {
     private var foreignIDs: Set<String> = []
     /// Live system banners by identifier, for replying, opening and closing them.
     private var banners: [String: AXUIElement] = [:]
+    /// Banners shown in the notch and still up: only while one is does Notification Center's window
+    /// go out of sight (the right-edge pane lives in the same window).
+    private var mirroring: Set<String> = []
+    /// New banners waiting a beat before they count: the pane's items appear a moment before its
+    /// list does, and would otherwise pass for banners (and hide the pane as it opens).
+    private var arriving: [String: Date] = [:]
+    /// The pane was open at the last look: it stays so until its notifications have all gone.
+    private var paneShown = false
     private var launchWatch: Any?
     /// A look once a second as well, in case Notification Center doesn't announce a new banner.
     private var heartbeat: Timer?
@@ -142,8 +150,10 @@ final class NotificationMirror: ObservableObject {
         AXUIElementSetMessagingTimeout(app, 0.25)
         let windows: [AXUIElement] = AXReader.value(app, kAXWindowsAttribute) ?? []
         var live: [String: AXUIElement] = [:]
-        var fresh: [(AXUIElement, Item)] = []
+        var fresh: [Item] = []
         var paneOpen = false
+        var waiting = false
+        let now = Date()
         for window in windows {
             // The pane from the right edge lists notifications in the same window, looking just
             // like banners: they aren't new, and the pane must stay where it is.
@@ -152,15 +162,35 @@ final class NotificationMirror: ObservableObject {
             for banner in Self.banners(in: window) {
                 guard let id: String = AXReader.value(banner, kAXIdentifierAttribute) else { continue }
                 live[id] = banner
-                guard !seen.contains(id) else { continue }
+                guard !seen.contains(id), !pane, !paneShown else { seen.insert(id); continue }
+                guard let first = arriving[id] else { arriving[id] = now; waiting = true; continue }
+                guard now.timeIntervalSince(first) >= 0.12 else { waiting = true; continue }
                 seen.insert(id)
-                guard !pane, let item = Self.read(banner, id: id) else { continue }
-                if accepts(item) { fresh.append((banner, item)) } else { foreignIDs.insert(id) }
+                arriving[id] = nil
+                guard let item = Self.read(banner, id: id) else { continue }
+                if accepts(item) { fresh.append(item) } else { foreignIDs.insert(id) }
             }
         }
         banners = live
+        if paneOpen {
+            // What was waiting belonged to the pane, and banners up now are in it too.
+            seen.formUnion(arriving.keys)
+            arriving = [:]
+            mirroring = []
+            fresh = []
+            waiting = false
+        }
+        paneShown = paneOpen || (paneShown && !live.isEmpty)
         seen.formIntersection(Set(live.keys).union(recent.map(\.id)))
         foreignIDs.formIntersection(live.keys)
+        arriving = arriving.filter { live[$0.key] != nil }
+        mirroring.formUnion(fresh.map(\.id))
+        mirroring.formIntersection(live.keys)
+        if waiting {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.13) {
+                MainActor.assumeIsolated { NotificationMirror.shared.scan() }
+            }
+        }
         // Keep looking while banners are up (more can stack, and they come and go).
         if live.isEmpty {
             poll?.invalidate()
@@ -170,13 +200,13 @@ final class NotificationMirror: ObservableObject {
                 MainActor.assumeIsolated { NotificationMirror.shared.scan() }
             }
         }
-        // Out of sight (again, each look: a new banner can bring the window back), unless one up
-        // isn't ours to show: then the system shows them all.
-        if !live.isEmpty, foreignIDs.isEmpty, !paneOpen {
+        // Out of sight (again, each look: a new banner can bring the window back) while a banner of
+        // ours is up, unless one up isn't ours to show: then the system shows them all.
+        if !mirroring.isEmpty, foreignIDs.isEmpty, !paneShown {
             windows.forEach(Self.hide)
             if !fresh.isEmpty { DebugHooks.log("NotificationMirror: hid \(fresh.count) at \(Date().timeIntervalSince1970)") }
         }
-        for (_, item) in fresh { show(item) }
+        for item in fresh { show(item) }
     }
 
     private func accepts(_ item: Item) -> Bool {
@@ -210,7 +240,7 @@ final class NotificationMirror: ObservableObject {
 
     /// Notification Center's pane is open: its notifications sit in a list (banners don't).
     private static func isPane(_ element: AXUIElement, depth: Int = 0) -> Bool {
-        guard depth < 6 else { return false }
+        guard depth < 8 else { return false }
         if (AXReader.value(element, kAXIdentifierAttribute) as String?) == "AXNotificationListItems" { return true }
         let children: [AXUIElement] = AXReader.value(element, kAXChildrenAttribute) ?? []
         return children.contains { isPane($0, depth: depth + 1) }
