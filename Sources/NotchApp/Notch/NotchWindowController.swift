@@ -40,7 +40,10 @@ final class NotchWindowController {
         panel.orderFrontRegardless()
 
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            MainActor.assumeIsolated { self?.handleScroll(event) ?? event }
+            // Local monitors run on the main thread; NSEvent just isn't marked Sendable.
+            nonisolated(unsafe) let event = event
+            let swallow = MainActor.assumeIsolated { self?.swallowsScroll(event) ?? false }
+            return swallow ? nil : event
         }
 
         vm.takeKeyFocus = { [weak self] in
@@ -292,6 +295,9 @@ final class NotchWindowController {
         var lastTime: TimeInterval = 0
         var swallowMomentum = false
     }
+
+    /// The scroll is the pager's (a swipe between tabs, or its momentum) rather than the views'.
+    private func swallowsScroll(_ e: NSEvent) -> Bool { handleScroll(e) == nil }
 
     private func handleScroll(_ e: NSEvent) -> NSEvent? {
         guard e.window === panel, viewModel.isOpen, !viewModel.isDragActive, viewModel.overlay == nil else { return e }

@@ -95,9 +95,11 @@ final class ControlsService: ObservableObject {
         NSColorSampler().show { color in
             guard let color else { return }
             let hex = color.hexString
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(hex, forType: .string)
-            ActivityCenter.shared.show(.notice(title: "Copied \(hex)", detail: "Color picker", icon: "eyedropper"), for: 2.5)
+            Task { @MainActor in
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(hex, forType: .string)
+                ActivityCenter.shared.show(.notice(title: "Copied \(hex)", detail: "Color picker", icon: "eyedropper"), for: 2.5)
+            }
         }
     }
 

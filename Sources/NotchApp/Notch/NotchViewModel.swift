@@ -181,6 +181,9 @@ final class NotchViewModel: ObservableObject {
     var openSize: CGSize {
         let assistant = AssistantStore.shared
         let onAsk = tab == .ask && overlay == nil && !isDragActive && !mirror
+        if onAsk, assistant.current == nil, assistant.actionsOpen || assistant.pickingEmoji {
+            return CGSize(width: openWidth, height: notchSize.height + 258)
+        }
         if onAsk, assistant.current == nil, assistant.suggesting {
             // Fit the results-as-you-type list: content insets (8 + 16), the compact bar with its
             // glow room (7 + 38), the gap (6), the list's padding (2 × 5) and its rows.

@@ -716,7 +716,10 @@ struct TabKeyboard: ViewModifier {
             .onAppear {
                 guard monitor == nil else { return }
                 monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
-                    MainActor.assumeIsolated { route(event) ? nil : event }
+                    // Local monitors run on the main thread; NSEvent just isn't marked Sendable.
+                    nonisolated(unsafe) let event = event
+                    let handled = MainActor.assumeIsolated { route(event) }
+                    return handled ? nil : event
                 }
             }
             .onDisappear {

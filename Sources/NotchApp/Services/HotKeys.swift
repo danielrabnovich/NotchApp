@@ -96,6 +96,7 @@ final class HotKeys: ObservableObject {
         case windowTopLeft, windowTopRight, windowBottomLeft, windowBottomRight
         case chat
         case askArea
+        case emoji
 
         /// Center and the thirds and quarters start off: their keys (Rectangle's) are tabs' with ⌃⌥.
         var onByDefault: Bool {
@@ -168,6 +169,7 @@ final class HotKeys: ObservableObject {
             case .windowBottomRight: "K"
             case .chat: "N"
             case .askArea: "Z"
+            case .emoji: "E"
             }
         }
 
@@ -192,6 +194,7 @@ final class HotKeys: ObservableObject {
             case .askScreen: "Ask about what's on screen"
             case .chat: "New chat"
             case .askArea: "Ask about an area of the screen"
+            case .emoji: "Emoji & symbols"
             case .windowLeft: "Window: left half"
             case .windowRight: "Window: right half"
             case .windowMaximize: "Window: maximize"
@@ -256,6 +259,7 @@ final class HotKeys: ObservableObject {
             case .windowBottomRight: UInt32(kVK_ANSI_K)
             case .chat: UInt32(kVK_ANSI_N)
             case .askArea: UInt32(kVK_ANSI_Z)
+            case .emoji: UInt32(kVK_ANSI_E)
             }
         }
     }
@@ -444,6 +448,10 @@ final class HotKeys: ObservableObject {
             return
         case .chat:
             ChatWindow.shared.toggleNewChat()
+            return
+        case .emoji:
+            guard vm.tabs.contains(.ask) else { return }
+            EmojiPicker.shared.open()
             return
         case .ramble:
             let ramble = RambleStore.shared

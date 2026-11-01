@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import NotchKit
 
 /// The menus of the app in front, searchable from the command bar ("export pdf" → File › Export
 /// as PDF…). Read through Accessibility in the background as the notch opens, so typing finds
@@ -16,7 +17,20 @@ final class MenuSearch {
         let element: AXUIElement
         /// Can be chosen right now (disabled ones are only read for "do it in this app").
         var enabled = true
-        var searchText: String { (path + [title]).joined(separator: " ").lowercased() }
+        /// The title and its menus, lowercased, for matching typed words.
+        let searchText: String
+        /// The title, split up for close matches ("expdf" → Export as PDF…).
+        let titleMatch: FuzzyMatch.Name
+
+        init(title: String, path: [String], shortcut: String?, element: AXUIElement, enabled: Bool = true) {
+            self.title = title
+            self.path = path
+            self.shortcut = shortcut
+            self.element = element
+            self.enabled = enabled
+            searchText = (path + [title]).joined(separator: " ").lowercased()
+            titleMatch = FuzzyMatch.Name(title)
+        }
     }
 
     /// Wraps a menu item for a command (commands compare by value; this compares by identity).
@@ -59,13 +73,23 @@ final class MenuSearch {
     }
 
     /// Menu items for what's typed: every word somewhere in the item or its menus, items whose
-    /// own title matches first.
+    /// own title matches first; then, while there's room, titles it fits closely ("expdf").
     func matches(_ query: String, limit: Int) -> [Ref] {
         guard let cache else { return [] }
         let words = query.lowercased().split(separator: " ").map(String.init).filter { !$0.isEmpty }
         guard !words.isEmpty else { return [] }
-        let hits = cache.items.filter { item in words.allSatisfy { item.searchText.contains($0) } }
-        let ranked = hits.sorted { a, b in score(a, words) > score(b, words) }
+        var hit = Set<Int>()
+        for (i, item) in cache.items.enumerated() where words.allSatisfy(item.searchText.contains) { hit.insert(i) }
+        var ranked = hit.map { cache.items[$0] }.sorted { a, b in score(a, words) > score(b, words) }
+        // Only when the words left room: scoring every item (a couple of thousand) on each
+        // keystroke would be wasted on a query that already matched.
+        if ranked.count < limit, query.count >= 3 {
+            ranked += cache.items.enumerated()
+                .compactMap { i, item in hit.contains(i) ? nil : (item, FuzzyMatch.score(item.titleMatch, query)) }
+                .filter { $0.1 >= 65 }
+                .sorted { $0.1 > $1.1 }
+                .map(\.0)
+        }
         return ranked.prefix(limit).map { Ref($0, appName: cache.appName) }
     }
 

@@ -11,7 +11,7 @@ final class SoundAlerts {
     static let shared = SoundAlerts()
 
     /// The classifier's names for the sounds worth a Banner, and how to say them.
-    private static let watched: [String: (title: String, icon: String)] = [
+    nonisolated private static let watched: [String: (title: String, icon: String)] = [
         "door_bell": ("Doorbell", "bell.fill"), "knock": ("Someone's knocking", "door.left.hand.closed"),
         // Most doorbells are chimes, which the classifier calls a bell (sometimes a telephone).
         "bell": ("A bell or chime", "bell.fill"),

@@ -147,6 +147,9 @@ enum CommandParser {
             return templates.filter { $0.title.lowercased().contains(rest) || ($0.subtitle ?? "").lowercased().contains(rest) }
         }
 
+        // "emoji": the picker, which is ":" and a name.
+        if ["emoji", "emojis", "emoji picker", "emoticons", "symbols", "special characters"].contains(lower) { return [emojiTemplate] }
+
         if let c = tasks(q, lower) ?? note(q, lower) ?? complete(q, lower) ?? quit(lower) ?? event(q, lower) { return c }
         if let c = port(lower) ?? uninstall(q, lower) ?? clip(q, lower) ?? media(q, lower) { return c }
         if let c = vpn(lower) { return c }
@@ -675,6 +678,9 @@ enum CommandParser {
 
     // MARK: - "/" list
 
+    private static let emojiTemplate = Command(action: .template(":"), title: ":fire", subtitle: "Emoji & symbols, typed where you were · ⇥ skin tone",
+                                               icon: "face.smiling", verb: "Use")
+
     private static func template(for prefix: String) -> Command {
         templates.first { if case .template(prefix) = $0.action { true } else { false } }!
     }
@@ -699,6 +705,7 @@ enum CommandParser {
         Command(action: .template("format json"), title: "format json", subtitle: "Also: base64, url decode, uppercase, plain text, sort lines… on the clipboard",
                 icon: "wand.and.rays", verb: "Use"),
         Command(action: .template("clip "), title: "clip …", subtitle: "Find something you copied earlier", icon: "doc.on.clipboard", verb: "Use"),
+        emojiTemplate,
         Command(action: .template("keep awake "), title: "keep awake 1h", subtitle: "Also: volume 40, brightness, dark mode, wifi, lock, screenshot",
                 icon: "switch.2", verb: "Use"),
     ] + PaletteCommands.templates
@@ -1171,7 +1178,8 @@ enum CommandPlanner {
             case "color_picker":
                 commands.append(Command(action: .pickColor, title: "Pick a colour from the screen", icon: "eyedropper", verb: "Pick"))
             case "open_app":
-                guard let name = a["name"] as? String, let hit = AppIndex.shared.search(name, limit: 1).first else { continue }
+                // A close match only: letters in order alone would open some other app.
+                guard let name = a["name"] as? String, let hit = AppIndex.shared.search(name, limit: 1).first, hit.score >= 60 else { continue }
                 commands.append(Command(action: .openApp(hit.app.url), title: "Open \(hit.app.name)", icon: "app", verb: "Open"))
             case "quit_app":
                 guard let name = a["name"] as? String else { continue }

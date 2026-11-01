@@ -449,11 +449,13 @@ enum FileFinder {
         return found.sorted { $0.score > $1.score }
     }
 
-    private static func mdfind(_ query: String, limit: Int) -> [URL] {
+    /// Spotlight's matches for a query, up to `limit` that pass `keep`. `scope` nil: the whole Mac.
+    static func mdfind(_ query: String, limit: Int, scope: String? = NSHomeDirectory(),
+                       keep: (String) -> Bool = isInteresting) -> [URL] {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
         // One scope is reliably fast; many -onlyin scopes can stall mdfind. Junk paths are filtered below.
-        p.arguments = ["-onlyin", NSHomeDirectory(), query]
+        p.arguments = (scope.map { ["-onlyin", $0] } ?? []) + [query]
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = FileHandle.nullDevice
@@ -472,7 +474,7 @@ enum FileFinder {
             while let nl = buffer.firstIndex(of: UInt8(ascii: "\n")), urls.count < limit {
                 let path = String(decoding: buffer[buffer.startIndex..<nl], as: UTF8.self)
                 buffer.removeSubrange(buffer.startIndex...nl)
-                if isInteresting(path) { urls.append(URL(fileURLWithPath: path)) }
+                if keep(path) { urls.append(URL(fileURLWithPath: path)) }
             }
         }
         if p.isRunning { p.terminate() }

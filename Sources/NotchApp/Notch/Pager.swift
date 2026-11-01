@@ -552,6 +552,10 @@ extension EnvironmentValues {
 
 /// The open notch's pages, hosted in AppKit so Core Animation can move them.
 struct PagerHost: NSViewRepresentable {
+    /// How far each page's slot reaches past the page on either side (the host is laid out that
+    /// much wider, and the page inset by it again).
+    static let bleed: CGFloat = 10
+
     @ObservedObject var viewModel: NotchViewModel
     let tabs: [NotchTab]
     let index: Int
@@ -562,6 +566,9 @@ struct PagerHost: NSViewRepresentable {
         let page = self.page
         let view = PagerContainerView(pager: pager) { tab in
             AnyView(page(tab)
+                // Room beside the page inside its clipping slot, so what draws a little past the
+                // page's edge (the search bar's glow and rim) isn't cut off there.
+                .padding(.horizontal, PagerHost.bleed)
                 // Pages have their own hosting views, so the notch's menu is added to each, with
                 // the page's settings on top. Things with a menu of their own (a file, a clip) keep it.
                 .contextMenu { NotchMenu(page: tab) }

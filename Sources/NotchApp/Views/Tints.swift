@@ -19,6 +19,23 @@ extension AssistantStore.Route {
         case .app: .teal
         }
     }
+
+    /// Where it's looking, as a symbol: in the bar beside its answer, and while it searches.
+    var icon: String {
+        switch self {
+        case .files: "doc.text.magnifyingglass"
+        case .web: "globe"
+        case .weather: "cloud.sun"
+        case .actions: "sparkles"
+        case .calendar: "calendar"
+        case .notes: "note.text"
+        case .screen: "macwindow"
+        case .help: "questionmark.circle"
+        case .recall: "clock.arrow.circlepath"
+        case .write: "character.bubble"
+        case .app: "wand.and.stars"
+        }
+    }
 }
 
 extension Command {

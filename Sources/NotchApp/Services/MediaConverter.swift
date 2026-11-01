@@ -212,6 +212,8 @@ final class MediaConverter: ObservableObject {
     private var processes: [UUID: Process] = [:]
     /// Outputs being written now: two at once (photo.heic and photo.tiff to WebP) mustn't pick the same free name.
     private var reserved: Set<String> = []
+    /// Set while quitting: nothing new starts as the running ones end.
+    private var stopping = false
 
     private init() {}
 
@@ -334,13 +336,19 @@ final class MediaConverter: ObservableObject {
         process.terminate()
     }
 
-    /// Quitting: everything running stops, and what it was writing is deleted.
-    func stopAll() {
+    /// Quitting: everything running stops, and what it was writing is deleted. `done` runs once
+    /// they've exited (two seconds at most), off the main thread's back: it isn't held waiting.
+    func stopAll(then done: @escaping @MainActor @Sendable () -> Void) {
+        stopping = true
         let running = Array(processes.values)
+        let written = reserved
         running.forEach { $0.terminate() }
-        let deadline = Date().addingTimeInterval(2)
-        while running.contains(where: \.isRunning), Date() < deadline { usleep(20_000) }
-        for path in reserved { try? FileManager.default.removeItem(atPath: path) }
+        Task.detached(priority: .userInitiated) {
+            let deadline = Date().addingTimeInterval(2)
+            while running.contains(where: \.isRunning), Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+            for path in written { try? FileManager.default.removeItem(atPath: path) }
+            await MainActor.run(body: done)
+        }
     }
 
     /// Stops a batch: what's waiting is dropped, what's running is stopped.
@@ -369,6 +377,8 @@ final class MediaConverter: ObservableObject {
 
     /// ffmpeg already uses every core; images are quick.
     private func pump() {
+        // Quitting: what's queued stays queued, and is dropped with the app.
+        guard !stopping else { return }
         let running = jobs.filter { $0.state == .running }
         let ffmpegRunning = running.filter(\.operation.usesFFmpeg).count
         let otherRunning = running.count - ffmpegRunning

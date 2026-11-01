@@ -1097,7 +1097,6 @@ private struct VPNRow: View {
                 }
             }
             if c.isUp {
-                let extra = vpn.extras[c.id]
                 FlowDetails(items: details(c))
                 if let warning = vpn.dnsWarning(for: c) {
                     Label(warning, systemImage: "exclamationmark.triangle.fill")

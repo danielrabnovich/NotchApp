@@ -1,4 +1,5 @@
 import AppKit
+import NotchKit
 import Vision
 
 /// QR codes on screen: every display is looked at once (as a screenshot, never saved), and the

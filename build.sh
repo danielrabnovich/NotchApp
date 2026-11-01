@@ -35,6 +35,8 @@ cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 cp .build/release/notch "$APP/Contents/MacOS/notch"
 cp build/MediaAdapter.dylib MediaAdapter/adapter.pl "$APP/Contents/Resources/"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
+# The emoji picker's list (scripts/build-emoji.py makes it).
+cp Resources/Emoji.json "$APP/Contents/Resources/"
 # Packages' resources (FluidAudio's): their code looks for them in the app's Resources.
 for b in .build/release/*.bundle; do [ -d "$b" ] && cp -R "$b" "$APP/Contents/Resources/"; done
 

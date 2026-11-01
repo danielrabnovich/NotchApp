@@ -497,16 +497,27 @@ final class AgentUsageStore: ObservableObject {
         return LimitWindow(minutes: int(w["window_minutes"]), usedPercent: used, resets: resets)
     }
 
+    /// OpenCode 1 kept replies in `message`; 2 moved them to `session_message` (where a compaction,
+    /// which also costs tokens, is a row of its own) and left the old table empty. Either is read.
+    /// Reasoning is counted apart from output there, and billed as output.
     nonisolated private static func scanOpenCode() -> Buckets {
         let path = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share/opencode/opencode.db").path
-        var buckets: Buckets = [:]
-        for r in AgentMonitor.query(path, """
-            select json_extract(data, '$.modelID'), json_extract(data, '$.tokens.input'), json_extract(data, '$.tokens.output'),
-                   json_extract(data, '$.tokens.cache.read'), json_extract(data, '$.tokens.cache.write'), time_created
+        let tokens = """
+            json_extract(data, '$.tokens.input'), json_extract(data, '$.tokens.output'), json_extract(data, '$.tokens.reasoning'),
+            json_extract(data, '$.tokens.cache.read'), json_extract(data, '$.tokens.cache.write'), time_created
+            """
+        let rows = AgentMonitor.query(path, """
+            select json_extract(data, '$.modelID'), \(tokens)
             from message where json_extract(data, '$.role') = 'assistant'
-            """) {
-            add(TokenCounts(input: r[1].int, output: r[2].int, cacheRead: r[3].int, cacheWrite: r[4].int, requests: 1),
-                model: r[0].text ?? "unknown", at: Date(timeIntervalSince1970: Double(r[5].int) / 1000), to: &buckets)
+            """) + AgentMonitor.query(path, """
+            select coalesce(json_extract(data, '$.model.id'),
+                            (select json_extract(s.model, '$.id') from session_v2 s where s.id = session_id)), \(tokens)
+            from session_message where json_extract(data, '$.tokens') is not null
+            """)
+        var buckets: Buckets = [:]
+        for r in rows {
+            add(TokenCounts(input: r[1].int, output: r[2].int + r[3].int, cacheRead: r[4].int, cacheWrite: r[5].int, requests: 1),
+                model: r[0].text ?? "unknown", at: Date(timeIntervalSince1970: Double(r[6].int) / 1000), to: &buckets)
         }
         return buckets
     }

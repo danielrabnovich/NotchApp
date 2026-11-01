@@ -344,7 +344,7 @@ enum DebugHooks {
             Task.detached {
                 guard let reader = EnergyReader() else { return }
                 _ = reader.sampleAll()
-                Thread.sleep(forTimeInterval: Double(parts[safe: 1] ?? "") ?? 1)
+                try? await Task.sleep(for: .seconds(Double(parts[safe: 1] ?? "") ?? 1))
                 let all = reader.sampleAll().sorted { $0.value > $1.value }
                 log("ENERGY " + all.map { String(format: "%@=%.3fW", $0.key, $0.value) }.joined(separator: " | "))
             }
@@ -560,7 +560,7 @@ enum DebugHooks {
         case "volume": ActivityCenter.shared.show(.volume(level: Float(parts[safe: 1] ?? "0.6") ?? 0.6, muted: false), for: 5)
         case "brightness": ActivityCenter.shared.show(.brightness(level: Float(parts[safe: 1] ?? "0.4") ?? 0.4), for: 5)
         case "charging": ActivityCenter.shared.show(.charging(level: BatteryMonitor.shared.level), for: 5)
-        case "meeting": ActivityCenter.shared.show(.meeting(title: "Design review", minutes: 5, color: .systemOrange), for: 6)
+        case "meetingflash": ActivityCenter.shared.show(.meeting(title: "Design review", minutes: 5, color: .systemOrange), for: 6)
         case "screenshot": ActivityCenter.shared.show(.screenshot(count: 1), for: 5)
         case "key": // key <keyCode> [cmd|shift|ctrl|opt…] [chars]: a key press posted to this notch's own window only
             guard let code = UInt16(parts[safe: 1] ?? ""), let window = c.panelContentView?.window else { break }

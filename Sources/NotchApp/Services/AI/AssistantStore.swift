@@ -276,6 +276,10 @@ final class AssistantStore: ObservableObject {
     @Published var suggesting = false
     /// How many rows the results-as-you-type list shows (placeholders included), so the notch fits it.
     @Published var suggestionRows = 0
+    /// The ⌘K list is open over the suggestions: the notch takes its full height for it.
+    @Published var actionsOpen = false
+    /// The emoji picker (":" in the bar) is showing: it takes the full height too.
+    @Published var pickingEmoji = false
     @Published private(set) var status: OllamaClient.Status = .unknown
     @Published private(set) var pull: OllamaClient.PullProgress?
     /// Download speed in bytes per second, smoothed.
@@ -442,7 +446,7 @@ final class AssistantStore: ObservableObject {
         let (appName, explicit) = AppIndex.stripLaunchPrefix(trimmed)
         if explicit, let app = AppIndex.shared.search(appName, limit: 1).first, app.score >= 45 {
             NSWorkspace.shared.openApplication(at: app.app.url, configuration: .init())
-            AppIndex.shared.noteOpened(app.app.url)
+            AppIndex.shared.noteOpened(app.app.url, query: appName)
             return
         }
         // Exact commands ("timer 10m", "volume 40", "event lunch friday 1pm") run instantly, no model needed.
@@ -495,7 +499,7 @@ final class AssistantStore: ObservableObject {
         let (appName, explicit) = AppIndex.stripLaunchPrefix(trimmed)
         if explicit, let app = AppIndex.shared.search(appName, limit: 1).first, app.score >= 45 {
             NSWorkspace.shared.openApplication(at: app.app.url, configuration: .init())
-            AppIndex.shared.noteOpened(app.app.url)
+            AppIndex.shared.noteOpened(app.app.url, query: appName)
             job.ranTitle = "Opened \(app.app.name)"
         } else if instant.count == 1, instant[0].runsWithoutReview {
             CommandCenter.shared.run(instant)

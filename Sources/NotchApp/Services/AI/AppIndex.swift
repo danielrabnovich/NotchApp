@@ -1,4 +1,5 @@
 import AppKit
+import NotchKit
 
 /// Installed apps, for "open spotify" and launching apps straight from the search bar.
 final class AppIndex: @unchecked Sendable {
@@ -9,8 +10,19 @@ final class AppIndex: @unchecked Sendable {
         let name: String
         let url: URL
         /// Other names to match, e.g. VS Code's bundle calls itself just "Code".
-        var aliases: [String] = []
+        var aliases: [String] = [] {
+            didSet { matchNames = ([name] + aliases).map(FuzzyMatch.Name.init) }
+        }
+        /// The name and aliases, split up for matching.
+        private(set) var matchNames: [FuzzyMatch.Name]
         var id: String { url.path }
+
+        init(name: String, url: URL, aliases: [String] = []) {
+            self.name = name
+            self.url = url
+            self.aliases = aliases
+            matchNames = ([name] + aliases).map(FuzzyMatch.Name.init)
+        }
     }
 
     private let lock = NSLock()
@@ -35,10 +47,14 @@ final class AppIndex: @unchecked Sendable {
         if stale { loadedAt = Date() }
         lock.unlock()
         guard stale else { return }
-        DispatchQueue.global(qos: .utility).async { [self] in
-            let found = Self.scan()
-            lock.lock(); apps = found; lock.unlock()
-        }
+        DispatchQueue.global(qos: .utility).async { [self] in store(Self.scan()) }
+    }
+
+    /// A scan's result. The first lands after the bar may already be in use: what's typed is
+    /// matched again, so apps don't stay missing until the next keystroke.
+    private func store(_ found: [App]) {
+        lock.lock(); let first = apps.isEmpty; apps = found; lock.unlock()
+        if first { Task { @MainActor in SearchSuggestions.shared.refresh() } }
     }
 
     /// Rescans whenever an app folder changes (an app installed, moved or removed), and when an
@@ -74,21 +90,23 @@ final class AppIndex: @unchecked Sendable {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [self] in
             lock.lock(); rescanPending = false; loadedAt = Date(); lock.unlock()
             let found = Self.scan()
-            lock.lock(); apps = found; lock.unlock()
+            store(found)
             DebugHooks.log("AppIndex: rescanned, \(found.count) apps")
         }
     }
 
-    /// Best matches, strongest first, with a 0–100 score.
+    /// Best matches, strongest first, with a 0–100 score (`FuzzyMatch`'s tiers).
     func search(_ query: String, limit: Int = 3) -> [(app: App, score: Int)] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let q = query.trimmingCharacters(in: .whitespaces)
         guard q.count >= 2 else { return [] }
         lock.lock(); let all = apps; lock.unlock()
         let usage = usageBoosts()
+        let picks = pickBoosts(for: q)
         return all.compactMap { app -> (App, Int)? in
-            let score = ([app.name] + app.aliases).map { Self.score($0.lowercased(), q) }.max() ?? 0
-            // What's opened from here often and lately ranks higher among its matches.
-            return score > 0 ? (app, min(100, score + (usage[app.id] ?? 0))) : nil
+            let score = app.matchNames.map { FuzzyMatch.score($0, q) }.max() ?? 0
+            // What's opened from here often and lately ranks higher among its matches, and what
+            // was picked for this very query higher still.
+            return score > 0 ? (app, min(100, score + (usage[app.id] ?? 0) + (picks[app.id] ?? 0))) : nil
         }
         .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.name.count < $1.0.name.count }
         .prefix(limit)
@@ -101,8 +119,10 @@ final class AppIndex: @unchecked Sendable {
     private static let usageKey = "appIndex.usage"
     private var usage: [String: [Double]]?
 
-    /// An app was opened from search: it'll rank a little higher next time.
-    func noteOpened(_ url: URL) {
+    /// An app was opened from search: it'll rank a little higher next time, and first for
+    /// `query` (what was typed to find it).
+    func noteOpened(_ url: URL, query: String? = nil) {
+        if let query { notePick(url, query: query) }
         lock.lock(); defer { lock.unlock() }
         var all = usage ?? (UserDefaults.standard.dictionary(forKey: Self.usageKey) as? [String: [Double]] ?? [:])
         let old = all[url.path] ?? [0, 0]
@@ -131,21 +151,55 @@ final class AppIndex: @unchecked Sendable {
         }
     }
 
-    private static func score(_ name: String, _ q: String) -> Int {
-        if name == q { return 100 }
-        if name.hasPrefix(q) { return 85 }
-        let words = name.split(whereSeparator: { $0 == " " || $0 == "-" || $0 == "." })
-        if words.contains(where: { $0.hasPrefix(q) }) { return 70 }
-        let initials = String(words.compactMap(\.first))
-        if q.count >= 2, initials.hasPrefix(q) { return 60 }
-        if q.count >= 3, name.contains(q) { return 45 }
-        // Letters in order ("vsc" → Visual Studio Code).
-        if q.count >= 3 {
-            var it = name.makeIterator()
-            if q.allSatisfy({ c in while let n = it.next() { if n == c { return true } }; return false }) { return 25 }
-        }
-        return 0
+    // MARK: - What gets picked for what's typed
+
+    /// The app last opened for each query ("lm" → LM Studio), so it comes first for that query
+    /// even when another name fits as well. Kept in defaults.
+    private struct Pick: Codable {
+        var path: String
+        var date: Date
     }
+    private static let picksKey = "appIndex.picks"
+    private var picks: [String: Pick]?
+
+    private static func pickKey(_ query: String) -> String {
+        query.trimmingCharacters(in: .whitespaces).lowercased()
+    }
+
+    private func loadedPicks() -> [String: Pick] {
+        if let picks { return picks }
+        let stored = UserDefaults.standard.data(forKey: Self.picksKey).flatMap { try? JSONDecoder().decode([String: Pick].self, from: $0) }
+        picks = stored ?? [:]
+        return picks ?? [:]
+    }
+
+    private func notePick(_ url: URL, query: String) {
+        let key = Self.pickKey(query)
+        guard key.count >= 2 else { return }
+        lock.lock(); defer { lock.unlock() }
+        var all = loadedPicks()
+        all[key] = Pick(path: url.path, date: Date())
+        // Only the 300 most recent are kept.
+        if all.count > 300 {
+            for old in all.sorted(by: { $0.value.date < $1.value.date }).prefix(all.count - 300).map(\.key) { all[old] = nil }
+        }
+        picks = all
+        if let data = try? JSONEncoder().encode(all) { UserDefaults.standard.set(data, forKey: Self.picksKey) }
+    }
+
+    /// 25 points for the app picked for exactly this query, enough to lead (two initials become a
+    /// strong match), and 10 for one picked for a query this starts ("lm" on the way to "lms").
+    private func pickBoosts(for query: String) -> [String: Int] {
+        let key = Self.pickKey(query)
+        lock.lock(); let all = loadedPicks(); lock.unlock()
+        var out: [String: Int] = [:]
+        for (typed, pick) in all where typed.hasPrefix(key) {
+            out[pick.path] = max(out[pick.path] ?? 0, typed == key ? 25 : 10)
+        }
+        return out
+    }
+
+    // MARK: - Finding apps
 
     private static var roots: [String] {
         ["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities",
@@ -185,10 +239,24 @@ final class AppIndex: @unchecked Sendable {
                 result.append(App(name: name, url: url, aliases: Array(Set(aliases))))
             }
         }
-        // System Settings lives outside /Applications on recent macOS.
-        let settings = URL(fileURLWithPath: "/System/Applications/System Settings.app")
-        if fm.fileExists(atPath: settings.path), seen.insert("system settings").inserted {
-            result.append(App(name: "System Settings", url: settings))
+        // Apps elsewhere that have been opened (Steam's games, one run from Downloads), as Spotlight
+        // knows them: build products, copies in the Trash and apps inside apps aside.
+        let skip = ["/DerivedData/", "/build/", "/.build/", "/.Trash/", "/Caches/", "/RollbackBackups/", ".app/"]
+        let opened = FileFinder.mdfind("kMDItemContentType == 'com.apple.application-bundle' && kMDItemLastUsedDate == *",
+                                       limit: 300, scope: nil) { path in
+            !path.hasPrefix("/System/") && !skip.contains { path.contains($0) }
+        }
+        for url in opened {
+            let name = url.deletingPathExtension().lastPathComponent
+            guard Bundle(url: url)?.infoDictionary?["LSBackgroundOnly"] as? Bool != true,
+                  seen.insert(name.lowercased()).inserted else { continue }
+            result.append(App(name: name, url: url))
+        }
+        // System Settings lives outside /Applications on recent macOS, and Finder in CoreServices.
+        for (name, path) in [("System Settings", "/System/Applications/System Settings.app"),
+                             ("Finder", "/System/Library/CoreServices/Finder.app")]
+        where fm.fileExists(atPath: path) && seen.insert(name.lowercased()).inserted {
+            result.append(App(name: name, url: URL(fileURLWithPath: path)))
         }
         return result
     }

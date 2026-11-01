@@ -74,6 +74,11 @@ final class NotchPanel: NSPanel {
             }
             return true
         }
+        // ⌘K and the shortcuts of what's highlighted in Search (⌘⇧C copies its path…).
+        let key = event.charactersIgnoringModifiers ?? ""
+        if MainActor.assumeIsolated({ EmojiPicker.shared.handle(key: key, modifiers: flags) || ActionPanel.shared.handle(key: key, modifiers: flags) }) {
+            return true
+        }
         // Only the modifiers people hold (digits can arrive marked as from the keypad).
         // ⌘1…⌘5 run the actions under the empty bar; with ⌥, first add instructions to it.
         let held = flags.intersection([.command, .option, .control, .shift])

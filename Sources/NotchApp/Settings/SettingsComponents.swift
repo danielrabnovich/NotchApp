@@ -1,3 +1,4 @@
+import NotchKit
 import SwiftUI
 
 /// A settings page: a header with the pane's icon, title and summary, then grouped sections.
@@ -327,7 +328,7 @@ extension SettingsPane {
 
     func matches(_ q: String) -> Bool {
         title.lowercased().contains(q) || summary.lowercased().contains(q) || rawValue.lowercased().contains(q)
-            || keywords.contains { $0.contains(q) }
+            || keywords.contains { $0.contains(q) } || FuzzyMatch.score(title, q) >= 60
     }
 
     /// Why a search matched, when it wasn't the title ("vpn, proton").

@@ -113,14 +113,21 @@ struct DuoGlyph: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: arrived)
     }
 
+    private func wifi(_ info: NetworkMonitor.Info, size: CGFloat) -> some View {
+        Image(systemName: "wifi", variableValue: info.signalQuality.map(Self.bars) ?? 1)
+            .font(.system(size: size, weight: .bold))
+            .foregroundStyle(.white.opacity(0.92))
+    }
+
     @ViewBuilder private var connection: some View {
         let info = network.info
         let size = diameter * 0.42
         switch info.kind {
-        case .wifi, .vpn where info.rssi != nil:
-            Image(systemName: "wifi", variableValue: info.signalQuality.map(Self.bars) ?? 1)
-                .font(.system(size: size, weight: .bold))
-                .foregroundStyle(.white.opacity(0.92))
+        case .wifi:
+            wifi(info, size: size)
+        // A VPN over Wi-Fi shows the Wi-Fi's bars.
+        case .vpn where info.rssi != nil:
+            wifi(info, size: size)
         case .ethernet:
             Image(systemName: "cable.connector.horizontal")
                 .font(.system(size: size * 0.95, weight: .semibold))

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// A Search answer opened as a chat (see `ChatStore`): a small glass window under the notch that

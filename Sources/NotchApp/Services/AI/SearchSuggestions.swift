@@ -123,8 +123,9 @@ final class SearchSuggestions: ObservableObject {
         let shortcutHits = appQuery.count >= 3 ? shortcuts.matches(appQuery, limit: 2) : []
         let leading = shortcutHits.filter { $0.name.lowercased().hasPrefix(appQuery.lowercased()) }
         head += leading.map { .command(shortcuts.command($0, context: AppActions.shared.context)) }
-        // A strong app match goes first; otherwise the full search does.
-        let strong = apps.first.map { explicit || ($0.score >= 85 && !q.contains(" ")) } ?? false
+        // A strong app match (its name's start, or its words' starts: "lms", "vsc") goes first;
+        // otherwise the full search does.
+        let strong = apps.first.map { explicit || ($0.score >= 80 && !q.contains(" ")) } ?? false
         if strong, let top = apps.first { head.append(.app(top.app)) }
         head.append(.search(q))
         head += shortcutHits.filter { !leading.contains($0) }.prefix(1).map { .command(shortcuts.command($0, context: AppActions.shared.context)) }

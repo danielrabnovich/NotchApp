@@ -1,4 +1,5 @@
 import AppKit
+import NotchKit
 import SwiftUI
 
 /// The user's own Shortcuts (Apple's Shortcuts app), run through `/usr/bin/shortcuts`: by name from
@@ -144,14 +145,18 @@ final class ShortcutsApp: ObservableObject {
 
     func shortcut(id: String) -> Shortcut? { all.first { $0.id == id } }
 
-    /// Shortcuts whose name has every typed word, names starting with it first.
+    /// Shortcuts whose name has every typed word, or that it fits closely the way an app name
+    /// would ("resim" → Resize Image), closest first.
     func matches(_ query: String, limit: Int) -> [Shortcut] {
         let q = query.lowercased().trimmingCharacters(in: .whitespaces)
         let words = q.split(separator: " ").map(String.init)
         guard !words.isEmpty else { return Array(all.prefix(limit)) }
-        return all.filter { s in words.allSatisfy(s.name.lowercased().contains) }
-            .sorted { ($0.name.lowercased().hasPrefix(q) ? 0 : 1, $0.name.count) < ($1.name.lowercased().hasPrefix(q) ? 0 : 1, $1.name.count) }
-            .prefix(limit).map { $0 }
+        return all.compactMap { s -> (Shortcut, Int)? in
+            let fuzzy = FuzzyMatch.score(s.name, q)
+            return words.allSatisfy(s.name.lowercased().contains) || fuzzy >= 60 ? (s, fuzzy) : nil
+        }
+        .sorted { ($0.1, -$0.0.name.count) > ($1.1, -$1.0.name.count) }
+        .prefix(limit).map(\.0)
     }
 
     /// The Shortcuts in a folder named after an app ("Safari", "Final Cut Pro"): that app's own actions.

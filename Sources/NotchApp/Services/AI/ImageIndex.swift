@@ -2,7 +2,7 @@ import AppKit
 import Combine
 import ImageIO
 import os
-import Vision
+@preconcurrency import Vision
 
 /// Lets file search find pictures by what's in them. Images in the user's folders are run through
 /// the Mac's built-in Vision models once (what the picture shows, plus any text in it), in the

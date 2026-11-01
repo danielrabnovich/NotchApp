@@ -10,11 +10,8 @@ enum DueDateParser {
               var date = match.date,
               let range = Range(match.range, in: text) else { return (text, nil) }
 
-        let phrase = text[range].lowercased()
         // "by Friday" has no time: treat it as end of the working day instead of noon.
-        let mentionsTime = phrase.contains(where: \.isNumber) && (phrase.contains(":") || phrase.contains("am") || phrase.contains("pm"))
-            || ["noon", "morning", "afternoon", "evening", "tonight", "midnight"].contains { phrase.contains($0) }
-        if !mentionsTime {
+        if !mentionsTime(String(text[range])) {
             date = Calendar.current.date(bySettingHour: 17, minute: 0, second: 0, of: date) ?? date
         }
         // Ignore dates in the past (e.g. "the Oct 2 report").

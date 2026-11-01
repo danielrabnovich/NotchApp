@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import NotchKit
 import SwiftUI
 
 /// A saved prompt to run on selected text ("Fix spelling and grammar", "Summarize").
@@ -64,10 +65,12 @@ final class AICommandStore: ObservableObject {
         let lower = raw.lowercased().trimmingCharacters(in: .whitespaces)
         for prefix in ["ai ", "ai:"] where (lower + " ").hasPrefix(prefix) {
             let rest = String((lower + " ").dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
-            return (rest.isEmpty ? commands : commands.filter { $0.name.lowercased().contains(rest) }, true)
+            return (rest.isEmpty ? commands : commands.filter { $0.name.lowercased().contains(rest) || FuzzyMatch.score($0.name, rest) >= 65 }, true)
         }
         guard lower.count >= 3 else { return ([], false) }
-        return (commands.filter { $0.name.lowercased().hasPrefix(lower) || $0.name.lowercased().contains(" " + lower) }, false)
+        // Its name's start or a word's, or close to it the way an app name would be ("mimp" → Make it more professional).
+        return (commands.filter { $0.name.lowercased().hasPrefix(lower) || $0.name.lowercased().contains(" " + lower)
+            || FuzzyMatch.score($0.name, lower) >= 65 }, false)
     }
 }
 

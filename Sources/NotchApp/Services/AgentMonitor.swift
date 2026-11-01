@@ -279,19 +279,27 @@ final class AgentMonitor: ObservableObject {
         return (cwd, model)
     }
 
-    /// OpenCode keeps sessions in SQLite; a session touched in the last 20 seconds is working.
+    /// OpenCode keeps sessions in SQLite: `session` in version 1, `session_v2` from 2 on (the old
+    /// table stays, empty). Version 2 notes when a session goes busy and idle, or is suspended (quit
+    /// mid-turn): busy counts while it was touched in the last 10 minutes (one OpenCode crashed out of
+    /// never goes idle). Otherwise, or as well, one touched in the last 20 seconds is working.
     nonisolated private static func opencodeSessions() -> [Session] {
         let path = home.appendingPathComponent(".local/share/opencode/opencode.db").path
         let cutoff = Int64((Date().timeIntervalSince1970 - 3600) * 1000)
-        let rows = query(path, """
-            select id, title, directory, model, time_updated from session
-            where parent_id is null and time_archived is null and time_updated > \(cutoff)
-            order by time_updated desc limit 8
-            """)
+        let recent = "parent_id is null and time_archived is null and time_updated > \(cutoff) order by time_updated desc limit 8"
+        let rows = query(path, "select id, title, directory, model, time_updated, 0 from session where \(recent)")
+            // The model is {"id", "providerID"} here.
+            + query(path, """
+                select id, title, directory, coalesce(json_extract(model, '$.id'), model), time_updated,
+                       time_busy is not null and time_busy > coalesce(time_idle, 0) and time_busy > coalesce(time_suspended, 0)
+                       and time_updated > \(cutoff + 3_000_000)
+                from session_v2 where \(recent)
+                """)
         return rows.map { r in
             let updated = Date(timeIntervalSince1970: Double(r[4].int) / 1000)
+            let busy = r[5].int == 1 || Date().timeIntervalSince(updated) < 20
             return Session(id: "opencode:\(r[0].text ?? "")", tool: .opencode, title: r[1].text ?? "OpenCode", directory: r[2].text,
-                           state: Date().timeIntervalSince(updated) < 20 ? .working : .idle, updated: updated, model: r[3].text)
+                           state: busy ? .working : .idle, updated: updated, model: r[3].text)
         }
     }
 

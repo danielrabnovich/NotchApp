@@ -89,3 +89,15 @@ struct Motion {
         reduced ? .opacity : .opacity.combined(with: .move(edge: edge))
     }
 }
+
+extension View {
+    /// Bounces twice, then holds still. Repeating a bounce needs macOS 15 (on 14 it isn't an
+    /// indefinite effect, and using it as one breaks at runtime); 14 pulses instead.
+    @ViewBuilder func repeatingBounce() -> some View {
+        if #available(macOS 15, *) {
+            symbolEffect(.bounce, options: .repeat(2))
+        } else {
+            symbolEffect(.pulse, options: .repeat(2))
+        }
+    }
+}

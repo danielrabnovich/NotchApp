@@ -141,8 +141,8 @@ final class UnreadBadges: ObservableObject {
                     found.append(Badge(name: name, count: count, appURL: url))
                 }
             }
-            found.sort { $0.count > $1.count }
-            await MainActor.run { if UnreadBadges.shared.badges != found { UnreadBadges.shared.badges = found } }
+            let sorted = found.sorted { $0.count > $1.count }
+            await MainActor.run { if UnreadBadges.shared.badges != sorted { UnreadBadges.shared.badges = sorted } }
         }
     }
 

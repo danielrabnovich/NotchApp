@@ -297,7 +297,7 @@ struct CollapsedNotchView: View {
                 Image(systemName: "chevron.down.circle.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.9))
-                    .symbolEffect(.bounce, options: .repeat(2))
+                    .repeatingBounce()
             }
         case let .taildrop(title, _, _):
             Image(systemName: title.hasPrefix("Couldn't") ? "exclamationmark.circle.fill" : "checkmark.circle.fill")

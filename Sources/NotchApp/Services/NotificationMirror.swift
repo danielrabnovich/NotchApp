@@ -119,7 +119,7 @@ final class NotificationMirror: ObservableObject {
         launchWatch = nil
     }
 
-    private static let centerID = "com.apple.notificationcenterui"
+    nonisolated private static let centerID = "com.apple.notificationcenterui"
 
     private func attach() {
         guard let center = NSRunningApplication.runningApplications(withBundleIdentifier: Self.centerID).first else { return }

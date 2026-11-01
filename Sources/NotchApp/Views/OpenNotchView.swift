@@ -259,6 +259,7 @@ private struct PagedTabsView: View {
             case .ask: AnyView(AskView(viewModel: viewModel))
             }
         }
+        .padding(.horizontal, -PagerHost.bleed)
     }
 }
 

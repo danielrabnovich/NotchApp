@@ -12,7 +12,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "NotchApp",
-            dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
+            dependencies: ["NotchKit", .product(name: "FluidAudio", package: "FluidAudio")],
             path: "Sources/NotchApp",
             swiftSettings: [
                 .unsafeFlags(["-Onone"], .when(configuration: .debug)),
@@ -24,6 +24,9 @@ let package = Package(
         ),
         // The `notch` command, shipped inside the app (Contents/MacOS/notch).
         .executableTarget(name: "notch", path: "Sources/notch"),
+        // Logic with no UI or system state (matching names, cleaning links): kept apart so it's tested.
+        .target(name: "NotchKit", swiftSettings: [.swiftLanguageMode(.v6)]),
+        .testTarget(name: "NotchKitTests", dependencies: ["NotchKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
     ],
     swiftLanguageModes: [.v5]
 )

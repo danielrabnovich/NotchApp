@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import NotchKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -30,6 +31,13 @@ final class ClipboardHistory: ObservableObject {
                 let names = (filePaths ?? []).map { ($0 as NSString).lastPathComponent }
                 return names.count == 1 ? names[0] : "\(names.count) files"
             }
+        }
+
+        /// Every word (lowercased) is in its text or a file path, in any order: "invoice march"
+        /// finds "March invoice". No words: everything matches.
+        func matches(_ words: [Substring]) -> Bool {
+            let haystack = ([title] + (filePaths ?? [])).joined(separator: "\n").lowercased()
+            return words.allSatisfy { haystack.contains($0) }
         }
 
         /// A picture: copied as an image, or copied files that are all pictures (Finder copies files).
@@ -390,18 +398,17 @@ final class ClipboardHistory: ObservableObject {
 
     /// What the Clipboard pane lists: pinned first, then newest, narrowed by a search and a kind.
     func shown(matching query: String, kind: Clip.Kind?) -> [Clip] {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let words = query.lowercased().split(separator: " ")
         let list = pinned + clips.filter { !$0.pinned }
         return list.filter { clip in
-            (kind == nil || clip.kind == kind || (kind == .image && clip.isPicture)) && (q.isEmpty || clip.title.lowercased().contains(q)
-                || (clip.filePaths ?? []).contains { $0.lowercased().contains(q) })
+            (kind == nil || clip.kind == kind || (kind == .image && clip.isPicture)) && clip.matches(words)
         }
     }
 
     func search(_ query: String, limit: Int = 5) -> [Clip] {
         let q = query.lowercased().trimmingCharacters(in: .whitespaces)
         guard !q.isEmpty else { return Array(clips.prefix(limit)) }
-        return Array(clips.filter { $0.title.lowercased().contains(q) }.prefix(limit))
+        return Array(clips.filter { $0.matches(q.split(separator: " ")) }.prefix(limit))
     }
 
     func imageURL(for clip: Clip) -> URL? { clip.imageFile.map { folder.appendingPathComponent($0) } }

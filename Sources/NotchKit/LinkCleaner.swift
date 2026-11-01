@@ -4,11 +4,11 @@ import Foundation
 /// IDs (YouTube's and Spotify's si) and shop referral clutter, and turns a redirect (Google's
 /// /url?q=, Facebook's l.php?u=) into where it leads. Everything else in the link stays as it
 /// was, in its order; a link with nothing to take off is left alone.
-enum LinkCleaner {
-    struct Result: Equatable {
-        let link: String
+public enum LinkCleaner {
+    public struct Result: Equatable, Sendable {
+        public let link: String
         /// How many tracking parts came off (a redirect unwrapped counts as one).
-        let removed: Int
+        public let removed: Int
     }
 
     /// Exact names, any site.
@@ -38,7 +38,7 @@ enum LinkCleaner {
     ]
 
     /// The link without its tracking, or nil when there's nothing to take off (or it isn't a link).
-    static func clean(_ raw: String) -> Result? {
+    public static func clean(_ raw: String) -> Result? {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.contains(where: \.isWhitespace), var parts = URLComponents(string: text),
               let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme), let host = parts.host?.lowercased() else { return nil }

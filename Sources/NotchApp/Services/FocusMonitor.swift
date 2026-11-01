@@ -27,7 +27,7 @@ final class FocusMonitor: ObservableObject {
     /// Focus's files can be read (Full Disk Access is on).
     @Published private(set) var readable = false
 
-    private static let folder = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/DoNotDisturb/DB")
+    nonisolated private static let folder = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/DoNotDisturb/DB")
     private var demand = false
     private var source: DispatchSourceFileSystemObject?
     private var timer: Timer?

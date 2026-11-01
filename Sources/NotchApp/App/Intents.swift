@@ -1,5 +1,6 @@
 import AppIntents
 import AppKit
+import NotchKit
 
 /// NotchApp's actions for the Shortcuts app, Siri and Spotlight: what other automations can ask of
 /// the notch (start a timer, show a Banner, put files on the Shelf, ask a question…). Built from
