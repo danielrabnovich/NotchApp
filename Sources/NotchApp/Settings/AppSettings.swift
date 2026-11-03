@@ -232,6 +232,24 @@ final class AppSettings: ObservableObject {
     @Published var agentPlans: [String: String] { didSet { defaults.set(agentPlans, forKey: "agentPlans") } }
     @Published var agentsKeepAwake: Bool { didSet { defaults.set(agentsKeepAwake, forKey: "agentsKeepAwake") } }
 
+    // Developer
+    /// GitHub: what's waiting on you, your pull requests, and the Actions runs for what you push.
+    @Published var githubEnabled: Bool { didSet { defaults.set(githubEnabled, forKey: "githubEnabled") } }
+    @Published var githubAlerts: GitHubAlerts { didSet { defaults.set(githubAlerts.rawValue, forKey: "githubAlerts") } }
+
+    /// Which GitHub notifications drop down from the notch.
+    enum GitHubAlerts: String, CaseIterable, Identifiable {
+        case everything, needsMe, off
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .everything: "Everything"
+            case .needsMe: "Things that need me"
+            case .off: "Nothing"
+            }
+        }
+    }
+
     // Stats
     @Published var statsEnabled: Bool { didSet { defaults.set(statsEnabled, forKey: "statsEnabled") } }
     @Published var useFahrenheit: Bool { didSet { defaults.set(useFahrenheit, forKey: "useFahrenheit") } }
@@ -375,6 +393,7 @@ final class AppSettings: ObservableObject {
             "videoQuality": 1080,
             "agentAlerts": true,
             "agentsKeepAwake": true,
+            "githubEnabled": false,
             "useFahrenheit": Locale.current.measurementSystem == .us,
             "assistantEnabled": true,
             "ollamaURL": "http://localhost:11434",
@@ -491,6 +510,8 @@ final class AppSettings: ObservableObject {
         videoQuality = defaults.integer(forKey: "videoQuality")
         agentAlerts = defaults.bool(forKey: "agentAlerts")
         agentsKeepAwake = defaults.bool(forKey: "agentsKeepAwake")
+        githubEnabled = defaults.bool(forKey: "githubEnabled")
+        githubAlerts = GitHubAlerts(rawValue: defaults.string(forKey: "githubAlerts") ?? "") ?? .needsMe
         agentPlans = defaults.dictionary(forKey: "agentPlans") as? [String: String] ?? [:]
         useFahrenheit = defaults.bool(forKey: "useFahrenheit")
         assistantEnabled = defaults.bool(forKey: "assistantEnabled")

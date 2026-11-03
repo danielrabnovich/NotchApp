@@ -205,6 +205,7 @@ enum GlanceActions {
         case .shortcuts: ShortcutsApp.shared.glanceShortcuts.map(\.name).joined(separator: " · ").nilIfEmpty ?? "Pick Shortcuts in Settings → Glances"
         case .duo: DuoGlyph.summary
         case .focus: FocusMonitor.shared.clickHint
+        case .github: GitHubService.shared.currentRun != nil ? "Open the Run" : GitHubService.shared.needsYouCount > 0 ? "Open What's Waiting" : "Open Pull Requests"
         case .meeting: ControlsService.shared.micMuted ? "Unmute Microphone" : "Mute Microphone"
         case .worldClock: "\(WorldClock.city.name) · \(WorldClock.offset(TimeZone(identifier: WorldClock.city.zone) ?? .current))"
         case .weather: TodayWeather.shared.report?.summary ?? "Weather"
@@ -272,6 +273,8 @@ enum GlanceActions {
             }
         case .focus:
             FocusMonitor.shared.click()
+        case .github:
+            GitHubService.shared.openTop()
         case .shortcuts:
             // One glyph: run it. Several: each glyph runs its own (see ShortcutGlyphs). None yet: pick some.
             let picked = ShortcutsApp.shared.glanceShortcuts
@@ -321,7 +324,7 @@ enum GlanceActions {
         case .shortcuts:
             SettingsWindowController.shared.show(pane: .live)
             return
-        case .meeting: tab = .home
+        case .meeting, .github: tab = .home
         case .progress: tab = .shelf
         case .weather: tab = .home
         case .worldClock, .goldenHour, .countdown, .unread:
@@ -411,6 +414,8 @@ struct LiveItemView: View {
             StatRings(diameter: min(22, notchHeight - 10))
         case .focus:
             FocusReading(compact: true)
+        case .github:
+            GitHubReading(compact: true)
         }
     }
 
@@ -505,6 +510,8 @@ struct LiveItemView: View {
             towardNotch(StatRings(diameter: min(22, notchHeight - 10)), RingsReading(alignment: side == .left ? .leading : .trailing))
         case .focus:
             FocusReading()
+        case .github:
+            GitHubReading()
         case .tasks:
             Text("\(tasks.openCount)")
                 .font(.system(size: 11, weight: .bold, design: .rounded).monospacedDigit())

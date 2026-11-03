@@ -2,7 +2,7 @@ import SwiftUI
 
 /// What Home can show: cards in a row across it.
 enum HomeCard: String, Codable, CaseIterable {
-    case music, today, weather, stats, batteries, clock, agents, shelf, timer, clipboard, unread, scratchpad, network, countdown
+    case music, today, weather, stats, batteries, clock, agents, shelf, timer, clipboard, unread, scratchpad, network, countdown, github
 
     /// A tile of its own at this size (narrow, and half height when small), rather than a column of
     /// the page.
@@ -10,7 +10,7 @@ enum HomeCard: String, Codable, CaseIterable {
         switch self {
         case .today: false
         case .music, .weather: size == .small
-        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: true
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github: true
         }
     }
 
@@ -150,7 +150,7 @@ enum HomeTiler {
         case .music: alone ? nil : size == .large ? (width - gap) / 2 : size == .medium ? 170 : 112
         case .today: nil
         case .weather: size == .small ? 112 : 128
-        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: 112
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github: 112
         }
     }
 
@@ -163,7 +163,7 @@ enum HomeTiler {
         case .today: 3
         case .music: 2
         case .weather: 1
-        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: 0
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github: 0
         }
     }
 
@@ -172,7 +172,7 @@ enum HomeTiler {
         switch card {
         case .today: nil
         case .music: size == .large ? .medium : size == .medium ? .small : nil
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: size == .medium ? .small : nil
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github: size == .medium ? .small : nil
         }
     }
 
@@ -180,7 +180,7 @@ enum HomeTiler {
         switch card {
         case .today: nil
         case .music: size == .small ? .medium : size == .medium ? .large : nil
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: size == .small ? .medium : nil
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github: size == .small ? .medium : nil
         }
     }
 }
@@ -227,6 +227,7 @@ extension HomeCard {
         case .scratchpad: "Scratchpad"
         case .network: "Network"
         case .countdown: "Countdown"
+        case .github: "GitHub"
         }
     }
 
@@ -246,6 +247,7 @@ extension HomeCard {
         case .scratchpad: "note.text"
         case .network: "network"
         case .countdown: "hourglass"
+        case .github: "arrow.triangle.pull"
         }
     }
 
@@ -265,6 +267,7 @@ extension HomeCard {
         case .scratchpad: "A note to type into right on Home."
         case .network: "How fast it's going right now, and whether a VPN is on."
         case .countdown: "Days to go until a date you pick."
+        case .github: "The Actions ring for what you just pushed, reviews waiting on you and your pull requests' checks."
         }
     }
 
@@ -273,7 +276,7 @@ extension HomeCard {
         switch self {
         case .today: []
         case .music: [.small, .medium, .large]
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown: [.small, .medium]
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github: [.small, .medium]
         }
     }
 
@@ -299,6 +302,7 @@ extension HomeCard {
         case .shelf: s.shelfEnabled
         case .timer: s.timerEnabled
         case .clipboard: s.clipboardHistory
+        case .github: s.githubEnabled
         case .weather, .batteries, .clock, .unread, .scratchpad, .network, .countdown: true
         }
     }
@@ -309,6 +313,7 @@ extension HomeCard {
         case .music: "Turn on the music player"
         case .today: "Turn on Calendar or Tasks"
         case .clipboard: "Turn on Clipboard history in Shelf"
+        case .github: "Turn on GitHub in Add-ons"
         default: "Turn on \(title) in Add-ons"
         }
     }

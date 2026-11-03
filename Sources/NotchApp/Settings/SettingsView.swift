@@ -104,6 +104,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     case stats = "Stats"
     case tools = "Tools"
     case agents = "Agents"
+    case developer = "Developer"
     case hud = "HUD"
     case battery = "Battery"
     case mouse = "Mouse"
@@ -151,6 +152,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .stats: "CPU, GPU, memory, temperatures and power. Click a card for details."
         case .tools: "Network and speed test, a cleaner, an app uninstaller and Bluetooth batteries."
         case .agents: "Claude Code, Codex, OpenCode and ZCode sessions (working, waiting for you or idle) and today's tokens."
+        case .developer: "GitHub in the notch: reviews waiting on you, your pull requests, and a ring that follows Actions after you push."
         case .addOns: "Search, Shelf and Tasks are always there. Turn on anything else you want."
         case .controls: "Volume and brightness, the quick actions you pick, Keep Awake and a camera mirror."
         case .mouse: "Scroll direction and middle click."
@@ -176,6 +178,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .stats: "gauge.with.dots.needle.50percent"
         case .tools: "wrench.and.screwdriver.fill"
         case .agents: "sparkles.rectangle.stack.fill"
+        case .developer: "arrow.triangle.pull"
         case .addOns: "puzzlepiece.extension.fill"
         case .controls: "switch.2"
         case .mouse: "computermouse.fill"
@@ -201,6 +204,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .stats: .cyan
         case .tools: Color(red: 0.95, green: 0.45, blue: 0.55)
         case .agents: .purple
+        case .developer: Color(red: 0.2, green: 0.6, blue: 0.35)
         case .addOns: .indigo
         case .controls: Color(red: 0.35, green: 0.35, blue: 0.4)
         case .mouse: Color(red: 0.4, green: 0.45, blue: 0.55)
@@ -244,6 +248,7 @@ struct SettingsView: View {
                 case .stats: StatsPane()
                 case .tools: ToolsSettingsPane()
                 case .agents: AgentsSettingsPane()
+                case .developer: DeveloperSettingsPane()
                 case .addOns: AddOnsPane()
                 case .controls: ControlsPane()
                 case .mouse: MousePane()

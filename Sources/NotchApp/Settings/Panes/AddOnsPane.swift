@@ -26,6 +26,8 @@ struct AddOnsPane: View {
                           isOn: Binding(get: { s.volumeHUD || s.brightnessHUD }, set: { s.volumeHUD = $0; s.brightnessHUD = $0 }))
                 ToggleRow("Charging animation", subtitle: "When you plug in.", isOn: $s.chargingAnimation)
                 ToggleRow("Morning brief", subtitle: "Your day at a glance on the first unlock of the morning.", isOn: $s.morningBrief)
+                ToggleRow("GitHub", subtitle: "Reviews waiting on you, your pull requests, and the Actions ring after you push.",
+                          isOn: $s.githubEnabled)
                 ToggleRow("Clipboard history", subtitle: "Recent copies on the Shelf, and “clip …” in Search. Password managers are skipped.",
                           isOn: $s.clipboardHistory)
             }

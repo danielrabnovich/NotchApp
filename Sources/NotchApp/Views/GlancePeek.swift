@@ -114,6 +114,23 @@ enum GlancePeek {
             } else {
                 c.detail = GlanceActions.hint(for: item)
             }
+        case .github:
+            let github = GitHubService.shared
+            if let run = github.currentRun {
+                c.icon = run.finished == nil ? "gearshape.2.fill" : run.ring.outcome == .failed ? "xmark.octagon.fill" : "checkmark.circle.fill"
+                c.title = "\(run.short) · \(run.title)"
+                let step = run.ring.current.map { "\($0.job) › \($0.name)" }
+                c.detail = run.finished != nil ? GlanceActions.hint(for: item)
+                    : [step, run.ring.total > 0 ? "\(run.ring.done) of \(run.ring.total) steps" : "Starting"].compactMap { $0 }.joined(separator: " · ")
+            } else {
+                let reviews = github.pulls.filter(\.wantsReview).count, others = github.needsYouCount - reviews
+                c.title = github.needsYouCount == 0 ? "Nothing waiting on you" : [reviews > 0 ? "\(reviews) review\(reviews == 1 ? "" : "s")" : nil,
+                                                                                others > 0 ? "\(others) mention\(others == 1 ? "" : "s")" : nil].compactMap { $0 }.joined(separator: " · ")
+                let mine = github.pulls.filter { !$0.wantsReview }
+                let failing = mine.filter { $0.checks == .failed }.count
+                c.detail = [mine.isEmpty ? nil : "\(mine.count) open PR\(mine.count == 1 ? "" : "s")", failing > 0 ? "\(failing) failing" : nil]
+                    .compactMap { $0 }.joined(separator: " · ").nilIfEmpty ?? GlanceActions.hint(for: item)
+            }
         case .worldClock, .goldenHour, .countdown, .vpn, .timer, .keepAwake, .disk, .meeting:
             c.detail = GlanceActions.hint(for: item)
         case .focus:

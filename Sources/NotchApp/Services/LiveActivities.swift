@@ -16,6 +16,8 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
     case rings
     /// The Focus that's on, in its own symbol and color.
     case focus
+    /// GitHub: the Actions ring for what you just pushed, else how many reviews and mentions wait on you.
+    case github
     /// Actions: a button beside the notch rather than a reading.
     case askScreen, quickScreenshot, quickCopyText, quickColorPicker, quickLock, quickDarkMode, quickMic, quickWiFi, quickNightShift
     /// The actions starred for the app in front (right-click one under the search bar).
@@ -74,6 +76,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .duo: "Duo"
         case .rings: "Stats Rings"
         case .focus: "Focus"
+        case .github: "GitHub"
         case .shortcuts: "Shortcuts"
         case .askScreen: "Ask About This"
         case .appAction: "App Actions"
@@ -110,6 +113,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .duo: "Battery, network and volume in one small ring, after DuoBar."
         case .rings: "CPU, GPU and memory as three rings in one glyph."
         case .focus: "The Focus that's on, in its own symbol and color (needs Full Disk Access)."
+        case .github: "A ring that fills green, yellow and red as your Actions steps pass, run or fail after you push; otherwise what waits on you."
         case .shortcuts: "Up to three of your Shortcuts, one click each (pick them under Glance options)."
         case .askScreen: "Ask the AI about the window in front."
         case .appAction: "Actions you star for an app (right-click one under the search bar), while that app is in front."
@@ -146,6 +150,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .duo: "circle.circle"
         case .rings: "target"
         case .focus: "moon.fill"
+        case .github: "arrow.triangle.pull"
         case .shortcuts: "square.2.layers.3d.fill"
         case .askScreen: "sparkle.magnifyingglass"
         case .appAction: "star.square.on.square"
@@ -182,6 +187,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .duo: .mint
         case .rings: StatsPalette.cpu
         case .focus: .indigo
+        case .github: .green
         case .shortcuts: .pink
         case .askScreen: .indigo
         case .appAction: .orange
@@ -190,7 +196,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
     }
 
     /// Items that come and go: these can be shown only while there's something to show.
-    var canWaitForActivity: Bool { [.music, .timer, .nextEvent, .network, .devices, .agents, .vpn, .disk, .goldenHour, .unread, .focus].contains(self) }
+    var canWaitForActivity: Bool { [.music, .timer, .nextEvent, .network, .devices, .agents, .vpn, .disk, .goldenHour, .unread, .focus, .github].contains(self) }
 
     var whileActiveLabel: String {
         switch self {
@@ -207,6 +213,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .goldenHour: "Only near sunset"
         case .unread: "Only with something unread"
         case .focus: "Only while one is on"
+        case .github: "Only with CI or reviews"
         default: ""
         }
     }
@@ -240,6 +247,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .duo: 66
         case .rings: 60
         case .focus: 76
+        case .github: 58
         case .shortcuts: CGFloat(max(1, ShortcutsApp.glanceCount)) * 24
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
@@ -270,6 +278,7 @@ enum LiveItem: String, CaseIterable, Codable, Identifiable {
         case .duo: 30
         case .rings: 28
         case .focus: 20
+        case .github: 22
         case .shortcuts: CGFloat(max(1, ShortcutsApp.glanceCount)) * 24
         case .askScreen, .quickScreenshot, .quickCopyText, .quickColorPicker, .quickLock, .quickDarkMode, .quickMic, .quickWiFi, .quickNightShift: 24
         case .appAction: CGFloat(max(1, AppActions.glanceCount)) * 24
@@ -388,6 +397,9 @@ final class LiveActivities: ObservableObject {
         Cleaner.shared.$disk.sink { _ in refresh() }.store(in: &cancellables)
         FocusMonitor.shared.$current.sink { _ in refresh() }.store(in: &cancellables)
         FocusMonitor.shared.$readable.sink { _ in refresh() }.store(in: &cancellables)
+        GitHubService.shared.$runs.map(\.isEmpty).removeDuplicates().sink { _ in refresh() }.store(in: &cancellables)
+        GitHubService.shared.$pulls.sink { _ in refresh() }.store(in: &cancellables)
+        GitHubService.shared.$inbox.sink { _ in refresh() }.store(in: &cancellables)
         ShortcutsApp.shared.objectWillChange.sink { _ in relayout() }.store(in: &cancellables)
         // Network "only while busy" follows the rate, which changes every second.
         NetworkMonitor.shared.$downRate.sink { _ in
@@ -562,6 +574,10 @@ final class LiveActivities: ObservableObject {
         if slot(for: .progress) == nil, !ProgressCenter.shared.items.isEmpty {
             newRight.insert(.progress, at: 0)
         }
+        // And the Actions ring while a push is followed.
+        if slot(for: .github) == nil, AppSettings.shared.githubEnabled, GitHubService.shared.currentRun != nil {
+            newRight.insert(.github, at: 0)
+        }
         if newLeft != left || newRight != right {
             withAnimation(.spring(response: 0.36, dampingFraction: 0.8)) {
                 left = newLeft
@@ -635,6 +651,10 @@ final class LiveActivities: ObservableObject {
             return !f.readable || !slot.whileActive || f.current != nil
         case .shortcuts:
             return ShortcutsApp.isAvailable
+        case .github:
+            let github = GitHubService.shared
+            guard AppSettings.shared.githubEnabled, github.connection.login != nil else { return false }
+            return !slot.whileActive || github.currentRun != nil || github.needsYouCount > 0
         case .weather:
             return TodayWeather.shared.report != nil
         case .goldenHour:
