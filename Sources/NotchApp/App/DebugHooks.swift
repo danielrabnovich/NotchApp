@@ -98,6 +98,13 @@ enum DebugHooks {
         case "ghfake": GitHubService.shared.simulate(fail: parts[safe: 1] == "fail") // ghfake [fail]: a pretend Actions run on the ring
         case "ghfollow": // ghfollow <owner/repo> <sha> <branch>: follow a real commit's runs
             if parts.count >= 4 { GitHubService.shared.follow(repo: parts[1], sha: parts[2], branch: parts[3]) }
+        case "vercelfake": VercelService.shared.simulate(fail: parts[safe: 1] == "fail") // vercelfake [fail]: a pretend two-project build
+        case "linearfake": LinearService.shared.simulate()
+        case "cmdk": log("CMDK \(ActionPanel.shared.toggle()) \(ActionPanel.shared.actions.map(\.title))") // ⌘K over Search's highlighted result
+        case "nooverlay": NotchPresenter.shared.dismissOverlay(close: false) // takes down a Prompt or brief over the open notch
+        case "devstate":
+            log("VERCEL \(VercelService.shared.connection) recent=\(VercelService.shared.recent.count) followed=\(VercelService.shared.followed.map { "\($0.title) \($0.ring.jobsDone)/\($0.ring.jobsTotal)" })")
+            log("LINEAR \(LinearService.shared.connection) mine=\(LinearService.shared.mine.map(\.identifier)) notices=\(LinearService.shared.notices.count)")
         case "ghstate":
             let g = GitHubService.shared
             log("GITHUB \(g.connection) inbox=\(g.inbox.count) pulls=\(g.pulls.map(\.id)) needsYou=\(g.needsYouCount) runs=\(g.runs.map { "\($0.id) \($0.ring.done)/\($0.ring.total) \($0.ring.outcome)" })")

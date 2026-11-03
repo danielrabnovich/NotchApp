@@ -317,7 +317,7 @@ extension SettingsPane {
         case .stats: ["cpu", "gpu", "memory", "ram", "temperature", "fahrenheit", "celsius", "fans", "power"]
         case .tools: ["network", "wifi", "speed test", "vpn", "proton", "pia", "mullvad", "ip", "ping", "cleaner", "disk", "uninstall", "bluetooth", "airpods", "battery", "microphone", "camera", "dev server", "ports", "alerts", "offline"]
         case .agents: ["claude", "claude code", "codex", "opencode", "zcode", "tokens", "usage", "keep awake", "ai agents"]
-        case .developer: ["github", "gh", "pull requests", "prs", "reviews", "actions", "ci", "checks", "workflow", "push", "notifications", "token"]
+        case .developer: ["vercel", "linear", "deploys", "deployments", "previews", "issues", "tickets", "api key", "github", "gh", "pull requests", "prs", "reviews", "actions", "ci", "checks", "workflow", "push", "notifications", "token"]
         case .controls: ["quick actions", "tiles", "wifi", "dark mode", "ports", "copy text", "ocr", "night shift", "hidden files", "flush dns", "keep awake", "camera", "mirror"]
         case .mouse: ["scroll", "reverse", "middle click", "trackpad", "three finger"]
         case .updates: ["homebrew", "brew", "sparkle", "upgrade"]
@@ -343,7 +343,7 @@ extension SettingsPane {
     /// Pages whose settings all belong to their feature: while it's off, the page offers to turn it
     /// on instead. (Keyboard Shortcuts and Updates keep their settings in view.)
     var switchHidesPage: Bool {
-        [.assistant, .shelf, .tasks, .timer, .stats, .tools, .agents, .developer, .controls].contains(self)
+        [.assistant, .shelf, .tasks, .timer, .stats, .tools, .agents, .controls].contains(self)
     }
 
     var offDetail: String {
@@ -363,7 +363,6 @@ extension SettingsPane {
         case .stats: return bind(\.statsEnabled)
         case .tools: return bind(\.toolsEnabled)
         case .agents: return bind(\.agentsEnabled)
-        case .developer: return bind(\.githubEnabled)
         case .controls: return bind(\.controlsEnabled)
         case .updates: return bind(\.updateChecks)
         case .shortcuts: return bind(\.hotKeysEnabled)

@@ -7,7 +7,7 @@ import SwiftUI
 final class AssistantStore: ObservableObject {
     static let shared = AssistantStore()
 
-    enum Route: String { case files, web, weather, actions, calendar, notes, screen, write, app, help, recall, github }
+    enum Route: String { case files, web, weather, actions, calendar, notes, screen, write, app, help, recall, github, deploys, linear }
 
     /// Text work for the model from the command bar.
     enum Writing {
@@ -168,6 +168,8 @@ final class AssistantStore: ObservableObject {
         var weather: WeatherReport?
         /// A pull request, a list of them or recent Actions runs ("pr 142", "my prs", "ci").
         var github: GitHubAnswer?
+        var deploys: DeploysAnswer?
+        var linear: LinearAnswer?
         var calendar: CalendarAnswer?
         var notes: NotesAnswer?
         /// What Recall found: moments from the screen's past.
@@ -555,13 +557,26 @@ final class AssistantStore: ObservableObject {
                 try await answerRecall(trimmed, id: id, progress: progress)
                 throw Finished()
             }
-            // "pr 142", "my prs", "reviews", "ci": straight to GitHub, no model needed.
-            if chosen == .github || (chosen == nil && GitHubSearch.understands(trimmed)) {
-                update(id) { $0.route = .github }
-                await progress("Asking GitHub")
-                let answer = try await GitHubSearch.answer(trimmed)
-                try Task.checkCancellation()
-                update(id) { $0.github = answer; $0.state = .done }
+            // "pr 142", "my prs", "ci", "ENG-123", "my issues", "deploys": straight to the service, no model needed.
+            if let dev = [.github, .deploys, .linear].contains(chosen) ? chosen : chosen == nil ? DevSearch.route(for: trimmed) : nil {
+                update(id) { $0.route = dev }
+                switch dev {
+                case .deploys:
+                    await progress("Asking Vercel")
+                    let answer = try await DevSearch.deploys(trimmed)
+                    try Task.checkCancellation()
+                    update(id) { $0.deploys = answer; $0.state = .done }
+                case .linear:
+                    await progress("Asking Linear")
+                    let answer = try await DevSearch.linear(trimmed)
+                    try Task.checkCancellation()
+                    update(id) { $0.linear = answer; $0.state = .done }
+                default:
+                    await progress("Asking GitHub")
+                    let answer = try await GitHubSearch.answer(trimmed)
+                    try Task.checkCancellation()
+                    update(id) { $0.github = answer; $0.state = .done }
+                }
                 throw Finished()
             }
             // "What can you do", "where's the setting for…", "what's new": NotchApp's own help.
@@ -626,7 +641,7 @@ final class AssistantStore: ObservableObject {
                 try await answerHelp(trimmed, id: id, useAI: useAI, progress: progress)
             case .recall:
                 try await answerRecall(trimmed, id: id, progress: progress)
-            case .write, .app, .github:
+            case .write, .app, .github, .deploys, .linear:
                 break // writing jobs run through write(_:), app and GitHub ones above (run() is handed them by route)
             case .weather:
                 await progress("Checking the forecast")
@@ -768,7 +783,7 @@ final class AssistantStore: ObservableObject {
     func switchRoute() {
         guard let job = current, let route = job.route, route != .actions, route != .calendar, route != .write else { return }
         // Files ↔ web; a weather or screen answer switches to a full web search.
-        run(job.query, route: [.files, .weather, .screen, .help, .recall, .github].contains(route) ? .web : .files)
+        run(job.query, route: [.files, .weather, .screen, .help, .recall, .github, .deploys, .linear].contains(route) ? .web : .files)
     }
 
     func clear() {
@@ -811,6 +826,10 @@ final class AssistantStore: ObservableObject {
             title = "Forecast"; detail = job.weather?.summary ?? job.query
         case (_, .github?):
             title = job.github?.headline ?? "GitHub"; detail = job.github?.summary ?? job.query
+        case (_, .deploys?):
+            title = job.deploys?.headline ?? "Vercel"; detail = job.deploys?.detail ?? job.query
+        case (_, .linear?):
+            title = job.linear?.headline ?? "Linear"; detail = job.linear?.detail ?? job.query
         case (_, .calendar?):
             title = job.calendar?.headline ?? "Calendar"; detail = job.calendar?.detail ?? job.query
         case (_, .notes?):

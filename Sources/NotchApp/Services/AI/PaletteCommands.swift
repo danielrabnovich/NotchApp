@@ -50,6 +50,8 @@ enum PaletteCommands {
         .init(title: "Agents", pane: .agents, words: ["claude code", "codex", "coding agents"], key: \.agentsEnabled),
         .init(title: "Agent alerts", pane: .agents, words: ["agent notifications"], key: \.agentAlerts),
         .init(title: "GitHub", pane: .developer, words: ["pull requests", "actions", "ci", "reviews"], key: \.githubEnabled),
+        .init(title: "Vercel", pane: .developer, words: ["deploys", "deployments", "previews"], key: \.vercelEnabled),
+        .init(title: "Linear", pane: .developer, words: ["issues", "tickets"], key: \.linearEnabled),
         .init(title: "Keep awake while agents work", pane: .agents, words: ["agents keep awake"], key: \.agentsKeepAwake),
         .init(title: "Calendar", pane: .home, words: ["events"], key: \.calendarEnabled),
         .init(title: "Record calls", pane: .home, words: ["transcribe calls", "transcripts", "meeting notes", "call notes", "call recording"], key: \.transcribeCalls),

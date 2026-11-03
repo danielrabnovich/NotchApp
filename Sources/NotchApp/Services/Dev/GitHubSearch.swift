@@ -65,6 +65,8 @@ struct GitHubAnswer: Equatable {
     var pull: Pull?
     var items: [Item] = []
     var runs: [Run] = []
+    /// The items are the same number in different repos: ↩ shows the chosen one here in full.
+    var choices = false
 
     /// What ↑↓ and ↩ go through.
     var links: [URL] { pull.map { [$0.url] } ?? (items.isEmpty ? runs.map(\.url) : items.map(\.url)) }
@@ -139,13 +141,35 @@ enum GitHubSearch {
             candidates = github.pulls.filter { $0.number == number }.map(\.repo) + github.knownRepos
         }
         var seen = Set<String>()
-        for repo in candidates.filter({ seen.insert($0).inserted }).prefix(4) {
-            let parts = repo.split(separator: "/")
-            guard parts.count == 2 else { continue }
-            let query = "query { repository(owner: \"\(parts[0])\", name: \"\(parts[1])\") { pullRequest(number: \(number)) { \(pullFields) } } }"
-            guard let node = try await graphQL(query)?["repository"] as? [String: Any],
-                  let pr = node["pullRequest"] as? [String: Any], let found = parsePull(pr, repo: repo) else { continue }
-            return GitHubAnswer(headline: found.title, detail: "\(repo)#\(number)", pull: found)
+        let repos = Array(candidates.filter { seen.insert($0).inserted }.prefix(6))
+        // Every likely repo at once; the same number can be a pull request in several of them.
+        var found: [(Int, GitHubAnswer.Pull)] = []
+        await withTaskGroup(of: (Int, GitHubAnswer.Pull)?.self) { group in
+            for (rank, repo) in repos.enumerated() {
+                group.addTask { @MainActor in
+                    let parts = repo.split(separator: "/")
+                    guard parts.count == 2 else { return nil }
+                    let query = "query { repository(owner: \"\(parts[0])\", name: \"\(parts[1])\") { pullRequest(number: \(number)) { \(pullFields) } } }"
+                    guard let node = try? await graphQL(query)?["repository"] as? [String: Any],
+                          let pr = node["pullRequest"] as? [String: Any], let pull = parsePull(pr, repo: repo) else { return nil }
+                    return (rank, pull)
+                }
+            }
+            for await result in group { if let result { found.append(result) } }
+        }
+        // In the order they were looked for: yours and the ones you're asked to review first, then where you work.
+        let pulls = found.sorted { $0.0 < $1.0 }.map(\.1)
+        if pulls.count == 1, let only = pulls.first {
+            return GitHubAnswer(headline: only.title, detail: "\(only.repo)#\(number)", pull: only)
+        }
+        if pulls.count > 1 {
+            let items = pulls.map { p in
+                GitHubAnswer.Item(repo: p.repo, number: p.number, title: p.title, url: p.url, isPull: true, state: p.state,
+                                  checks: p.checks.steps.isEmpty ? .none : p.checks.hasFailure ? .failed : p.checks.outcome == .running ? .pending : .passed,
+                                  wantsReview: github.pulls.contains { $0.repo == p.repo && $0.number == p.number && $0.wantsReview },
+                                  author: p.author, comments: p.comments, updated: p.updated)
+            }
+            return GitHubAnswer(headline: "#\(number) is in \(pulls.count) repos", detail: "↩ shows one here", items: items, choices: true)
         }
         throw Failure(message: repo == nil
                       ? "No pull request #\(number) in the repos you're working in. Try owner/repo#\(number)."

@@ -121,7 +121,11 @@ final class GitHubService: ObservableObject {
             let dirs = Set(sessions.compactMap(\.directory))
             DispatchQueue.main.async { self?.pushes.watch(dirs) }
         }.store(in: &cancellables)
-        pushes.onPush = { [weak self] repo, sha, branch in self?.follow(repo: repo, sha: sha, branch: branch) }
+        pushes.onPush = { [weak self] repo, sha, branch in
+            self?.follow(repo: repo, sha: sha, branch: branch)
+            // A push usually starts a Vercel build too: look for it straight away.
+            VercelService.shared.kick()
+        }
     }
 
     /// Signs in again (after a token was saved or `gh` logged in) and polls straight away.

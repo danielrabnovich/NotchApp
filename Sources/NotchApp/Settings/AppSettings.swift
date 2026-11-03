@@ -236,6 +236,10 @@ final class AppSettings: ObservableObject {
     /// GitHub: what's waiting on you, your pull requests, and the Actions runs for what you push.
     @Published var githubEnabled: Bool { didSet { defaults.set(githubEnabled, forKey: "githubEnabled") } }
     @Published var githubAlerts: GitHubAlerts { didSet { defaults.set(githubAlerts.rawValue, forKey: "githubAlerts") } }
+    /// Vercel: deployments as they build, previews when they're ready.
+    @Published var vercelEnabled: Bool { didSet { defaults.set(vercelEnabled, forKey: "vercelEnabled") } }
+    /// Linear: your issues, the one you're on, assignments and mentions.
+    @Published var linearEnabled: Bool { didSet { defaults.set(linearEnabled, forKey: "linearEnabled") } }
 
     /// Which GitHub notifications drop down from the notch.
     enum GitHubAlerts: String, CaseIterable, Identifiable {
@@ -394,6 +398,8 @@ final class AppSettings: ObservableObject {
             "agentAlerts": true,
             "agentsKeepAwake": true,
             "githubEnabled": false,
+            "vercelEnabled": false,
+            "linearEnabled": false,
             "useFahrenheit": Locale.current.measurementSystem == .us,
             "assistantEnabled": true,
             "ollamaURL": "http://localhost:11434",
@@ -511,6 +517,8 @@ final class AppSettings: ObservableObject {
         agentAlerts = defaults.bool(forKey: "agentAlerts")
         agentsKeepAwake = defaults.bool(forKey: "agentsKeepAwake")
         githubEnabled = defaults.bool(forKey: "githubEnabled")
+        vercelEnabled = defaults.bool(forKey: "vercelEnabled")
+        linearEnabled = defaults.bool(forKey: "linearEnabled")
         githubAlerts = GitHubAlerts(rawValue: defaults.string(forKey: "githubAlerts") ?? "") ?? .needsMe
         agentPlans = defaults.dictionary(forKey: "agentPlans") as? [String: String] ?? [:]
         useFahrenheit = defaults.bool(forKey: "useFahrenheit")

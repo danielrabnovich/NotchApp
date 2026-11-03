@@ -34,7 +34,10 @@ struct GitHubResults: View {
                             VStack(spacing: 2) {
                                 ForEach(Array(answer.items.enumerated()), id: \.element.id) { i, item in
                                     ItemRow(item: item, selected: i == selection).id(i)
-                                        .onTapGesture { NSWorkspace.shared.open(item.url) }
+                                        .onTapGesture {
+                                            if answer.choices { AssistantStore.shared.run("\(item.repo)#\(item.number)", route: .github) }
+                                            else { NSWorkspace.shared.open(item.url) }
+                                        }
                                         .onHover { if $0 { selection = i } }
                                 }
                                 ForEach(Array(answer.runs.enumerated()), id: \.element.id) { i, run in

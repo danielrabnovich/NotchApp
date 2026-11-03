@@ -144,6 +144,11 @@ struct AskView: View {
                 guard assistant.current == nil, assistant.context == nil, pendingAction == nil, !query.isEmpty else { return nil }
                 return suggestions.current
             }, primary: { perform($0) }, finish: { finish() })
+            // ⌘K on a GitHub, Vercel or Linear result.
+            actionPanel.attachResults {
+                guard let job = assistant.current, query == barText(job) else { return nil }
+                return DevActions.forJob(job, index: resultIndex)
+            }
             // If Quick Look keeps the keyboard, its arrow keys still move the selection here.
             QuickLook.shared.onMove = { moveSelection($0) }
             // Hidden tabs aren't rendered, so restore the query when this page comes back. With no
@@ -160,6 +165,7 @@ struct AskView: View {
         .onChange(of: actionPanel.isOpen) { _, open in if !open, viewModel.isOpen { focused = true } }
         // It's for one result: another result, or another search, closes it.
         .onChange(of: suggestions.selected) { _, _ in actionPanel.close() }
+        .onChange(of: resultIndex) { _, _ in actionPanel.close() }
         .onChange(of: emoji.requested) { _, _ in openEmojiIfRequested() }
         .onChange(of: viewModel.tab) { _, _ in focusIfShown() }
         .onChange(of: viewModel.isSettled) { _, _ in focusIfShown() }
@@ -326,7 +332,7 @@ struct AskView: View {
         case .files?: return job.files.map(\.url)
         // Each moment's picture (for Quick Look); ↩ goes back to the page or app instead.
         case .recall?: return (job.recall?.hits ?? []).map { $0.thumbnail ?? URL(fileURLWithPath: "/") }
-        case .github?: return job.github?.links ?? []
+        case .github?, .deploys?, .linear?: return DevResultsInfo.links(job) ?? []
         case .weather?, .calendar?, .actions?, .help?: return []
         default: return (job.answer ?? "").isEmpty ? job.sources.map(\.url) : job.sources.prefix(5).map(\.url)
         }
@@ -371,6 +377,12 @@ struct AskView: View {
         if showsRecall, let hits = assistant.current?.recall?.hits, hits.indices.contains(resultIndex) {
             RecallSearch.open(hits[resultIndex])
             finish()
+            return true
+        }
+        // The same number in several repos: show the one picked, here.
+        if let answer = assistant.current?.github, answer.choices, answer.items.indices.contains(resultIndex) {
+            let item = answer.items[resultIndex]
+            assistant.run("\(item.repo)#\(item.number)", route: .github)
             return true
         }
         let url = browsable[resultIndex]

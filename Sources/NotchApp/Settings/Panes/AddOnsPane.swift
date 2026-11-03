@@ -28,6 +28,10 @@ struct AddOnsPane: View {
                 ToggleRow("Morning brief", subtitle: "Your day at a glance on the first unlock of the morning.", isOn: $s.morningBrief)
                 ToggleRow("GitHub", subtitle: "Reviews waiting on you, your pull requests, and the Actions ring after you push.",
                           isOn: $s.githubEnabled)
+                ToggleRow("Vercel", subtitle: "Deployments as they build, and a Prompt when a preview is ready or a build fails.",
+                          isOn: $s.vercelEnabled)
+                ToggleRow("Linear", subtitle: "The issue you're on beside the notch, your issues on Home, and assignments and mentions.",
+                          isOn: $s.linearEnabled)
                 ToggleRow("Clipboard history", subtitle: "Recent copies on the Shelf, and “clip …” in Search. Password managers are skipped.",
                           isOn: $s.clipboardHistory)
             }
