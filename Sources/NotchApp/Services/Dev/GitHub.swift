@@ -81,6 +81,13 @@ final class GitHubService: ObservableObject {
         return reviews + others
     }
 
+    /// Repos you're working in: your agents' folders first, then those of your pull requests.
+    var knownRepos: [String] {
+        var out = pushes.repos
+        for pr in pulls where !pr.wantsReview && !out.contains(pr.repo) { out.append(pr.repo) }
+        return out
+    }
+
     /// The run to draw: one still going first, else the latest to finish.
     var currentRun: FollowedRun? { runs.first { $0.finished == nil } ?? runs.last }
 
@@ -326,7 +333,7 @@ final class GitHubService: ObservableObject {
         let took = CommandHandler.duration(Date().timeIntervalSince(run.started))
         switch run.ring.outcome {
         case .passed, .running:
-            ActivityCenter.shared.show(.notice(title: "Checks passed", detail: "\(run.short) · \(run.ring.total) steps in \(took)",
+            ActivityCenter.shared.show(.notice(title: "Checks passed", detail: "\(run.short) · \(run.ring.jobsTotal) job\(run.ring.jobsTotal == 1 ? "" : "s") in \(took)",
                                                icon: "checkmark.circle.fill", tone: .success), for: 5) { NSWorkspace.shared.open(run.url) }
         case .cancelled:
             ActivityCenter.shared.show(.notice(title: "Checks cancelled", detail: run.short, icon: "stop.circle.fill", tone: .info), for: 4) {
@@ -428,7 +435,7 @@ final class GitHubService: ObservableObject {
         var errorDescription: String? { if case let .message(m) = self { m } else { nil } }
     }
 
-    private func get(_ path: String) async throws -> Any {
+    func get(_ path: String) async throws -> Any {
         let (data, r) = try await request(path)
         guard r.statusCode == 200 else {
             throw GitHubError.message(r.statusCode == 401 ? "GitHub didn't accept the sign-in. Sign in again." : "GitHub answered \(r.statusCode).")
@@ -436,7 +443,7 @@ final class GitHubService: ObservableObject {
         return try JSONSerialization.jsonObject(with: data)
     }
 
-    private func request(_ path: String, method: String = "GET", body: Data? = nil,
+    func request(_ path: String, method: String = "GET", body: Data? = nil,
                          headers: [String: String] = [:]) async throws -> (Data, HTTPURLResponse) {
         guard let token else { throw GitHubError.message("Not signed in.") }
         var req = URLRequest(url: URL(string: "https://api.github.com" + path)!)
@@ -491,6 +498,8 @@ final class PushWatcher {
     var active = false { didSet { if active != oldValue { restart() } } }
 
     private var roots: [String: String] = [:] // git dir (common) → owner/repo
+    /// The GitHub repos being watched (where your agents work).
+    var repos: [String] { Array(Set(roots.values)).sorted() }
     private var directories: Set<String> = []
     private var stream: FSEventStreamRef?
     private var lastLines: [String: String] = [:]

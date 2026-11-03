@@ -71,6 +71,37 @@ public struct CIRing: Equatable, Sendable {
         }
     }
 
+    /// The steps grouped by job, in order: what GitHub lists as checks.
+    public struct JobGroup: Equatable, Sendable {
+        public let name: String
+        public let steps: [Step]
+        /// The job as a whole: failed as soon as a step fails, done when every step is.
+        public var state: CIStepState {
+            if steps.contains(where: { $0.state == .failure }) { return .failure }
+            if steps.allSatisfy({ $0.state.isDone }) {
+                if steps.contains(where: { $0.state == .cancelled }) { return .cancelled }
+                return steps.allSatisfy { $0.state == .skipped } ? .skipped : .success
+            }
+            return steps.contains(where: { $0.state != .queued }) ? .running : .queued
+        }
+    }
+
+    public var jobs: [JobGroup] {
+        var out: [JobGroup] = []
+        for step in steps {
+            if let last = out.last, last.name == step.job {
+                out[out.count - 1] = JobGroup(name: last.name, steps: last.steps + [step])
+            } else {
+                out.append(JobGroup(name: step.job, steps: [step]))
+            }
+        }
+        return out
+    }
+
+    /// Jobs finished, and how many there are: the count GitHub shows ("1 of 2 checks").
+    public var jobsDone: Int { jobs.filter { $0.state.isDone }.count }
+    public var jobsTotal: Int { jobs.count }
+
     public var done: Int { steps.filter { $0.state.isDone }.count }
     public var total: Int { steps.count }
     /// How far along it is, 0…1.
@@ -164,5 +195,59 @@ public enum GitHubLinks {
         let shas = fields[0].split(separator: " ")
         guard shas.count >= 2, shas[1].count == 40, shas[1] != String(repeating: "0", count: 40) else { return nil }
         return String(shas[1])
+    }
+}
+
+/// What a search-bar query asks of GitHub, when it plainly does: "pr 142", "owner/repo#12", a pull
+/// request's link, "my prs", "reviews", "ci", "issues glass". Anything else is left to Search.
+public enum GitHubQuery: Equatable, Sendable {
+    /// A pull request by number; `repo` nil when the number came alone ("pr 142", "#142").
+    case pull(repo: String?, number: Int)
+    case mine
+    case reviews
+    case runs
+    case mentions
+    /// Search pull requests (`pulls`) or issues, involving you, for text.
+    case search(text: String, pulls: Bool)
+
+    public static func parse(_ raw: String) -> GitHubQuery? {
+        let q = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = q.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "?!."))
+        guard !lower.isEmpty else { return nil }
+
+        // A link to a pull request.
+        if let m = match(#"github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)"#, q), let n = Int(m[2]) { return .pull(repo: m[1], number: n) }
+        // owner/repo#12
+        if let m = match(#"^([\w.-]+/[\w.-]+)#(\d+)$"#, q), let n = Int(m[2]) { return .pull(repo: m[1], number: n) }
+        // pr 142, pr #142, pull 142, pull request 142, #142
+        if let m = match(#"^(?:prs?|pull(?: request)?)\s*#?(\d+)$|^#(\d+)$"#, lower),
+           let n = Int(m[1].isEmpty ? m[2] : m[1]) { return .pull(repo: nil, number: n) }
+
+        let mine: Set<String> = ["prs", "my prs", "my pr", "pull requests", "my pull requests", "open prs", "my open prs",
+                                 "my open pull requests", "gh prs", "github prs", "pr status", "my pr status"]
+        if mine.contains(lower) { return .mine }
+        let reviews: Set<String> = ["reviews", "review requests", "to review", "prs to review", "my reviews", "needs review",
+                                    "needs my review", "what needs my review", "waiting for my review", "review queue"]
+        if reviews.contains(lower) || lower.contains("need my review") || lower.contains("needs my review") { return .reviews }
+        let runs: Set<String> = ["ci", "ci status", "actions", "github actions", "builds", "my builds", "checks", "workflow runs",
+                                 "runs", "gh runs", "build status", "is ci passing", "did ci pass", "is the build passing"]
+        if runs.contains(lower) { return .runs }
+        let mentions: Set<String> = ["mentions", "my mentions", "github notifications", "gh notifications", "gh inbox", "github inbox"]
+        if mentions.contains(lower) { return .mentions }
+
+        // "pr glass edge", "prs about glass", "issues crash", "gh notch"
+        if let m = match(#"^(prs?|pull requests?|issues?|gh|github)\s+(?:about\s+|for\s+|with\s+)?(.+)$"#, lower) {
+            let text = m[2].trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty else { return nil }
+            return .search(text: text, pulls: !m[1].hasPrefix("issue"))
+        }
+        return nil
+    }
+
+    /// The groups of the first match (the whole match first, "" for a group that didn't take part).
+    private static func match(_ pattern: String, _ s: String) -> [String]? {
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) else { return nil }
+        return (0..<m.numberOfRanges).map { i in Range(m.range(at: i), in: s).map { String(s[$0]) } ?? "" }
     }
 }

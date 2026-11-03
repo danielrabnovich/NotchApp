@@ -121,7 +121,7 @@ enum GlancePeek {
                 c.title = "\(run.short) · \(run.title)"
                 let step = run.ring.current.map { "\($0.job) › \($0.name)" }
                 c.detail = run.finished != nil ? GlanceActions.hint(for: item)
-                    : [step, run.ring.total > 0 ? "\(run.ring.done) of \(run.ring.total) steps" : "Starting"].compactMap { $0 }.joined(separator: " · ")
+                    : [step, run.ring.total > 0 ? "\(run.ring.jobsDone) of \(run.ring.jobsTotal) jobs" : "Starting"].compactMap { $0 }.joined(separator: " · ")
             } else {
                 let reviews = github.pulls.filter(\.wantsReview).count, others = github.needsYouCount - reviews
                 c.title = github.needsYouCount == 0 ? "Nothing waiting on you" : [reviews > 0 ? "\(reviews) review\(reviews == 1 ? "" : "s")" : nil,

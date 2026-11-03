@@ -34,6 +34,7 @@ struct ResultView: View {
                      : job.route == .screen ? ScreenQuestion.privacyLine
                      : job.route == .help ? "From NotchApp's guide, settings and changelog"
                      : job.route == .recall ? "Looking through what you've seen, on this Mac"
+                     : job.route == .github ? "Asking GitHub"
                      : "Working out where to look")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.3))
@@ -65,6 +66,7 @@ struct ResultView: View {
                 switch job.route {
                 case .files?: FileResults(job: job, accent: accent, selection: $selection)
                 case .weather?: if let report = job.weather { WeatherCard(report: report, accent: accent) }
+                case .github?: if let answer = job.github { GitHubResults(answer: answer, selection: $selection) }
                 case .calendar?: if let answer = job.calendar { CalendarResult(answer: answer) }
                 case .notes?: if let answer = job.notes { NotesResult(answer: answer) }
                 case .screen?: ScreenResults(job: job, accent: accent, selection: $selection)
@@ -147,6 +149,7 @@ struct RouteFooter: View {
                         : job.sources.isEmpty ? "Looked at your screen" : "Your screen and the web")
         case .help?: ("questionmark.circle", "NotchApp help")
         case .recall?: ("clock.arrow.circlepath", "Recall, on this Mac")
+        case .github?: ("arrow.triangle.pull", GitHubService.shared.connection.login.map { "GitHub, as \($0)" } ?? "GitHub")
         case .write?: ("character.bubble", "Written by \(!AppSettings.shared.aiProvider.isCloud ? "the model on this Mac" : AppSettings.shared.aiProvider.shortName)")
         default: ("globe", "Searched the web")
         }
@@ -194,11 +197,13 @@ struct RouteFooter: View {
                 .padding(.leading, (job.followUpTitle == nil || job.state != .done) && !ChatStore.canContinue(job) ? 4 : 0)
             }
             Spacer()
-            if !assistant.aiAvailable && job.route != .weather && job.route != .recall && assistant.pullingModel == nil {
+            if !assistant.aiAvailable && job.route != .weather && job.route != .recall && job.route != .github && assistant.pullingModel == nil {
                 Text(job.route == .web ? "AI writes answers from these ·" : "AI picks the best match ·")
                 if case .modelMissing = assistant.status { DownloadModelMenu() }
             } else if job.route == .recall, !(job.recall?.hits.isEmpty ?? true) {
                 KeyHints(hints: [("↑↓", nil), ("↩", "open"), ("⌘Y", "preview")])
+            } else if job.route == .github, let links = job.github?.links, !links.isEmpty {
+                KeyHints(hints: links.count > 1 ? [("↑↓", nil), ("↩", "open")] : [("↩", "open")])
             } else if job.route == .files, !job.files.isEmpty {
                 KeyHints(hints: job.files.count > 1 ? [("↑↓", nil), ("↩", "open"), ("⌘Y", "preview")]
                                                     : [("↩", "open"), ("⌘Y", "preview")])

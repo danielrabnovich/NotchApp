@@ -25,6 +25,17 @@ struct GitHubModelTests {
         #expect(ring.current?.name == "Compile")
     }
 
+    @Test func jobsLikeGitHubCountsThem() {
+        let ring = CIRing(jobs: [
+            .init(name: "Test", status: "completed", conclusion: "success", steps: [("Checkout", "completed", "success"), ("Run", "completed", "success")]),
+            .init(name: "Build", status: "in_progress", conclusion: nil, steps: [("Checkout", "completed", "success"), ("Build", "in_progress", nil)]),
+        ])
+        #expect(ring.jobsTotal == 2)
+        #expect(ring.jobsDone == 1)
+        #expect(ring.jobs.map(\.state) == [.success, .running])
+        #expect(ring.total == 4)
+    }
+
     @Test func ringFailedLeavesNoStepWaiting() {
         let ring = CIRing(jobs: [
             .init(name: "Test", status: "completed", conclusion: "failure", steps: [
@@ -85,5 +96,27 @@ struct GitHubModelTests {
         #expect(GitHubReason(api: "mention").needsYou)
         #expect(!GitHubReason(api: "comment").needsYou)
         #expect(GitHubReason(api: "something_new") == .other)
+    }
+}
+
+struct GitHubQueryTests {
+    @Test("Parses", arguments: [
+        ("pr 142", GitHubQuery.pull(repo: nil, number: 142)), ("PR #7", .pull(repo: nil, number: 7)), ("#12", .pull(repo: nil, number: 12)),
+        ("pull request 3", .pull(repo: nil, number: 3)), ("danielrabnovich/NotchApp#3", .pull(repo: "danielrabnovich/NotchApp", number: 3)),
+        ("https://github.com/o/r/pull/55/files", .pull(repo: "o/r", number: 55)),
+        ("my prs", .mine), ("Pull requests", .mine), ("reviews", .reviews), ("what needs my review?", .reviews),
+        ("ci", .runs), ("Actions", .runs), ("mentions", .mentions),
+        ("prs glass edge", .search(text: "glass edge", pulls: true)), ("issues about crash", .search(text: "crash", pulls: false)),
+        ("gh notch", .search(text: "notch", pulls: true)),
+    ])
+    func parses(query: String, expected: GitHubQuery) {
+        #expect(GitHubQuery.parse(query) == expected)
+    }
+
+    @Test("Leaves other searches alone", arguments: [
+        "what is ci/cd", "weather tomorrow", "pricing page", "the pr deck I sent", "print to pdf", "show me prices",
+    ])
+    func leaves(query: String) {
+        #expect(GitHubQuery.parse(query) == nil)
     }
 }

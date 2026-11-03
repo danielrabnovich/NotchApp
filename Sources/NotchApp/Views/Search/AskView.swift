@@ -326,6 +326,7 @@ struct AskView: View {
         case .files?: return job.files.map(\.url)
         // Each moment's picture (for Quick Look); ↩ goes back to the page or app instead.
         case .recall?: return (job.recall?.hits ?? []).map { $0.thumbnail ?? URL(fileURLWithPath: "/") }
+        case .github?: return job.github?.links ?? []
         case .weather?, .calendar?, .actions?, .help?: return []
         default: return (job.answer ?? "").isEmpty ? job.sources.map(\.url) : job.sources.prefix(5).map(\.url)
         }

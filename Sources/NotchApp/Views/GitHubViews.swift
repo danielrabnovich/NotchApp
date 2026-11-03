@@ -7,10 +7,14 @@ struct CIRingView: View {
     let ring: CIRing
     var diameter: CGFloat = 18
     var lineWidth: CGFloat? = nil
+    /// One segment per job (as GitHub counts checks), each filling with its steps; false draws one
+    /// segment per step (a pull request's checks, already one each).
+    var byJob = true
 
     var body: some View {
         let line = lineWidth ?? max(2, (diameter / 8 * 2).rounded() / 2)
-        let count = max(ring.steps.count, 1)
+        let groups: [[CIRing.Step]] = byJob ? ring.jobs.map(\.steps) : ring.steps.map { [$0] }
+        let count = max(groups.count, 1)
         // A hairline gap between segments while there's room for it.
         let gap = count > 1 && count < 40 ? min(0.012, 0.25 / Double(count)) : 0
         ZStack {
@@ -23,9 +27,13 @@ struct CIRingView: View {
                         .rotationEffect(.degrees(context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.2) / 1.2 * 360))
                 }
             } else {
-                ForEach(Array(ring.steps.enumerated()), id: \.offset) { i, step in
-                    let from = Double(i) / Double(count), to = Double(i + 1) / Double(count)
-                    Segment(from: from + gap / 2, to: to - gap / 2, state: step.state, line: line)
+                ForEach(Array(groups.enumerated()), id: \.offset) { i, steps in
+                    // The job's share of the circle, split evenly between its steps.
+                    let from = Double(i) / Double(count) + gap / 2, to = Double(i + 1) / Double(count) - gap / 2
+                    let each = (to - from) / Double(max(steps.count, 1))
+                    ForEach(Array(steps.enumerated()), id: \.offset) { j, step in
+                        Segment(from: from + Double(j) * each, to: from + Double(j + 1) * each, state: step.state, line: line)
+                    }
                 }
             }
         }
@@ -208,7 +216,7 @@ struct GitHubCard: View {
             }
         }
         guard run.ring.total > 0 else { return "Starting…" }
-        return "\(run.ring.done)/\(run.ring.total) · \(time)"
+        return "\(run.ring.jobsDone)/\(run.ring.jobsTotal) · \(time)"
     }
 
     private func list(_ pulls: [GitHubService.PullRequest], more: Int) -> some View {

@@ -344,6 +344,7 @@ private struct MessageRow: View {
         case .actions: ("sparkles", "Actions")
         case .write: ("character.bubble", "Written for you")
         case .app: ("wand.and.stars", "In the app in front")
+        case .github: ("arrow.triangle.pull", "GitHub")
         }
         return Label(text, systemImage: icon)
             .font(.system(size: 10.5, weight: .semibold))
@@ -503,7 +504,7 @@ private struct ChatResult: View {
         if job.ranTitle != nil { return true }
         guard (job.answer ?? "").isEmpty else { return false }
         switch job.route {
-        case .files?, .weather?, .calendar?, .notes?, .recall?, .actions?, .app?: return true
+        case .files?, .weather?, .calendar?, .notes?, .recall?, .actions?, .app?, .github?: return true
         default: return false
         }
     }
@@ -520,6 +521,7 @@ private struct ChatResult: View {
             case .weather?: if let report = job.weather { card(height: 236) { WeatherCard(report: report, accent: messageBlue, stacked: true) } }
             case .calendar?: if let answer = job.calendar { card(height: 170) { CalendarResult(answer: answer) } }
             case .notes?: if let answer = job.notes { card(height: 170) { NotesResult(answer: answer) } }
+            case .github?: if let answer = job.github { card(height: answer.pull == nil ? 230 : 170) { GitHubResults(answer: answer, selection: .constant(-1), narrow: true) } }
             case .recall?: if let answer = job.recall { recall(answer) }
             case .actions?: if let plan = job.plan { card(height: 190) { PlanView(plan: plan, excluded: $excluded, apply: apply, cancel: { chat.markRan(messageID, nil) }) } }
             case .app?: picks
