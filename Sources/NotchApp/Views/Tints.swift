@@ -17,6 +17,9 @@ extension AssistantStore.Route {
         case .recall: .indigo
         case .write: .orange
         case .app: .teal
+        case .github: Color(red: 0.3, green: 0.8, blue: 0.45)
+        case .deploys: .white
+        case .linear: Color(red: 0.45, green: 0.5, blue: 0.95)
         }
     }
 
@@ -34,6 +37,9 @@ extension AssistantStore.Route {
         case .recall: "clock.arrow.circlepath"
         case .write: "character.bubble"
         case .app: "wand.and.stars"
+        case .github: "arrow.triangle.pull"
+        case .deploys: "triangle.fill"
+        case .linear: "circle.lefthalf.filled"
         }
     }
 }

@@ -441,6 +441,12 @@ struct HomeView: View {
             return settings.timerEnabled ? .medium : nil
         case .clipboard:
             return settings.clipboardHistory ? .medium : nil
+        case .github:
+            return settings.githubEnabled ? .medium : nil
+        case .vercel:
+            return settings.vercelEnabled ? .medium : nil
+        case .linear:
+            return settings.linearEnabled ? .medium : nil
         case .unread, .scratchpad, .network, .countdown:
             return .medium
         }
@@ -478,6 +484,9 @@ struct HomeView: View {
         case .scratchpad: ScratchpadCard()
         case .network: NetworkCard(small: item.size == .small)
         case .countdown: CountdownCard(small: item.size == .small)
+        case .github: GitHubCard(small: item.size == .small)
+        case .vercel: VercelCard(small: item.size == .small)
+        case .linear: LinearCard(small: item.size == .small)
         }
     }
 

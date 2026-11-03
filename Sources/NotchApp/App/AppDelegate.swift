@@ -44,6 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DeviceBatteries.shared.start()
         PrivacyMonitor.shared.start()
         AgentMonitor.shared.start()
+        GitHubService.shared.start()
+        VercelService.shared.start()
+        LinearService.shared.start()
         LidSleep.set(disabled: false)   // puts lid sleep back if NotchApp was force quit mid-session
         FrontmostTracker.shared.start()
         Recall.shared.start()

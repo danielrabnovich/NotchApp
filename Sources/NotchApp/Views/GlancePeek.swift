@@ -114,6 +114,44 @@ enum GlancePeek {
             } else {
                 c.detail = GlanceActions.hint(for: item)
             }
+        case .vercel:
+            let vercel = VercelService.shared
+            if let f = vercel.current {
+                c.title = [f.title, f.branch].compactMap { $0 }.joined(separator: " · ")
+                let ready = f.deployments.filter { $0.state == .ready }.count
+                c.detail = f.finished != nil ? GlanceActions.hint(for: item)
+                    : "\(f.deployments.contains { $0.state == .building } ? "Building" : "Queued") · \(ready) of \(f.deployments.count) ready"
+            } else if let d = vercel.recent.first {
+                c.title = "\(d.project) · \(d.label) \(d.state.rawValue)"
+                c.detail = [d.branch, d.message, GitHubResults.ago(d.created)].compactMap { $0 }.joined(separator: " · ")
+            }
+        case .linear:
+            let linear = LinearService.shared
+            if let issue = linear.inProgress.first {
+                c.title = "\(issue.identifier) · \(issue.title)"
+                let more = linear.inProgress.count - 1
+                c.detail = [issue.state.name, more > 0 ? "\(more) more in progress" : nil, "\(linear.mine.count) open"].compactMap { $0 }.joined(separator: " · ")
+            } else {
+                c.title = linear.mine.isEmpty ? "No open issues" : "\(linear.mine.count) open issues"
+                c.detail = linear.mine.first.map { "Next: \($0.identifier) \($0.title)" } ?? GlanceActions.hint(for: item)
+            }
+        case .github:
+            let github = GitHubService.shared
+            if let run = github.currentRun {
+                c.icon = run.finished == nil ? "gearshape.2.fill" : run.ring.outcome == .failed ? "xmark.octagon.fill" : "checkmark.circle.fill"
+                c.title = "\(run.short) · \(run.title)"
+                let step = run.ring.current.map { "\($0.job) › \($0.name)" }
+                c.detail = run.finished != nil ? GlanceActions.hint(for: item)
+                    : [step, run.ring.total > 0 ? "\(run.ring.jobsDone) of \(run.ring.jobsTotal) jobs" : "Starting"].compactMap { $0 }.joined(separator: " · ")
+            } else {
+                let reviews = github.pulls.filter(\.wantsReview).count, others = github.needsYouCount - reviews
+                c.title = github.needsYouCount == 0 ? "Nothing waiting on you" : [reviews > 0 ? "\(reviews) review\(reviews == 1 ? "" : "s")" : nil,
+                                                                                others > 0 ? "\(others) mention\(others == 1 ? "" : "s")" : nil].compactMap { $0 }.joined(separator: " · ")
+                let mine = github.pulls.filter { !$0.wantsReview }
+                let failing = mine.filter { $0.checks == .failed }.count
+                c.detail = [mine.isEmpty ? nil : "\(mine.count) open PR\(mine.count == 1 ? "" : "s")", failing > 0 ? "\(failing) failing" : nil]
+                    .compactMap { $0 }.joined(separator: " · ").nilIfEmpty ?? GlanceActions.hint(for: item)
+            }
         case .worldClock, .goldenHour, .countdown, .vpn, .timer, .keepAwake, .disk, .meeting:
             c.detail = GlanceActions.hint(for: item)
         case .focus:

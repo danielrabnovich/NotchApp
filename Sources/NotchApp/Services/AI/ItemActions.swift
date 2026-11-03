@@ -255,8 +255,16 @@ final class ActionPanel: ObservableObject {
         source = (current, primary, finish)
     }
 
+    /// A finished search's highlighted result and its actions (GitHub, Vercel, Linear), when there's one.
+    private var results: (() -> (target: Target, actions: [ItemAction])?)?
+
+    func attachResults(_ current: @escaping () -> (target: Target, actions: [ItemAction])?) {
+        results = current
+    }
+
     func detach() {
         source = nil
+        results = nil
         close()
     }
 
@@ -269,7 +277,15 @@ final class ActionPanel: ObservableObject {
 
     func toggle() -> Bool {
         if isOpen { close(); return true }
-        guard let item = source?.current() else { return false }
+        guard let item = source?.current() else {
+            guard let found = results?(), found.actions.count > 1 else { return false }
+            filter = ""
+            selected = 0
+            actions = found.actions
+            target = found.target
+            AssistantStore.shared.actionsOpen = true
+            return true
+        }
         let list = actions(for: item)
         guard list.count > 1 else { return false }
         filter = ""
@@ -317,7 +333,7 @@ final class ActionPanel: ObservableObject {
         let held = modifiers.intersection([.command, .option, .control, .shift])
         guard !held.isEmpty else { return false }
         if held == .command, key.lowercased() == "k" { return toggle() }
-        let list = isOpen ? actions : source?.current().map(actions(for:)) ?? []
+        let list = isOpen ? actions : source?.current().map(actions(for:)) ?? results?()?.actions ?? []
         guard let action = list.first(where: { $0.key?.matches(key: key, modifiers: held) == true }),
               isOpen || !action.destructive else { return false }
         run(action)
