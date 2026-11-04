@@ -62,12 +62,18 @@ public struct CIRing: Equatable, Sendable {
                 return [Step(job: job.name, name: job.name, state: CIStepState(status: job.status, conclusion: job.conclusion))]
             }
             let jobState = CIStepState(status: job.status, conclusion: job.conclusion)
-            return job.steps.map { s in
+            var out = job.steps.map { s in
                 var state = CIStepState(status: s.status, conclusion: s.conclusion)
                 // A cancelled or failed job leaves its later steps "queued" forever: they won't run.
                 if jobState.isDone, !state.isDone { state = .skipped }
                 return Step(job: job.name, name: s.name, state: state)
             }
+            // A job that has started but lists only waiting steps is running, as GitHub says.
+            if jobState == .running, let first = out.firstIndex(where: { $0.state == .queued }),
+               !out.contains(where: { $0.state == .running }) {
+                out[first] = Step(job: job.name, name: out[first].name, state: .running)
+            }
+            return out
         }
     }
 
@@ -112,6 +118,39 @@ public struct CIRing: Equatable, Sendable {
         if steps.isEmpty || steps.contains(where: { !$0.state.isDone }) { return .running }
         if steps.contains(where: { $0.state == .cancelled }) { return .cancelled }
         return .passed
+    }
+
+    // MARK: As GitHub's checks box says it
+
+    /// How many checks are in each state, in the order GitHub's donut draws them clockwise from the
+    /// top: successful, skipped, cancelled, failing, in progress, queued. Empty states are left out.
+    public var arcs: [(state: CIStepState, count: Int)] {
+        let order: [CIStepState] = [.success, .skipped, .cancelled, .failure, .running, .queued]
+        let states = jobs.map(\.state)
+        return order.map { state in (state, states.filter { $0 == state }.count) }.filter { $0.count > 0 }
+    }
+
+    /// "7 in progress, 1 skipped, 3 successful checks", worded and ordered as GitHub does.
+    public var checksSummary: String {
+        guard jobsTotal > 0 else { return "Waiting for checks" }
+        let words: [(CIStepState, String)] = [(.failure, "failing"), (.cancelled, "cancelled"), (.running, "in progress"),
+                                              (.queued, "queued"), (.skipped, "skipped"), (.success, "successful")]
+        let states = jobs.map(\.state)
+        let parts = words.compactMap { state, word -> String? in
+            let n = states.filter { $0 == state }.count
+            return n > 0 ? "\(n) \(word)" : nil
+        }
+        return parts.joined(separator: ", ") + (jobsTotal == 1 ? " check" : " checks")
+    }
+
+    /// GitHub's headline over the checks: "Some checks haven't completed yet", "All checks have passed".
+    public var checksHeadline: String {
+        let states = jobs.map(\.state)
+        if states.isEmpty { return "Checks are starting" }
+        if states.contains(where: { !$0.isDone }) { return "Some checks haven't completed yet" }
+        if states.allSatisfy({ $0 == .failure }) { return "All checks have failed" }
+        if states.contains(where: { $0 == .failure || $0 == .cancelled }) { return "Some checks were not successful" }
+        return "All checks have passed"
     }
 
     /// Something already failed, though other steps may still be going: worth saying early.
@@ -159,6 +198,13 @@ public enum GitHubReason: String, Sendable {
 }
 
 public enum GitHubLinks {
+    /// A check's name as GitHub lists it: "CI / kernel (pull_request)". A check run that isn't from
+    /// a workflow (an app's) has just its own name.
+    public static func checkName(workflow: String?, job: String, event: String?) -> String {
+        guard let workflow, !workflow.isEmpty else { return job }
+        return "\(workflow) / \(job)" + (event.map { " (\($0))" } ?? "")
+    }
+
     /// The web page for an API address: …/repos/o/r/pulls/12 → github.com/o/r/pull/12.
     public static func web(api: String?, repo: String) -> URL {
         let base = "https://github.com/\(repo)"

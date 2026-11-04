@@ -66,6 +66,45 @@ struct GitHubModelTests {
         #expect(CIRing(jobs: []).outcome == .running)
     }
 
+    /// The checks box from a real PR: 7 in progress, 1 skipped, 3 successful.
+    @Test func checksLikeGitHub() {
+        func job(_ name: String, _ status: String, _ conclusion: String?) -> CIRing.Job {
+            .init(name: name, status: status, conclusion: conclusion, steps: [])
+        }
+        let ring = CIRing(jobs: (1...7).map { job("CI / j\($0) (push)", "in_progress", nil) }
+                          + [job("CI / docs (push)", "completed", "skipped")]
+                          + (1...3).map { job("CI / ok\($0) (pull_request)", "completed", "success") })
+        #expect(ring.checksSummary == "7 in progress, 1 skipped, 3 successful checks")
+        #expect(ring.checksHeadline == "Some checks haven't completed yet")
+        #expect(ring.arcs.map(\.state) == [.success, .skipped, .running])
+        #expect(ring.arcs.map(\.count) == [3, 1, 7])
+    }
+
+    @Test func checksHeadlines() {
+        let passed = CIRing(jobs: [.init(name: "a", status: "completed", conclusion: "success", steps: []),
+                                   .init(name: "b", status: "completed", conclusion: "skipped", steps: [])])
+        #expect(passed.checksHeadline == "All checks have passed")
+        let failed = CIRing(jobs: [.init(name: "a", status: "completed", conclusion: "failure", steps: []),
+                                   .init(name: "b", status: "completed", conclusion: "success", steps: [])])
+        #expect(failed.checksHeadline == "Some checks were not successful")
+        #expect(failed.checksSummary == "1 failing, 1 successful checks")
+        #expect(CIRing(jobs: [.init(name: "a", status: "queued", conclusion: nil, steps: [])]).checksSummary == "1 queued check")
+    }
+
+    @Test func startedJobWithWaitingStepsIsRunning() {
+        let ring = CIRing(jobs: [.init(name: "a", status: "in_progress", conclusion: nil, steps: [("x", "queued", nil), ("y", "queued", nil)])])
+        #expect(ring.jobs.first?.state == .running)
+    }
+
+    @Test("Check names", arguments: [
+        (String?("CI"), "kernel", String?("pull_request"), "CI / kernel (pull_request)"),
+        ("CI", "ts", "push", "CI / ts (push)"),
+        (nil, "Vercel", nil, "Vercel"),
+    ])
+    func checkNames(workflow: String?, job: String, event: String?, expected: String) {
+        #expect(GitHubLinks.checkName(workflow: workflow, job: job, event: event) == expected)
+    }
+
     @Test("Web links", arguments: [
         ("https://api.github.com/repos/o/r/pulls/12", "https://github.com/o/r/pull/12"),
         ("https://api.github.com/repos/o/r/issues/7", "https://github.com/o/r/issues/7"),

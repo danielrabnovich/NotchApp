@@ -129,7 +129,7 @@ enum GitHubSearch {
     number title url state isDraft additions deletions changedFiles reviewDecision mergeable updatedAt
     author { login } baseRefName headRefName comments { totalCount } labels(first: 6) { nodes { name } }
     commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 60) { nodes {
-      __typename ... on CheckRun { name status conclusion detailsUrl checkSuite { workflowRun { databaseId workflow { name } } } }
+      __typename ... on CheckRun { name status conclusion detailsUrl checkSuite { workflowRun { databaseId event workflow { name } } } }
       ... on StatusContext { context state targetUrl } } } } } } }
     """
 
@@ -183,12 +183,13 @@ enum GitHubSearch {
         let contexts = (((commit?["statusCheckRollup"] as? [String: Any])?["contexts"] as? [String: Any])?["nodes"] as? [[String: Any]]) ?? []
         for c in contexts {
             if c["__typename"] as? String == "CheckRun" {
-                let name = c["name"] as? String ?? "Check"
                 let run = ((c["checkSuite"] as? [String: Any])?["workflowRun"] as? [String: Any])
-                let workflow = ((run?["workflow"] as? [String: Any])?["name"] as? String) ?? name
+                // "CI / kernel (pull_request)", as GitHub lists it; a check from an app keeps its own name.
+                let name = GitHubLinks.checkName(workflow: (run?["workflow"] as? [String: Any])?["name"] as? String,
+                                                 job: c["name"] as? String ?? "Check", event: run?["event"] as? String)
                 if let id = run?["databaseId"] as? Int, !runIDs.contains(id) { runIDs.append(id) }
                 let state = CIStepState(status: (c["status"] as? String)?.lowercased(), conclusion: (c["conclusion"] as? String)?.lowercased())
-                steps.append(.init(job: workflow, name: name, state: state))
+                steps.append(.init(job: name, name: name, state: state))
                 if let link = (c["detailsUrl"] as? String).flatMap(URL.init(string:)) { links[name] = link }
             } else {
                 let name = c["context"] as? String ?? "Status"
