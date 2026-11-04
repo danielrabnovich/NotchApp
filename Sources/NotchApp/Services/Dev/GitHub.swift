@@ -303,11 +303,14 @@ final class GitHubService: ObservableObject {
         for r in found.sorted(by: { ($0["id"] as? Int ?? 0) < ($1["id"] as? Int ?? 0) }) {
             guard let id = r["id"] as? Int,
                   let j = try? await get("/repos/\(run.repo)/actions/runs/\(id)/jobs?per_page=100") as? [String: Any] else { continue }
+            // Named as GitHub lists the check: "CI / kernel (pull_request)".
+            let workflow = r["name"] as? String, event = r["event"] as? String
             for job in j["jobs"] as? [[String: Any]] ?? [] {
+                let name = GitHubLinks.checkName(workflow: workflow, job: job["name"] as? String ?? "", event: event)
                 let steps = (job["steps"] as? [[String: Any]] ?? []).map {
                     (name: $0["name"] as? String ?? "", status: $0["status"] as? String, conclusion: $0["conclusion"] as? String)
                 }
-                jobs.append(.init(name: job["name"] as? String ?? "", status: job["status"] as? String,
+                jobs.append(.init(name: name, status: job["status"] as? String,
                                   conclusion: job["conclusion"] as? String, steps: steps))
             }
         }
@@ -337,7 +340,7 @@ final class GitHubService: ObservableObject {
         let took = CommandHandler.duration(Date().timeIntervalSince(run.started))
         switch run.ring.outcome {
         case .passed, .running:
-            ActivityCenter.shared.show(.notice(title: "Checks passed", detail: "\(run.short) · \(run.ring.jobsTotal) job\(run.ring.jobsTotal == 1 ? "" : "s") in \(took)",
+            ActivityCenter.shared.show(.notice(title: "Checks passed", detail: "\(run.short) · \(run.ring.checksSummary) in \(took)",
                                                icon: "checkmark.circle.fill", tone: .success), for: 5) { NSWorkspace.shared.open(run.url) }
         case .cancelled:
             ActivityCenter.shared.show(.notice(title: "Checks cancelled", detail: run.short, icon: "stop.circle.fill", tone: .info), for: 4) {
@@ -470,21 +473,23 @@ final class GitHubService: ObservableObject {
         let sha = String(id.split(separator: "@").last!)
         var run = FollowedRun(repo: "demo/notch", sha: sha, branch: "feat/glass", title: "Glass edge sync",
                               url: URL(string: "https://github.com")!, started: Date())
-        let names = [("Build", ["Checkout", "Set up Swift", "Resolve", "Build", "Archive"]), ("Test", ["Checkout", "Unit tests", "UI tests"]),
-                     ("Lint", ["Checkout", "SwiftLint"])]
+        let names = [("CI / build (push)", ["Checkout", "Build"]), ("CI / build (pull_request)", ["Checkout", "Build"]),
+                     ("CI / test (push)", ["Checkout", "Unit tests"]), ("CI / test (pull_request)", ["Checkout", "Unit tests"]),
+                     ("CI / lint (pull_request)", ["SwiftLint"])]
+        // The jobs run side by side, each starting a beat after the last; a failing run breaks "CI / test (pull_request)".
         func ring(at tick: Int) -> CIRing {
-            var n = 0
-            return CIRing(steps: names.flatMap { job, steps in
-                steps.map { name -> CIRing.Step in
-                    defer { n += 1 }
-                    let state: CIStepState = fail && n == 6 && tick > n ? .failure : n < tick ? .success : n == tick ? .running : .queued
-                    return .init(job: job, name: name, state: state)
+            CIRing(steps: names.enumerated().flatMap { i, job in
+                job.1.enumerated().map { k, name -> CIRing.Step in
+                    let t = tick - i
+                    let state: CIStepState = fail && i == 3 && k == 1 && t > k ? .failure
+                        : fail && i == 3 && t > 1 ? .skipped : k < t ? .success : k == t ? .running : .queued
+                    return .init(job: job.0, name: name, state: state)
                 }
             })
         }
         run.ring = ring(at: 0)
         runs.append(run)
-        let total = names.reduce(0) { $0 + $1.1.count }
+        let total = names.enumerated().map { $0.offset + $0.element.1.count }.max() ?? 1
         for tick in 1...total {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(tick) * 1.5) { [weak self] in
                 guard let self else { return }

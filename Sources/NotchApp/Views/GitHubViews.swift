@@ -1,22 +1,28 @@
 import NotchKit
 import SwiftUI
 
-/// The Actions ring: one segment per step, in order around the circle from the top. Green when a
-/// step passed, yellow (breathing) while it runs, red when it failed, grey while it waits.
+/// The CI ring. For GitHub it mirrors the donut on a pull request's checks box: one share per
+/// check, gathered by state (successful, skipped, failing, in progress, queued) clockwise from the
+/// top, so the green grows as checks pass. For deploys each job's share fills with its steps.
 struct CIRingView: View {
+    enum Style {
+        /// GitHub's donut: a share per check, gathered by state.
+        case checks
+        /// A share per job, filling step by step (a Vercel project: Queued → Building → Ready).
+        case jobSteps
+        /// A share per step.
+        case steps
+    }
+
     let ring: CIRing
     var diameter: CGFloat = 18
     var lineWidth: CGFloat? = nil
-    /// One segment per job (as GitHub counts checks), each filling with its steps; false draws one
-    /// segment per step (a pull request's checks, already one each).
-    var byJob = true
+    var style: Style = .checks
+
+    private struct Arc { let from: Double; let to: Double; let state: CIStepState }
 
     var body: some View {
         let line = lineWidth ?? max(2, (diameter / 8 * 2).rounded() / 2)
-        let groups: [[CIRing.Step]] = byJob ? ring.jobs.map(\.steps) : ring.steps.map { [$0] }
-        let count = max(groups.count, 1)
-        // A hairline gap between segments while there's room for it.
-        let gap = count > 1 && count < 40 ? min(0.012, 0.25 / Double(count)) : 0
         ZStack {
             Circle().stroke(.white.opacity(0.12), lineWidth: line)
             if ring.steps.isEmpty {
@@ -27,13 +33,8 @@ struct CIRingView: View {
                         .rotationEffect(.degrees(context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.2) / 1.2 * 360))
                 }
             } else {
-                ForEach(Array(groups.enumerated()), id: \.offset) { i, steps in
-                    // The job's share of the circle, split evenly between its steps.
-                    let from = Double(i) / Double(count) + gap / 2, to = Double(i + 1) / Double(count) - gap / 2
-                    let each = (to - from) / Double(max(steps.count, 1))
-                    ForEach(Array(steps.enumerated()), id: \.offset) { j, step in
-                        Segment(from: from + Double(j) * each, to: from + Double(j + 1) * each, state: step.state, line: line)
-                    }
+                ForEach(Array(arcs.enumerated()), id: \.offset) { _, arc in
+                    Segment(from: arc.from, to: arc.to, state: arc.state, line: line, empty: style != .checks && arc.state == .queued)
                 }
             }
         }
@@ -42,13 +43,37 @@ struct CIRingView: View {
         .animation(.easeOut(duration: 0.35), value: ring)
     }
 
+    private var arcs: [Arc] {
+        switch style {
+        case .checks:
+            let total = Double(max(ring.jobsTotal, 1)), parts = ring.arcs
+            let gap = parts.count > 1 ? 0.012 : 0
+            var at = 0.0
+            return parts.map { part in
+                let share = Double(part.count) / total
+                defer { at += share }
+                return Arc(from: at + gap / 2, to: at + share - gap / 2, state: part.state)
+            }
+        case .jobSteps, .steps:
+            let groups: [[CIRing.Step]] = style == .jobSteps ? ring.jobs.map(\.steps) : ring.steps.map { [$0] }
+            let count = max(groups.count, 1)
+            // A hairline gap between segments while there's room for it.
+            let gap = count > 1 && count < 40 ? min(0.012, 0.25 / Double(count)) : 0
+            return groups.enumerated().flatMap { i, steps -> [Arc] in
+                let from = Double(i) / Double(count) + gap / 2, to = Double(i + 1) / Double(count) - gap / 2
+                let each = (to - from) / Double(max(steps.count, 1))
+                return steps.enumerated().map { j, step in Arc(from: from + Double(j) * each, to: from + Double(j + 1) * each, state: step.state) }
+            }
+        }
+    }
+
     static func color(_ state: CIStepState) -> Color {
         switch state {
         case .success: Color(red: 0.25, green: 0.82, blue: 0.4)
         case .running: Color(red: 1, green: 0.8, blue: 0.2)
         case .failure: Color(red: 1, green: 0.3, blue: 0.3)
         case .cancelled, .skipped: .white.opacity(0.32)
-        case .queued: .white.opacity(0.0)
+        case .queued: Color(red: 1, green: 0.8, blue: 0.2).opacity(0.4)
         }
     }
 
@@ -66,11 +91,13 @@ struct CIRingView: View {
         let to: Double
         let state: CIStepState
         let line: CGFloat
+        /// A step still to come, left as bare track so the job's share fills as it goes.
+        var empty = false
         @State private var dim = false
 
         var body: some View {
             Circle().trim(from: from, to: max(from, to))
-                .stroke(CIRingView.color(state), style: StrokeStyle(lineWidth: line, lineCap: .butt))
+                .stroke(empty ? .clear : CIRingView.color(state), style: StrokeStyle(lineWidth: line, lineCap: .butt))
                 .opacity(state == .running && dim ? 0.45 : 1)
                 .onAppear { breathe() }
                 .onChange(of: state) { _, _ in breathe() }
@@ -203,7 +230,7 @@ struct GitHubCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("\(run.repo) · \(run.title)")
+        .help("\(run.repo) · \(run.title)\n\(run.ring.checksHeadline)\n\(run.ring.checksSummary)")
     }
 
     private func status(_ run: GitHubService.FollowedRun, now: Date) -> String {
@@ -216,7 +243,7 @@ struct GitHubCard: View {
             }
         }
         guard run.ring.total > 0 else { return "Starting…" }
-        return "\(run.ring.jobsDone)/\(run.ring.jobsTotal) · \(time)"
+        return "\(run.ring.jobsDone) of \(run.ring.jobsTotal) checks · \(time)"
     }
 
     private func list(_ pulls: [GitHubService.PullRequest], more: Int) -> some View {

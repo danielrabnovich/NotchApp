@@ -12,7 +12,7 @@ struct VercelReading: View {
     var body: some View {
         if let f = vercel.current {
             HStack(spacing: 5) {
-                CIRingView(ring: f.ring, diameter: 16)
+                CIRingView(ring: f.ring, diameter: 16, style: .jobSteps)
                 if !compact {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         Text(ciElapsed((f.finished ?? context.date).timeIntervalSince(f.started)))
@@ -123,7 +123,7 @@ struct VercelCard: View {
     private func buildRow(_ f: VercelService.Followed, ring: CGFloat) -> some View {
         Button { if let u = f.url { NSWorkspace.shared.open(u) } } label: {
             HStack(spacing: 8) {
-                CIRingView(ring: f.ring, diameter: ring)
+                CIRingView(ring: f.ring, diameter: ring, style: .jobSteps)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(f.title).font(HomeType.row.weight(.medium)).foregroundStyle(.white.opacity(0.9))
                     TimelineView(.periodic(from: .now, by: 1)) { context in

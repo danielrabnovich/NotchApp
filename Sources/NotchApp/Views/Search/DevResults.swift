@@ -89,7 +89,7 @@ struct DeployMark: View {
                 .font(.system(size: size * 0.8, weight: .semibold))
                 .foregroundStyle(d.state == .ready ? CIRingView.color(CIStepState.success) : d.state == .error ? CIRingView.color(CIStepState.failure) : .white.opacity(0.45))
         } else {
-            CIRingView(ring: CIRing(steps: d.steps), diameter: size, byJob: false)
+            CIRingView(ring: CIRing(steps: d.steps), diameter: size, style: .steps)
         }
     }
 }

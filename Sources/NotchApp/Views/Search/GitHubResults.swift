@@ -130,7 +130,7 @@ private struct PullCard: View {
 
     private var ring: some View {
         ZStack {
-            CIRingView(ring: pull.checks, diameter: 62, lineWidth: 6, byJob: false)
+            CIRingView(ring: pull.checks, diameter: 62, lineWidth: 6)
                 .opacity(pull.checks.steps.isEmpty ? 0.4 : 1)
             VStack(spacing: 0) {
                 switch pull.checks.steps.isEmpty ? nil : pull.checks.outcome {
@@ -138,7 +138,7 @@ private struct PullCard: View {
                 case .failed?: Image(systemName: "xmark").font(.system(size: 20, weight: .bold)).foregroundStyle(CIRingView.color(.failed))
                 case .cancelled?: Image(systemName: "stop.fill").font(.system(size: 15)).foregroundStyle(.white.opacity(0.6))
                 case .running?:
-                    Text("\(pull.checks.done)/\(pull.checks.total)").font(.system(size: 14, weight: .semibold).monospacedDigit())
+                    Text("\(pull.checks.jobsDone)/\(pull.checks.jobsTotal)").font(.system(size: 14, weight: .semibold).monospacedDigit())
                 case nil:
                     Image(systemName: GitHubResults.icon(pull.state, pull: true))
                         .font(.system(size: 20, weight: .medium)).foregroundStyle(GitHubResults.color(pull.state))
@@ -203,7 +203,7 @@ private struct PullCard: View {
         let order: [CIStepState] = [.failure, .running, .queued, .cancelled, .success, .skipped]
         let sorted = pull.checks.steps.sorted { (order.firstIndex(of: $0.state) ?? 9) < (order.firstIndex(of: $1.state) ?? 9) }
         return VStack(alignment: .leading, spacing: 6) {
-            Text(summary).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
+            Text(pull.checks.checksSummary).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.5))
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(sorted.enumerated()), id: \.offset) { _, step in
@@ -223,14 +223,6 @@ private struct PullCard: View {
                 }
             }
         }
-    }
-
-    private var summary: String {
-        let s = pull.checks.steps
-        let failed = s.filter { $0.state == .failure }.count, running = s.filter { !$0.state.isDone }.count
-        let passed = s.filter { $0.state == .success }.count
-        return [failed > 0 ? "\(failed) failing" : nil, running > 0 ? "\(running) running" : nil, passed > 0 ? "\(passed) passed" : nil]
-            .compactMap { $0 }.joined(separator: " · ")
     }
 }
 
