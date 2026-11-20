@@ -23,13 +23,13 @@ struct CloudProviderSettings: View {
             LabeledContent {
                 if hasKey && !replacing { savedKey } else { keyField }
             } label: {
-                RowLabel(title: "API key", subtitle: keySubtitle)
+                RowLabel(title: "API key", subtitle: keySubtitle, shown: true)
             }
             if provider.editableServer {
                 TextField(text: Binding(get: { s.cloudBaseURL(for: provider) },
                                         set: { s.cloudBaseURLs[provider.rawValue] = $0 }),
                           prompt: Text(provider.defaultBaseURL)) {
-                    RowLabel(title: "Server", subtitle: serverSubtitle)
+                    RowLabel(title: "Server", subtitle: serverSubtitle, shown: true)
                 }
             }
             status
@@ -119,13 +119,13 @@ struct CloudProviderSettings: View {
                 if !models.contains(where: { $0.id == chosen }) { Text(chosen.isEmpty ? "Choose…" : chosen).tag(chosen) }
                 ForEach(models) { model in Text(model.name ?? model.id).tag(model.id) }
             } label: {
-                RowLabel(title: "Model", subtitle: models.first { $0.id == chosen }.flatMap { $0.name == nil ? nil : $0.id })
+                RowLabel(title: "Model", subtitle: models.first { $0.id == chosen }.flatMap { $0.name == nil ? nil : $0.id }, shown: true)
             }
         } else {
             LabeledContent {
                 Button(browsing ? "Done" : "Change…") { browsing.toggle(); filter = "" }
             } label: {
-                RowLabel(title: "Model", subtitle: models.first { $0.id == chosen }.map { ($0.name ?? $0.id) + ($0.name == nil ? "" : " · \($0.id)") } ?? chosen)
+                RowLabel(title: "Model", subtitle: models.first { $0.id == chosen }.map { ($0.name ?? $0.id) + ($0.name == nil ? "" : " · \($0.id)") } ?? chosen, shown: true)
             }
             if browsing { modelBrowser(chosen: chosen) }
         }
@@ -244,7 +244,7 @@ struct CLIProviderSettings: View {
                     actionButton
                 }
             } label: {
-                RowLabel(title: tool.name, subtitle: path.map { "Found at \($0)" } ?? "Uses the \(tool.command) command you already have.")
+                RowLabel(title: tool.name, subtitle: path.map { "Found at \($0)" } ?? "Uses the \(tool.command) command you already have.", shown: true)
             }
             if tool.suggestedModels.isEmpty {
                 TextField(text: modelBinding, prompt: Text("Codex's default")) {

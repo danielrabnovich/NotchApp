@@ -110,6 +110,7 @@ final class MediaController: ObservableObject {
             title = ""; artist = ""; album = ""; duration = 0
             isPlaying = false; artwork = nil; accentColor = .white
             bundleID = nil; appName = nil; elapsedAnchor = 0
+            Lyrics.shared.refresh()
             return
         }
 
@@ -120,6 +121,7 @@ final class MediaController: ObservableObject {
         duration = (info["duration"] as? NSNumber)?.doubleValue ?? 0
         bundleID = info["bundle"] as? String
         appName = info["app"] as? String
+        if !sameTrack { Lyrics.shared.refresh() }
 
         let r = (info["rate"] as? NSNumber)?.doubleValue ?? (playing ? 1 : 0)
         rate = r > 0 ? r : 1

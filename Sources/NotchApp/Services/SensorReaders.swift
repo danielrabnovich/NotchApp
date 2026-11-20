@@ -357,13 +357,19 @@ struct AppUsage: Identifiable, Equatable {
     /// Share of one core, like Activity Monitor (can exceed 1).
     var cpu: Double
     var memory: UInt64
+    /// Watts its processes have drawn since the last sample: the processor's, from the energy macOS
+    /// counts per process (`ri_energy_nj`), plus its share of the GPU's (see `GPUShare`).
+    var power: Double = 0
+    /// The GPU's part of `power`.
+    var gpuPower: Double = 0
     var id: pid_t { pid }
 }
 
-/// Per-app CPU and memory, with helper processes folded into the app that owns them.
+/// Per-app CPU, memory and processor power, with helper processes folded into the app that owns them.
 /// Only the user's own processes are readable without root, which is what matters here.
 final class ProcessReader {
     private var previous: [pid_t: UInt64] = [:]
+    private var previousEnergy: [pid_t: UInt64] = [:]
     private var lastTime: UInt64 = 0
     private let ticksToNanos: Double = {
         var tb = mach_timebase_info()
@@ -381,17 +387,22 @@ final class ProcessReader {
         let elapsed = Double(now &- lastTime) * ticksToNanos
         let hasBaseline = lastTime != 0 && elapsed > 0
         var times: [pid_t: UInt64] = [:]
+        var energies: [pid_t: UInt64] = [:]
         var apps: [pid_t: AppUsage] = [:]
 
         for pid in pids.prefix(count) where pid > 0 {
-            var info = rusage_info_v4()
+            var info = rusage_info_v6()
             let r = withUnsafeMutablePointer(to: &info) {
-                $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V4, $0) }
+                $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(pid, RUSAGE_INFO_V6, $0) }
             }
             guard r == 0 else { continue }
             let cpuTime = info.ri_user_time + info.ri_system_time
             times[pid] = cpuTime
             let delta = hasBaseline ? Double(cpuTime &- (previous[pid] ?? cpuTime)) * ticksToNanos / elapsed : 0
+            // Nanojoules over nanoseconds: watts.
+            energies[pid] = info.ri_energy_nj
+            let energy = info.ri_energy_nj >= (previousEnergy[pid] ?? info.ri_energy_nj) ? info.ri_energy_nj - (previousEnergy[pid] ?? info.ri_energy_nj) : 0
+            let watts = hasBaseline ? Double(energy) / elapsed : 0
 
             let key = AppIdentity.responsiblePID(for: pid)
             var app = apps[key] ?? {
@@ -399,10 +410,12 @@ final class ProcessReader {
                 return AppUsage(pid: key, name: identity.name, bundlePath: identity.bundlePath, cpu: 0, memory: 0)
             }()
             app.cpu += max(0, delta)
+            app.power += watts
             app.memory += info.ri_phys_footprint
             apps[key] = app
         }
         previous = times
+        previousEnergy = energies
         lastTime = now
         AppIdentity.prune(keeping: Set(times.keys))
         return Array(apps.values)

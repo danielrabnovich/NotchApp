@@ -74,19 +74,28 @@ final class HeatWatcher {
         guard state == .serious || state == .critical, Date().timeIntervalSince(lastAlert) > 20 * 60 else { return }
         lastAlert = Date()
         Task {
-            let busiest = await Self.busiestApp()
+            // Who warmed it: the most over the last ten minutes if that's on record, else right now.
+            let who: String
+            if let top = PowerHistory.shared.top(minutes: 10, limit: 1).first, top.watts >= 1, PowerHistory.shared.span >= 5 {
+                who = " · \(top.name) has drawn \(formatSmall(top.watts)) W for \(min(10, PowerHistory.shared.span)) min"
+            } else {
+                who = (await Self.hungriestApp()).map { " · \($0.name) is drawing \(formatSmall($0.watts)) W" } ?? ""
+            }
             ActivityCenter.shared.show(.notice(title: state == .critical ? "Your Mac is very hot" : "Your Mac is running hot",
-                                               detail: "macOS is slowing it down to cool off" + (busiest.map { " · \($0) is working hardest" } ?? ""),
+                                               detail: "macOS is slowing it down to cool off" + who,
                                                icon: "thermometer.high", tone: .warning), for: 6)
         }
     }
 
-    /// The app using the most processor right now, by name.
-    private nonisolated static func busiestApp() async -> String? {
-        let out = await Shell.run("/bin/ps", ["-Arco", "pcpu=,comm="], timeout: 3).out
-        guard let line = out.split(separator: "\n").first else { return nil }
-        let parts = line.trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
-        guard parts.count == 2, (Double(parts[0]) ?? 0) > 20 else { return nil }
-        return String(parts[1])
+    /// The app drawing the most processor power over the next two seconds (its helpers counted in),
+    /// if it's drawing enough to matter.
+    private nonisolated static func hungriestApp() async -> (name: String, watts: Double)? {
+        await Task.detached(priority: .utility) { () -> (name: String, watts: Double)? in
+            let reader = ProcessReader()
+            _ = reader.sample()
+            try? await Task.sleep(for: .seconds(2))
+            guard let top = reader.sample().max(by: { $0.power < $1.power }), top.power >= 1 else { return nil }
+            return (top.name, top.power)
+        }.value
     }
 }

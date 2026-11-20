@@ -15,8 +15,8 @@ final class MouseUtilities {
 
     func start() {
         let s = AppSettings.shared
-        s.$reverseMouseScroll.combineLatest(s.$threeFingerMiddleClick)
-            .sink { [weak self] _, _ in DispatchQueue.main.async { self?.reconfigure() } }
+        s.$reverseMouseScroll.combineLatest(s.$threeFingerMiddleClick, s.$edgeSliders)
+            .sink { [weak self] _, _, _ in DispatchQueue.main.async { self?.reconfigure() } }
             .store(in: &cancellables)
         NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
             .sink { _ in DispatchQueue.main.async { Multitouch.restart() } }
@@ -28,9 +28,10 @@ final class MouseUtilities {
         MouseTapState.reverseScroll = s.reverseMouseScroll
         MouseTapState.middleClick = s.threeFingerMiddleClick
         MouseTapState.middleClickFingers = Self.systemThreeFingerDragEnabled() ? 4 : 3
-        if s.threeFingerMiddleClick { Multitouch.start() } else { Multitouch.stop() }
+        EdgeSliders.enabled = s.edgeSliders
+        if s.threeFingerMiddleClick || s.edgeSliders { Multitouch.start() } else { Multitouch.stop() }
 
-        let wanted = s.reverseMouseScroll || s.threeFingerMiddleClick
+        let wanted = s.reverseMouseScroll || s.threeFingerMiddleClick || s.edgeSliders
         if wanted, scrollTap == nil, clickTap == nil { install() }
         if !wanted { uninstall() }
     }
@@ -62,7 +63,7 @@ final class MouseUtilities {
         scrollTap = makeTap(.cghidEventTap, .tailAppendEventTap, [.scrollWheel])
         clickTap = makeTap(.cgSessionEventTap, .headInsertEventTap,
                            [.leftMouseDown, .leftMouseUp, .leftMouseDragged,
-                            .rightMouseDown, .rightMouseUp, .rightMouseDragged])
+                            .rightMouseDown, .rightMouseUp, .rightMouseDragged, .mouseMoved])
         MouseTapState.taps = [scrollTap, clickTap].compactMap { $0?.port }
     }
 
@@ -142,6 +143,9 @@ private func mouseTapCallback(_ proxy: CGEventTapProxy, _ type: CGEventType, _ e
     switch type {
     case .tapDisabledByTimeout, .tapDisabledByUserInput:
         MouseTapState.taps.forEach { CGEvent.tapEnable(tap: $0, enable: true) }
+    case .mouseMoved:
+        // A finger sliding along an edge moves a level, not the pointer.
+        if EdgeSliders.sliding { return nil }
     case .scrollWheel:
         if MouseTapState.reverseScroll, isMouseWheel(event) { reverse(event) }
     case .leftMouseDown, .rightMouseDown:
@@ -236,8 +240,9 @@ enum Multitouch {
     nonisolated(unsafe) private(set) static var countSince: TimeInterval = 0
 
     // Runs on the multitouch thread; the word-sized writes are read on the main thread.
-    private static let callback: Callback = { _, _, count, _, _ in
+    private static let callback: Callback = { _, touches, count, _, _ in
         let now = ProcessInfo.processInfo.systemUptime
+        if EdgeSliders.enabled { EdgeSliders.frame(touches, count: count) }
         if count != Multitouch.fingerCount { Multitouch.countSince = now }
         Multitouch.fingerCount = count
         Multitouch.lastFrame = now

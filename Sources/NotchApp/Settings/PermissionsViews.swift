@@ -35,7 +35,7 @@ struct PermissionCard: View {
                     .help("Turned off in System Settings: switch NotchApp on there")
             case .notAsked:
                 Button("Allow…") { permissions.request(kind) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.capsuleProminent)
             }
         }
         .padding(.vertical, 2)
@@ -155,7 +155,7 @@ private struct OnboardingView: View {
                     Text(permissions.essentialsGranted ? "Start Using NotchApp" : "Continue Without Accessibility")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.capsuleProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
             }

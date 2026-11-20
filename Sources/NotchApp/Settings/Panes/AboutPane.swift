@@ -72,7 +72,7 @@ struct AboutPane: View {
                     Text(release.notes).font(.caption).foregroundStyle(.secondary).lineLimit(6).frame(maxWidth: 420)
                 }
                 Button("Install & Restart") { updater.install() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.capsuleProminent)
                     .controlSize(.large)
             }
         case .installing(let stage):

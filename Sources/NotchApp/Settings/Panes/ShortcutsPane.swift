@@ -31,13 +31,10 @@ struct ShortcutsPane: View {
             Section {
                 ToggleRow("Keyboard shortcuts", subtitle: "Press one again while its tab is showing to close the notch.", isOn: $s.hotKeysEnabled)
                 if s.hotKeysEnabled {
-                    Picker(selection: $s.hotKeyModifiers) {
-                        ForEach(HotKeys.Modifiers.allCases) { Text($0.title).tag($0) }
-                    } label: {
+                    ChoiceRow(selection: $s.hotKeyModifiers, options: HotKeys.Modifiers.allCases, title: { $0.title }) {
                         RowLabel(title: "Default modifier keys", subtitle: "For every shortcut you haven't changed, except window keys (always ⌃⌥, as in window tools). ⌥⌘ matches other notch apps but overrides some app shortcuts (⌥⌘D hides the Dock). "
                                  + "✦ Hyper is ⌃⌥⇧⌘ together: turn on Caps Lock is Hyper below to press it with one key.")
                     }
-                    .pickerStyle(.segmented)
                 }
                 ToggleRow("Caps Lock is Hyper",
                           subtitle: "Hold Caps Lock for ⌃⌥⇧⌘ (✦), here and in every other app. Caps Lock no longer turns on capitals. "

@@ -230,7 +230,7 @@ struct ShelfTrayView: View {
         let items = tray.items
         let shape = RoundedRectangle(cornerRadius: ShelfTray.radius, style: .circular)
         ZStack {
-            TrayGlass(look: DynamicGlass.Look(settings.glassLevel), glass: settings.usesGlass)
+            TrayGlass(look: DynamicGlass.Look(amount: settings.glassAmount), glass: settings.usesGlass)
             shape.fill(tray.targeted ? Color.orange.opacity(0.26) : .clear)
             shape.strokeBorder(tray.targeted ? Color.orange.opacity(0.9) : .clear, lineWidth: 1.5)
             if items.isEmpty { waiting } else { pile(items) }

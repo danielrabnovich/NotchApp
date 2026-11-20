@@ -4,6 +4,7 @@ struct MusicPlayerView: View {
     @EnvironmentObject private var media: MediaController
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var audio: AudioOutputManager
+    @ObservedObject private var lyrics = Lyrics.shared
 
     /// Beside Home's day, in half the notch: the art a little smaller and closer, so the player
     /// fits its half (it ran a few points over, and the art was cut off at the left).
@@ -22,10 +23,15 @@ struct MusicPlayerView: View {
                         Text(media.hasTrack ? media.title : "Nothing playing")
                             .font(.system(size: 15, weight: .semibold))
                             .lineLimit(1)
-                        Text(media.hasTrack ? media.artist : "Play something in Music, Spotify or a browser")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.55))
-                            .lineLimit(1)
+                        // With lyrics on, the line being sung takes the artist's place.
+                        if media.hasTrack, case let .synced(lines) = lyrics.state {
+                            LyricLine(lines: lines, accent: accent)
+                        } else {
+                            Text(media.hasTrack ? media.artist : "Play something in Music, Spotify or a browser")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.white.opacity(0.55))
+                                .lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 8)
                     if media.hasTrack && settings.showVisualizer {
@@ -102,7 +108,8 @@ struct MusicPlayerView: View {
 
             Spacer()
 
-            Color.clear.frame(width: 30)
+            LyricsButton()
+                .frame(width: 30, alignment: .trailing)
         }
     }
 }
@@ -285,5 +292,67 @@ struct OutputDeviceMenu: View {
         .fixedSize()
         .help(audio.current.map { "Output: \($0.name)" } ?? "Audio output")
         .onAppear { audio.refresh() }
+    }
+}
+
+/// The music card's lyrics switch, opposite the output menu: the quote marks fill while lyrics are
+/// on, and fade when this song has no synced lyrics.
+private struct LyricsButton: View {
+    @ObservedObject private var lyrics = Lyrics.shared
+    @EnvironmentObject private var media: MediaController
+
+    var body: some View {
+        let missing = lyrics.state == .none
+        Button { lyrics.enabled.toggle() } label: {
+            Image(systemName: lyrics.enabled ? "quote.bubble.fill" : "quote.bubble")
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(missing ? 0.3 : lyrics.enabled ? 0.9 : 0.7))
+                .symbolEffect(.pulse, isActive: lyrics.state == .loading)
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!media.hasTrack)
+        .help(missing ? "No synced lyrics for this song" : lyrics.enabled ? "Hide lyrics" : "Show lyrics (from LRCLIB)")
+    }
+}
+
+/// The line being sung, filling with the artwork's colour as the song moves through it, and
+/// sliding up to the next. Between lines (an intro, a solo) it shows the next one, dimmed.
+struct LyricLine: View {
+    let lines: [Lyrics.Line]
+    let accent: Color
+    @EnvironmentObject private var media: MediaController
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !media.isPlaying)) { context in
+            // A little ahead: the eye wants the word as it's sung, not after.
+            let time = media.elapsed(at: context.date) + 0.25
+            let position = Lyrics.position(in: lines, at: time)
+            let line = position.map { lines[$0.index] }
+            let waiting = line?.text.isEmpty != false
+            let shown = waiting ? lines.first { $0.time > time && !$0.text.isEmpty }?.text ?? "" : line!.text
+            let progress = waiting ? 0 : position?.progress ?? 0
+            Text(shown.isEmpty ? "♪" : shown)
+                .font(.system(size: 12, weight: .medium))
+                .lineLimit(1)
+                .foregroundStyle(.white.opacity(waiting ? 0.3 : 0.45))
+                .overlay(alignment: .leading) {
+                    // The sung part, as a mask over the same text, so the colour runs through it.
+                    Text(shown)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .foregroundStyle(accent)
+                        .mask(alignment: .leading) {
+                            GeometryReader { geo in Rectangle().frame(width: geo.size.width * progress) }
+                        }
+                        .opacity(waiting ? 0 : 1)
+                }
+                .id(shown)
+                .transition(.push(from: .bottom).combined(with: .opacity))
+                .animation(.easeOut(duration: 0.25), value: shown)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
+        }
     }
 }

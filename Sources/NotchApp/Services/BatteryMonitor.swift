@@ -22,6 +22,7 @@ final class BatteryMonitor: ObservableObject {
             MainActor.assumeIsolated {
                 let on = ProcessInfo.processInfo.isLowPowerModeEnabled
                 if BatteryMonitor.shared.lowPowerMode != on { BatteryMonitor.shared.lowPowerMode = on }
+                AppSettings.shared.setLowPower(on)
             }
         }
         let context = Unmanaged.passUnretained(self).toOpaque()

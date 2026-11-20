@@ -32,7 +32,7 @@ struct SettingsPage<Content: View, Accessory: View>: View {
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 360)
                         Button("Turn On") { withAnimation(.snappy) { on.wrappedValue = true } }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.capsuleProminent)
                             .controlSize(.large)
                             .padding(.top, 4)
                     }
@@ -45,6 +45,9 @@ struct SettingsPage<Content: View, Accessory: View>: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+        // One set of controls on every page: see SettingsControls.
+        .toggleStyle(NotchSwitchStyle())
+        .buttonStyle(.capsule)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
                 PaneHeader(pane: pane)
@@ -53,7 +56,7 @@ struct SettingsPage<Content: View, Accessory: View>: View {
                         .padding(.horizontal, 20)
                         .padding(.top, 16)
                         .padding(.bottom, 4)
-                        .background(Color(nsColor: .windowBackgroundColor).opacity(0.97))
+                        .background(NotchControl.page.opacity(0.97))
                 }
             }
         }
@@ -66,49 +69,66 @@ extension SettingsPage where Accessory == EmptyView {
     }
 }
 
-/// The page's title bar: a large icon, the title and what the page is for. Sits in the window's
-/// (hidden) title bar area.
+/// The page's title, in a black notch hanging from the top edge of the page, like the Mac's own:
+/// its icon and name inside, its shortcut keys in the left wing and its on/off switch in the
+/// right, where Glances sit beside the real notch. What the page is for goes under it, small.
 struct PaneHeader: View {
     let pane: SettingsPane
     @EnvironmentObject private var s: AppSettings
 
+    private static let height: CGFloat = 34
+
     var body: some View {
-        HStack(spacing: 14) {
-            SettingsIcon(pane: pane, size: 40)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(pane.title)
-                    .font(.system(size: 20, weight: .bold))
-                Text(pane.summary)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+        VStack(spacing: 7) {
+            // The wings hug the notch, as Glances do; the two sides share the rest of the width
+            // equally, so the notch stays centred whatever sits in them.
+            HStack(spacing: 12) {
+                // Each wing keeps its share of the width even when it has nothing in it.
+                ZStack(alignment: .trailing) {
+                    Color.clear.frame(height: 1)
+                    PaneShortcuts(pane: pane)
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                notch
+                ZStack(alignment: .leading) {
+                    Color.clear.frame(height: 1)
+                    // The feature's master switch, where you look first.
+                    if let on = pane.enabled(s) {
+                        Toggle("", isOn: Binding(get: { on.wrappedValue }, set: { v in withAnimation(.snappy) { on.wrappedValue = v } }))
+                            .toggleStyle(NotchSwitchStyle(bare: true))
+                            .help(on.wrappedValue ? "Turn \(pane.title) off" : "Turn \(pane.title) on")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer(minLength: 8)
-            PaneShortcuts(pane: pane)
-            // The feature's master switch, where you look first.
-            if let on = pane.enabled(s) {
-                Toggle("", isOn: Binding(get: { on.wrappedValue }, set: { v in withAnimation(.snappy) { on.wrappedValue = v } }))
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .help(on.wrappedValue ? "Turn \(pane.title) off" : "Turn \(pane.title) on")
-            }
+            .frame(height: Self.height, alignment: .top)
+            Text(pane.summary)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .frame(maxWidth: 460)
+                .padding(.horizontal, 24)
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 34)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            // The page's colour, faintly, from behind its icon: each page reads as its own place.
-            ZStack {
-                Color(nsColor: .windowBackgroundColor).opacity(0.97)
-                RadialGradient(colors: [pane.tint.opacity(0.22), pane.tint.opacity(0)],
-                               center: UnitPoint(x: 0.06, y: 0.3), startRadius: 0, endRadius: 360)
-                LinearGradient(colors: [pane.tint.opacity(0.06), .clear], startPoint: .top, endPoint: .bottom)
-            }
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity)
+        .background(NotchControl.page.opacity(0.97))
+    }
+
+    private var notch: some View {
+        HStack(spacing: 7) {
+            SettingsIcon(pane: pane, size: 18)
+            Text(pane.title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
         }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.5)).frame(height: 1)
-        }
+        .padding(.horizontal, 22)
+        .frame(height: Self.height)
+        .background(NotchShape(topRadius: 7, bottomRadius: 13, roundness: NotchShape.circle).fill(Color.black))
+        // The flares reach out past the text, as the real notch's do past its corners.
+        .padding(.horizontal, -7)
+        .fixedSize()
     }
 }
 
@@ -139,7 +159,8 @@ struct SettingsSidebar: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 1) {
                         if query.isEmpty {
-                            ForEach(SettingsPane.Group.allCases, id: \.self) { group in
+                            // About isn't a row: the NotchApp footer below opens it.
+                            ForEach(SettingsPane.Group.allCases.filter { $0 != .info }, id: \.self) { group in
                                 if !group.rawValue.isEmpty {
                                     Text(group.rawValue.uppercased())
                                         .font(.system(size: 10, weight: .semibold))
@@ -222,7 +243,7 @@ struct SettingsSidebar: View {
             router.pane = pane
         } label: {
             HStack(spacing: 9) {
-                SettingsIcon(pane: pane, size: 22)
+                SettingsIcon(pane: pane, size: 20)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(pane.title)
                         .font(.system(size: 13, weight: selected ? .semibold : .regular))
@@ -241,7 +262,7 @@ struct SettingsSidebar: View {
                 }
             }
             .padding(.horizontal, 8)
-            .frame(height: hint == nil ? 30 : 38)
+            .frame(height: hint == nil ? 28 : 36)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(selected ? Color.accentColor.opacity(0.22) : lit ? Color.primary.opacity(0.07) : .clear)
@@ -252,24 +273,11 @@ struct SettingsSidebar: View {
         .id(pane)
     }
 
+    /// NotchApp itself: its icon, name and version, and the way to its About page (version,
+    /// its own updates, what's new). An update for NotchApp shows here, not under Homebrew & Apps.
     private var footer: some View {
-        HStack(spacing: 8) {
-            Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 20, height: 20)
-            VStack(alignment: .leading, spacing: 0) {
-                Text("NotchApp").font(.system(size: 11.5, weight: .semibold))
-                Text("Version " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"))
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button { NSApp.terminate(nil) } label: {
-                Image(systemName: "power").font(.system(size: 11, weight: .semibold))
-            }
-            .buttonStyle(.borderless)
-            .help("Quit NotchApp")
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 44)
-        .overlay(alignment: .top) { Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.5)).frame(height: 1) }
+        FooterButton(selected: router.pane == .about) { router.pane = .about }
+            .overlay(alignment: .top) { Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.5)).frame(height: 1) }
     }
 
     private func move(_ delta: Int) {
@@ -395,39 +403,83 @@ struct SettingsIcon: View {
     }
 }
 
-/// A toggle with a one-line explanation under its title.
+/// A toggle with its explanation behind an ⓘ (or under the title, `shown`, when it reports state).
 struct ToggleRow: View {
     let title: String
     var subtitle: String? = nil
+    var shown = false
     @Binding var isOn: Bool
 
-    init(_ title: String, subtitle: String? = nil, isOn: Binding<Bool>) {
+    init(_ title: String, subtitle: String? = nil, shown: Bool = false, isOn: Binding<Bool>) {
         self.title = title
         self.subtitle = subtitle
+        self.shown = shown
         _isOn = isOn
     }
 
     var body: some View {
         Toggle(isOn: $isOn) {
-            RowLabel(title: title, subtitle: subtitle)
+            RowLabel(title: title, subtitle: subtitle, shown: shown)
         }
     }
 }
 
+/// A row's title, one line. What it does is behind the ⓘ beside it, as in System Settings, so a
+/// page reads as a list of settings rather than paragraphs. `shown` keeps the line under the
+/// title instead, for text that says how things stand (a path found, an error, last checked).
 struct RowLabel: View {
     let title: String
     var subtitle: String?
+    var shown = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-            if let subtitle {
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        if shown || subtitle == nil {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        } else {
+            HStack(spacing: 6) {
+                Text(title)
+                if let subtitle { InfoButton(text: subtitle) }
             }
         }
+    }
+}
+
+/// ⓘ: the explanation in a small popover, on a short rest of the pointer or a click.
+struct InfoButton: View {
+    let text: String
+    @State private var showing = false
+    @State private var hovering = false
+
+    var body: some View {
+        Image(systemName: "info.circle.fill")
+            .font(.system(size: 12))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(hovering || showing ? .primary : .secondary)
+            .contentShape(Circle())
+            .onTapGesture { showing.toggle() }
+            .onHover { on in
+                hovering = on
+                if on {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { if hovering { showing = true } }
+                }
+            }
+            .popover(isPresented: $showing, arrowEdge: .bottom) {
+                Text(text)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: 280, alignment: .leading)
+                    .padding(12)
+            }
+            .accessibilityLabel("About this setting")
+            .accessibilityHint(text)
     }
 }
 
@@ -460,7 +512,7 @@ struct PermissionRow: View {
                 Image(systemName: state == .granted ? "lock.open.fill" : "lock.fill")
                     .foregroundStyle(state == .granted ? Color.secondary : Color.orange)
                     .frame(width: 16)
-                RowLabel(title: title, subtitle: subtitle)
+                RowLabel(title: title, subtitle: subtitle, shown: true)
             }
         }
     }
@@ -620,5 +672,52 @@ struct NotchPreviewCard<Content: View>: View {
         }
         .frame(width: notchWidth, height: notchHeight)
         .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+    }
+}
+
+private struct FooterButton: View {
+    let selected: Bool
+    let open: () -> Void
+    @ObservedObject private var updater = AppUpdater.shared
+    @State private var hovering = false
+
+    private var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0" }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: open) {
+                HStack(spacing: 8) {
+                    Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 22, height: 22)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("NotchApp").font(.system(size: 12, weight: .semibold))
+                        if case .available(let release) = updater.state {
+                            Text("Update to \(release.version)").font(.system(size: 10, weight: .medium)).foregroundStyle(Color.accentColor)
+                        } else {
+                            Text("Version \(version)").font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 4)
+                    if case .available = updater.state {
+                        Circle().fill(Color.accentColor).frame(width: 7, height: 7)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 38)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selected ? Color.accentColor.opacity(0.22) : hovering ? Color.primary.opacity(0.07) : .clear))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("About NotchApp: version, updates and what's new")
+            Button { NSApp.terminate(nil) } label: {
+                Image(systemName: "power").font(.system(size: 11, weight: .semibold)).frame(width: 24, height: 24).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Quit NotchApp")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
     }
 }

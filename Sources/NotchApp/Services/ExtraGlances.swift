@@ -125,7 +125,7 @@ final class UnreadBadges: ObservableObject {
     }
 
     private func poll() {
-        guard AXIsProcessTrusted(), let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return }
+        guard !Presence.shared.away, AXIsProcessTrusted(), let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return }
         let pid = dock.processIdentifier
         Task.detached(priority: .utility) {
             let app = AXUIElementCreateApplication(pid)

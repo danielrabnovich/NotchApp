@@ -44,10 +44,7 @@ struct DeveloperSettingsPane: View {
                 Text("Linear")
             }
             Section {
-                Picker("Alerts", selection: $s.githubAlerts) {
-                    ForEach(AppSettings.GitHubAlerts.allCases) { Text($0.label).tag($0) }
-                }
-                .pickerStyle(.segmented)
+                ChoiceRow("Alerts", selection: $s.githubAlerts, options: AppSettings.GitHubAlerts.allCases, title: { $0.label })
             } footer: {
                 FooterText("“Things that need me”: review requests and issues assigned to you (as Prompts), mentions and security alerts. “Everything” adds comments and other changes. What you push always says how its checks and deploys went, unless alerts are off.")
             }
@@ -118,7 +115,7 @@ private struct StatusRow: View {
         LabeledContent {
             if busy { ProgressView().controlSize(.small) } else { Button("Check Again", action: retry) }
         } label: {
-            RowLabel(title: title, subtitle: detail.isEmpty ? nil : detail)
+            RowLabel(title: title, subtitle: detail.isEmpty ? nil : detail, shown: true)
         }
     }
 }
@@ -159,7 +156,7 @@ private struct TokenRow: View {
             }
         } label: {
             VStack(alignment: .leading, spacing: 2) {
-                RowLabel(title: saved ? "\(title) saved" : title, subtitle: saved ? "Kept in your Mac's Keychain." : detail)
+                RowLabel(title: saved ? "\(title) saved" : title, subtitle: saved ? "Kept in your Mac's Keychain." : detail, shown: true)
                 if !saved { Link("Create one", destination: link).font(.caption) }
             }
         }

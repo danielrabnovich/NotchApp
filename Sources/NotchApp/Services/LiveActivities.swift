@@ -427,7 +427,11 @@ final class LiveActivities: ObservableObject {
             if LiveActivities.shared.slot(for: .network)?.whileActive == true { refresh() }
         }.store(in: &cancellables)
         // "Within the hour" and a reading appearing (temperature) change with time, not events.
-        Timer.publish(every: 20, on: .main, in: .common).autoconnect().sink { _ in refresh() }.store(in: &cancellables)
+        Timer.publish(every: 20, on: .main, in: .common).autoconnect().sink { _ in
+            if !Presence.shared.away { refresh() }
+        }.store(in: &cancellables)
+        // Back from the lock screen: whatever went stale meanwhile, at once.
+        Presence.shared.$away.removeDuplicates().dropFirst().filter { !$0 }.sink { _ in refresh() }.store(in: &cancellables)
         recompute()
     }
 

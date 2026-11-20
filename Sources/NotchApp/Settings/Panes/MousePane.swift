@@ -16,6 +16,9 @@ struct MousePane: View {
                 ToggleRow("Three-finger click for middle click",
                           subtitle: "Click the trackpad with three fingers to open links in new tabs, close tabs, paste in Terminal…",
                           isOn: $s.threeFingerMiddleClick)
+                ToggleRow("Edge sliders",
+                          subtitle: "Slide one finger up the trackpad's right edge for volume, its left edge for brightness, or along the top edge, by the keys, for the keyboard light. The pointer holds still while you do.",
+                          isOn: $s.edgeSliders)
             }
             Section("Permission") {
                 PermissionRow(title: "Accessibility", subtitle: trusted ? nil : "Needed to adjust scroll and click events.",

@@ -25,7 +25,7 @@ struct NotchRootView: View {
         let extended = !vm.isOpen && vm.shapeSize.height > vm.notchSize.height + 4
         let glass = settings.usesGlass && (vm.isOpen ? vm.overlay != .teleprompter : extended)
         // The black part, as a fraction of the height: two thirds open, the notch's own height closed.
-        let look = DynamicGlass.Look(settings.glassLevel)
+        let look = DynamicGlass.Look(amount: settings.glassAmount)
         let solid = vm.isOpen ? look.solid : min(0.9, (vm.notchSize.height + 2) / max(vm.shapeSize.height, 1))
         // With glass, the bottom corners are true quarter circles: the glass is drawn with those.
         let shape = NotchShape(topRadius: vm.topRadius, bottomRadius: vm.bottomRadius,
@@ -128,6 +128,25 @@ enum DynamicGlass {
         /// The light caught along the top of the rim, and the fine line along its edge.
         var highlight: Double
         var rim: CGFloat
+
+        /// A point on the glass slider (0 Tinted … 3 Clear): between two levels, every part of the
+        /// look is blended from the two either side, so the slider moves smoothly through them.
+        init(amount: Double) {
+            let levels = AppSettings.GlassLevel.allCases
+            let x = min(Double(levels.count - 1), max(0, amount))
+            let lower = Int(x.rounded(.down)), t = x - Double(lower)
+            let a = Look(levels[lower])
+            guard t > 0.001, lower + 1 < levels.count else { self = a; return }
+            let b = Look(levels[lower + 1])
+            func mix(_ p: CGFloat, _ q: CGFloat) -> CGFloat { p + (q - p) * CGFloat(t) }
+            func mix(_ p: Double, _ q: Double) -> Double { p + (q - p) * t }
+            // Whole points of bend depth, as `refraction(band:)` keeps them: a fractional one would
+            // retune the lens filter on every step of the slider for nothing visible.
+            self.init(solid: mix(a.solid, b.solid), shade: mix(a.shade, b.shade), fade: mix(a.fade, b.fade),
+                      refraction: mix(a.refraction, b.refraction).rounded(),
+                      refractionHeight: mix(a.refractionHeight, b.refractionHeight).rounded(),
+                      highlight: mix(a.highlight, b.highlight), rim: mix(a.rim, b.rim))
+        }
 
         init(_ level: AppSettings.GlassLevel) {
             switch level {

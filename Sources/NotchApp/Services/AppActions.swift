@@ -238,7 +238,7 @@ final class AppActions: ObservableObject {
         watch = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
             MainActor.assumeIsolated {
                 // While the notch is open, its own reads keep things fresh.
-                guard NotchPresenter.shared.primary?.isOpen != true else { return }
+                guard NotchPresenter.shared.primary?.isOpen != true, !Presence.shared.away else { return }
                 AppActions.shared.prepare()
             }
         }

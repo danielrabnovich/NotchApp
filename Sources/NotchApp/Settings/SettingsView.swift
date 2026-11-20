@@ -20,10 +20,10 @@ final class SettingsWindowController {
             w.titlebarAppearsTransparent = true
             w.toolbarStyle = .unified
             w.isReleasedWhenClosed = false
-            w.setContentSize(NSSize(width: 900, height: 640))
-            w.contentMinSize = NSSize(width: 800, height: 520)
+            w.setContentSize(NSSize(width: 800, height: 600))
+            w.contentMinSize = NSSize(width: 700, height: 480)
             w.center()
-            w.setFrameAutosaveName("NotchAppSettings")
+            w.setFrameAutosaveName("NotchAppSettings.compact")
             window = w
         }
         NSApp.activate(ignoringOtherApps: true)
@@ -70,7 +70,7 @@ final class SettingsWindowController {
     func snapshot(to url: URL) {
         guard let window, let view = window.contentView else { return }
         let old = window.frame
-        window.setContentSize(NSSize(width: 900, height: 1500))
+        window.setContentSize(NSSize(width: 800, height: 1400))
         view.layoutSubtreeIfNeeded()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
@@ -133,6 +133,8 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .controls: "Controls & Camera"
         case .mouse: "Mouse & Trackpad"
         case .shortcuts: "Keyboard Shortcuts"
+        // Not "Updates": NotchApp's own are on its About page (the footer); this is everything else's.
+        case .updates: "Homebrew & Apps"
         default: rawValue
         }
     }
@@ -156,10 +158,10 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .addOns: "Search, Shelf and Tasks are always there. Turn on anything else you want."
         case .controls: "Volume and brightness, the quick actions you pick, Keep Awake and a camera mirror."
         case .mouse: "Scroll direction and middle click."
-        case .updates: "Homebrew and app updates, checked for you."
+        case .updates: "Updates for your other apps, from Homebrew and the apps that update themselves. NotchApp's own are under NotchApp, at the bottom."
         case .shortcuts: "Jump straight to any tab from anywhere."
         case .permissions: "What NotchApp can see and do, and what each permission unlocks."
-        case .about: "Version and app info."
+        case .about: "The version, NotchApp's own updates and app info."
         }
     }
 
@@ -222,14 +224,15 @@ struct SettingsView: View {
     var body: some View {
         HStack(spacing: 0) {
             SettingsSidebar()
-                .frame(width: 236)
+                .frame(width: 212)
             Rectangle().fill(Color(nsColor: .separatorColor).opacity(0.6)).frame(width: 1)
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor))
+                // Darker than the cards on it, so they stand out without outlines.
+                .background(NotchControl.page)
         }
         .ignoresSafeArea()
-        .frame(minWidth: 800, minHeight: 520)
+        .frame(minWidth: 700, minHeight: 480)
     }
 
     private var detail: some View {

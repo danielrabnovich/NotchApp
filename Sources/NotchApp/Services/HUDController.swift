@@ -22,9 +22,11 @@ final class HUDController {
     // NX_KEYTYPE_* constants from IOKit/hidsystem/ev_keymap.h
     private enum Key: Int {
         case soundUp = 0, soundDown = 1, brightnessUp = 2, brightnessDown = 3, mute = 7
+        case illuminationUp = 21, illuminationDown = 22, illuminationToggle = 23
     }
 
     func start() {
+        KeyboardBacklight.shared.start()
         tap.handler = { [weak self] key, isDown, flags in
             MainActor.assumeIsolated { self?.handle(keyCode: key, isDown: isDown, flags: flags) ?? false }
         }
@@ -135,6 +137,18 @@ final class HUDController {
             Brightness.set(target)
             ActivityCenter.shared.show(.brightness(level: target), for: 1.6)
             return true
+
+        // Keyboards with backlight keys (older MacBooks, some external ones).
+        case .illuminationUp, .illuminationDown, .illuminationToggle:
+            let light = KeyboardBacklight.shared
+            guard settings.brightnessHUD, light.isAvailable else { return false }
+            guard isDown else { return true }
+            if key == .illuminationToggle {
+                light.step(by: (light.level ?? 0) > 0.01 ? -1 : 0.5)
+            } else {
+                light.step(by: key == .illuminationUp ? step : -step)
+            }
+            return true
         }
     }
 
@@ -235,5 +249,96 @@ enum Brightness {
     static func set(_ value: Float) {
         guard let setFn, let id = builtinDisplay else { return }
         _ = setFn(id, value)
+    }
+}
+
+// MARK: - Keyboard backlight (private CoreBrightness)
+
+/// The built-in keyboard's backlight. CoreBrightness pushes every change, so nothing is polled:
+/// a change shows as a Flash when the pointer just moved a slider (Control Center's), or comes
+/// from the backlight keys, which `HUDController` steps itself. The light dimming while the Mac
+/// sits idle, waking on the next key, and the ambient sensor's slow fades never show.
+@MainActor
+final class KeyboardBacklight {
+    static let shared = KeyboardBacklight()
+
+    private typealias GetFn = @convention(c) (AnyObject, Selector, UInt64) -> Float
+    private typealias SetFn = @convention(c) (AnyObject, Selector, Float, UInt64) -> Bool
+    private typealias StateFn = @convention(c) (AnyObject, Selector, UInt64) -> Bool
+    private typealias RegisterFn = @convention(c) (AnyObject, Selector, AnyObject, UInt64, AnyObject) -> Void
+
+    private let client: NSObject?
+    private let keyboard: UInt64?
+    private var last: Float?
+    private var lastDimChange = Date.distantPast
+    private var wasDimmed = false
+    private var observing = false
+
+    private init() {
+        dlopen("/System/Library/PrivateFrameworks/CoreBrightness.framework/CoreBrightness", RTLD_NOW)
+        let type = NSClassFromString("KeyboardBrightnessClient") as? NSObject.Type
+        let client = type?.init()
+        self.client = client
+        // The built-in keyboard's id (the first, and on a laptop the only one).
+        let ids = client?.perform(NSSelectorFromString("copyKeyboardBacklightIDs"))?.takeRetainedValue() as? [NSNumber]
+        keyboard = ids?.first?.uint64Value
+    }
+
+    var isAvailable: Bool { client != nil && keyboard != nil }
+
+    var level: Float? {
+        guard let client, let keyboard else { return nil }
+        let sel = NSSelectorFromString("brightnessForKeyboard:")
+        guard client.responds(to: sel) else { return nil }
+        return unsafeBitCast(client.method(for: sel), to: GetFn.self)(client, sel, keyboard)
+    }
+
+    func set(_ value: Float) {
+        guard let client, let keyboard else { return }
+        let sel = NSSelectorFromString("setBrightness:forKeyboard:")
+        guard client.responds(to: sel) else { return }
+        _ = unsafeBitCast(client.method(for: sel), to: SetFn.self)(client, sel, min(1, max(0, value)), keyboard)
+        last = min(1, max(0, value))
+    }
+
+    /// Steps it and shows the Flash: the backlight keys, or the trackpad's top edge.
+    func step(by delta: Float) {
+        guard let current = level else { return }
+        set(current + delta)
+        ActivityCenter.shared.show(.brightness(level: min(1, max(0, current + delta)), keyboard: true), for: 1.6)
+    }
+
+    private var isDimmed: Bool {
+        guard let client, let keyboard else { return false }
+        let sel = NSSelectorFromString("isBacklightDimmedOnKeyboard:")
+        guard client.responds(to: sel) else { return false }
+        return unsafeBitCast(client.method(for: sel), to: StateFn.self)(client, sel, keyboard)
+    }
+
+    func start() {
+        guard !observing, let client, let keyboard else { return }
+        let sel = NSSelectorFromString("registerNotificationForKeys:keyboardID:block:")
+        guard client.responds(to: sel) else { return }
+        observing = true
+        last = level
+        let block: @convention(block) (AnyObject?, AnyObject?) -> Void = { key, value in
+            guard (key as? String) == "KeyboardBacklightBrightness", let value = (value as? NSNumber)?.floatValue else { return }
+            DispatchQueue.main.async { MainActor.assumeIsolated { KeyboardBacklight.shared.changed(to: value) } }
+        }
+        unsafeBitCast(client.method(for: sel), to: RegisterFn.self)(client, sel, ["KeyboardBacklightBrightness"] as NSArray, keyboard, block as AnyObject)
+    }
+
+    private func changed(to value: Float) {
+        defer { last = value }
+        let dimmed = isDimmed
+        if dimmed != wasDimmed { wasDimmed = dimmed; lastDimChange = Date() }
+        guard AppSettings.shared.brightnessHUD, !dimmed, Date().timeIntervalSince(lastDimChange) > 2,
+              let last, abs(value - last) > 0.004 else { return }
+        // Only a hand on a slider: the pointer pressed or dragged a moment ago. The sensor's
+        // fades and idle dimming come with no click at all.
+        let since = min(CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .leftMouseDragged),
+                        CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .leftMouseDown))
+        guard since < 1 else { return }
+        ActivityCenter.shared.show(.brightness(level: value, keyboard: true), for: 1.6)
     }
 }

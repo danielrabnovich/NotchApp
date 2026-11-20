@@ -106,6 +106,11 @@ struct AssistantPane: View {
                 Text("Intelligence")
             }
             AICommandsEditor()
+            Section {
+                ToggleRow("Bar over selected text",
+                          subtitle: "Select text in any app and a small bar appears above it: Copy, Search, and your first four AI Commands. Reorder the commands above to choose which.",
+                          isOn: $s.selectionPill)
+            }
             Section("Files & folders") {
                 PermissionRow(title: "Desktop, Documents, Downloads & cloud folders",
                               subtitle: folderSubtitle,
@@ -199,12 +204,9 @@ struct AssistantPane: View {
                 }
                 ToggleRow("Recall what you've seen", subtitle: recallSubtitle, isOn: $s.recall)
                 if s.recall {
-                    Picker(selection: $s.recallKeep) {
-                        ForEach(Recall.Keep.allCases) { Text($0.label).tag($0) }
-                    } label: {
+                    ChoiceRow(selection: $s.recallKeep, options: Recall.Keep.allCases, title: { $0.label }) {
                         RowLabel(title: "Keep for", subtitle: "Older moments are deleted. Recall never uses more than about 2 GB.")
                     }
-                    .pickerStyle(.segmented)
                     if !ScreenQuestion.hasPermission {
                         LabeledContent {
                             Button("Open Settings") { ScreenQuestion.openPrivacySettings() }

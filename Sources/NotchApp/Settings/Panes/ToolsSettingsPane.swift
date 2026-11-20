@@ -19,7 +19,7 @@ struct ToolsSettingsPane: View {
                     Button("Clear History") { speed.clearHistory() }.disabled(speed.history.isEmpty)
                 } label: {
                     RowLabel(title: "Speed test history", subtitle: speed.history.isEmpty ? "No tests yet."
-                             : "\(speed.history.count) result\(speed.history.count == 1 ? "" : "s"). Last: ↓ \(formatMbps(speed.history[0].download)) ↑ \(formatMbps(speed.history[0].upload)) Mbps.")
+                             : "\(speed.history.count) result\(speed.history.count == 1 ? "" : "s"). Last: ↓ \(formatMbps(speed.history[0].download)) ↑ \(formatMbps(speed.history[0].upload)) Mbps.", shown: true)
                 }
             }
             Section {

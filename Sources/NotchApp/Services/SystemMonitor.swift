@@ -41,6 +41,7 @@ struct SystemSnapshot {
     /// Per-app usage; only filled while a card's detail side is showing.
     var topCPU: [AppUsage] = []
     var topMemory: [AppUsage] = []
+    var topPower: [AppUsage] = []
 
     var cpuTotal: Double { cpuUser + cpuSystem }
 }
@@ -98,6 +99,12 @@ final class SystemMonitor: ObservableObject {
                 DispatchQueue.main.async { self?.reschedule(enabled: enabled) }
             }
             .store(in: &cancellables)
+        // Nobody to show it to while the Mac is locked or its displays sleep.
+        Presence.shared.$away
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.reschedule(enabled: AppSettings.shared.statsEnabled) } }
+            .store(in: &cancellables)
     }
 
     func setLiveDemand(_ wanted: Bool) {
@@ -130,7 +137,7 @@ final class SystemMonitor: ObservableObject {
     private func reschedule(enabled: Bool) {
         timer?.cancel()
         timer = nil
-        guard enabled || liveDemand else { return }
+        guard enabled || liveDemand, !Presence.shared.away else { return }
         // Nothing showing stats: a slow trickle that just keeps the graphs' history going.
         let interval: Double = viewers > 0 ? 1 : liveDemand ? 2 : 10
         let details = viewers > 0 && detailViewers > 0
@@ -172,6 +179,8 @@ private final class Sampler: @unchecked Sendable {
         _ = cpu.sample()
         _ = energy?.sample()
     }
+
+    private let gpuShare = GPUShare()
 
     func sample(details: Bool) -> SystemSnapshot {
         var s = SystemSnapshot()
@@ -228,9 +237,11 @@ private final class Sampler: @unchecked Sendable {
         if getloadavg(&load, 3) == 3 { s.loadAverage = load }
 
         if details {
-            let apps = processes.sample()
+            // The GPU's power, split by each app's share of its time.
+            let apps = GPUShare.attribute(gpuShare.sample(), gpuWatts: s.gpuPower, to: processes.sample())
             s.topCPU = Array(apps.filter { $0.cpu >= 0.005 }.sorted { $0.cpu > $1.cpu }.prefix(4))
             s.topMemory = Array(apps.sorted { $0.memory > $1.memory }.prefix(4))
+            s.topPower = Array(apps.filter { $0.power >= 0.01 }.sorted { $0.power > $1.power }.prefix(4))
         }
         // The battery controller's figure only refreshes every half minute or so; use it if the SMC has none.
         if s.systemPower == nil { s.systemPower = battery?.systemLoad }

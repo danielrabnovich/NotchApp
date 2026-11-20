@@ -10,7 +10,8 @@ enum NoticeTone: Equatable {
 /// A short-lived "live activity" that pops out of the collapsed notch.
 enum SneakPeek: Equatable {
     case volume(level: Float, muted: Bool)
-    case brightness(level: Float)
+    /// The display's brightness, or (keyboard) the keyboard's backlight.
+    case brightness(level: Float, keyboard: Bool = false)
     case charging(level: Int)
     case meeting(title: String, minutes: Int, color: NSColor)
     case screenshot(count: Int)
@@ -59,6 +60,11 @@ enum SneakPeek: Equatable {
 }
 
 extension SneakPeek {
+    /// The sun for the display, the keyboard's own light for its backlight (as on its keys).
+    static func brightnessIcon(level: Float, keyboard: Bool) -> String {
+        keyboard ? (level < 0.5 ? "light.min" : "light.max") : (level < 0.5 ? "sun.min.fill" : "sun.max.fill")
+    }
+
     /// How it's shown. A Flash takes over a wing for a moment (volume, brightness, charging); a
     /// Banner drops down under the notch and leaves the Glances alone; a Prompt is a Banner that
     /// wants an answer, and folds into a tab under the notch if it isn't given one.
@@ -78,7 +84,8 @@ extension SneakPeek {
         switch self {
         case let .meeting(title, minutes, _): (title, "In \(minutes) min")
         case let .screenshot(count):
-            (count == 1 ? "Screenshot on Shelf" : "\(count) screenshots on Shelf", AppSettings.shared.copyShelfAdds ? "Copied too" : "Drag it anywhere")
+            (count == 1 ? "Screenshot on Shelf" : "\(count) screenshots on Shelf",
+             AppSettings.shared.copyShelfAdds ? "Copied too · click to mark up" : "Click to mark up")
         case let .timer(message): (message, "Timer")
         case let .download(name): ("Downloaded", name)
         case let .assistant(title, detail, _), let .taildrop(title, detail, _), let .notice(title, detail, _, _): (title, detail)

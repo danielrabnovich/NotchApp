@@ -73,6 +73,10 @@ final class AppSettings: ObservableObject {
         case tinted, balanced, airy, clear
         var id: String { rawValue }
         var label: String { rawValue.capitalized }
+        /// Its stop on the glass slider: 0 Tinted … 3 Clear.
+        var stop: Double { Double(Self.allCases.firstIndex(of: self) ?? 1) }
+        /// The level nearest a point on the slider.
+        init(amount: Double) { self = Self.allCases[Int(min(3, max(0, amount)).rounded())] }
     }
 
     /// What plays around the search bar: Apple Intelligence's colours, a white shimmer along its
@@ -101,10 +105,20 @@ final class AppSettings: ObservableObject {
     @Published var animationStyle: AnimationStyle { didSet { defaults.set(animationStyle.rawValue, forKey: "animationStyle") } }
     @Published var showShadow: Bool { didSet { defaults.set(showShadow, forKey: "showShadow") } }
     @Published var notchMaterial: NotchMaterial { didSet { defaults.set(notchMaterial.rawValue, forKey: "notchMaterial") } }
-    @Published var glassLevel: GlassLevel { didSet { defaults.set(glassLevel.rawValue, forKey: "glassLevel") } }
+    /// Where the glass slider sits, from 0 (Tinted) to 3 (Clear): the four levels are its stops,
+    /// and anywhere between blends the two either side. The nearest level is kept under
+    /// "glassLevel" too, so a build from before the slider still opens with about the same glass.
+    @Published var glassAmount: Double {
+        didSet { defaults.set(glassAmount, forKey: "glassAmount"); defaults.set(glassLevel.rawValue, forKey: "glassLevel") }
+    }
+    var glassLevel: GlassLevel { GlassLevel(amount: glassAmount) }
     @Published var searchBarEffect: SearchBarEffect { didSet { defaults.set(searchBarEffect.rawValue, forKey: "searchBarEffect") } }
-    /// Glass only where the system can draw it.
-    var usesGlass: Bool { notchMaterial == .glass && NotchMaterial.isAvailable }
+    /// Glass only where the system can draw it, and not in Low Power Mode: the glass is a live
+    /// blur and bend of the screen behind it, redrawn by the window server with everything that
+    /// moves under it, so the notch goes plain black until the Mac has power to spare again.
+    var usesGlass: Bool { notchMaterial == .glass && NotchMaterial.isAvailable && !lowPower }
+    @Published private(set) var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+    func setLowPower(_ on: Bool) { if lowPower != on { lowPower = on } }
     @Published var haptics: Bool { didSet { defaults.set(haptics, forKey: "haptics") } }
     @Published var glanceDensity: GlanceDensity { didSet { defaults.set(glanceDensity.rawValue, forKey: "glanceDensity") } }
     @Published var alertLevel: AlertLevel { didSet { defaults.set(alertLevel.rawValue, forKey: "alertLevel") } }
@@ -169,12 +183,16 @@ final class AppSettings: ObservableObject {
     @Published var timerLiveActivity: Bool { didSet { defaults.set(timerLiveActivity, forKey: "timerLiveActivity") } }
     @Published var timerSounds: Bool { didSet { defaults.set(timerSounds, forKey: "timerSounds") } }
     @Published var pomodoroAutoStart: Bool { didSet { defaults.set(pomodoroAutoStart, forKey: "pomodoroAutoStart") } }
+    @Published var breakReminders: Bool { didSet { defaults.set(breakReminders, forKey: "breakReminders") } }
+    @Published var selectionPill: Bool { didSet { defaults.set(selectionPill, forKey: "selectionPill") } }
+    @Published var lockScreenMusic: Bool { didSet { defaults.set(lockScreenMusic, forKey: "lockScreenMusic") } }
 
     // Notes, downloads, mixer
     @Published var notesEnabled: Bool { didSet { defaults.set(notesEnabled, forKey: "notesEnabled") } }
     @Published var downloadsEnabled: Bool { didSet { defaults.set(downloadsEnabled, forKey: "downloadsEnabled") } }
     @Published var downloadAlerts: Bool { didSet { defaults.set(downloadAlerts, forKey: "downloadAlerts") } }
     @Published var taildropZone: Bool { didSet { defaults.set(taildropZone, forKey: "taildropZone") } }
+    @Published var localSendZone: Bool { didSet { defaults.set(localSendZone, forKey: "localSendZone") } }
     @Published var taildropReceive: Bool { didSet { defaults.set(taildropReceive, forKey: "taildropReceive") } }
     @Published var taildropToShelf: Bool { didSet { defaults.set(taildropToShelf, forKey: "taildropToShelf") } }
     @Published var mixerEnabled: Bool { didSet { defaults.set(mixerEnabled, forKey: "mixerEnabled") } }
@@ -187,6 +205,9 @@ final class AppSettings: ObservableObject {
     @Published var keepAwakeBatteryFloor: Int { didSet { defaults.set(keepAwakeBatteryFloor, forKey: "keepAwakeBatteryFloor") } }
     @Published var reverseMouseScroll: Bool { didSet { defaults.set(reverseMouseScroll, forKey: "reverseMouseScroll") } }
     @Published var threeFingerMiddleClick: Bool { didSet { defaults.set(threeFingerMiddleClick, forKey: "threeFingerMiddleClick") } }
+    /// One finger along the trackpad's edges: the right for volume, the left for the display's
+    /// brightness, the top (against the keyboard) for its backlight.
+    @Published var edgeSliders: Bool { didSet { defaults.set(edgeSliders, forKey: "edgeSliders") } }
     @Published var cameraMirrorEnabled: Bool { didSet { defaults.set(cameraMirrorEnabled, forKey: "cameraMirrorEnabled") } }
     @Published var hotKeysEnabled: Bool { didSet { defaults.set(hotKeysEnabled, forKey: "hotKeysEnabled") } }
     /// Caps Lock held is ⌃⌥⇧⌘ (see `HyperKey`).
@@ -359,10 +380,14 @@ final class AppSettings: ObservableObject {
             "timerLiveActivity": true,
             "timerSounds": true,
             "pomodoroAutoStart": true,
+            "breakReminders": false,
+            "selectionPill": false,
+            "lockScreenMusic": false,
             "notesEnabled": true,
             "downloadsEnabled": true,
             "downloadAlerts": true,
             "taildropZone": TaildropService.cli != nil,
+            "localSendZone": false,
             "taildropReceive": TaildropService.cli != nil,
             "taildropToShelf": true,
             "mixerEnabled": false,
@@ -375,6 +400,7 @@ final class AppSettings: ObservableObject {
             "keepAwakeBatteryFloor": 20,
             "reverseMouseScroll": false,
             "threeFingerMiddleClick": false,
+            "edgeSliders": false,
             "cameraMirrorEnabled": false,
             "hotKeysEnabled": true,
             "hotKeyModifiers": HotKeys.Modifiers.controlOption.rawValue,
@@ -446,7 +472,10 @@ final class AppSettings: ObservableObject {
         showShadow = defaults.bool(forKey: "showShadow")
         openTo = defaults.string(forKey: "openTo") ?? "ask"
         notchMaterial = NotchMaterial(rawValue: defaults.string(forKey: "notchMaterial") ?? "") ?? .glass
-        glassLevel = GlassLevel(rawValue: defaults.string(forKey: "glassLevel") ?? "") ?? .balanced
+        // A level from before the slider (or given at launch, `-glassLevel clear`) starts it at that stop.
+        let level = GlassLevel(rawValue: defaults.string(forKey: "glassLevel") ?? "") ?? .balanced
+        let launchLevel = defaults.volatileDomain(forName: UserDefaults.argumentDomain)["glassLevel"] != nil
+        glassAmount = min(3, max(0, launchLevel || defaults.object(forKey: "glassAmount") == nil ? level.stop : defaults.double(forKey: "glassAmount")))
         searchBarEffect = SearchBarEffect(rawValue: defaults.string(forKey: "searchBarEffect") ?? "") ?? .glow
         haptics = defaults.bool(forKey: "haptics")
         glanceDensity = GlanceDensity(rawValue: defaults.string(forKey: "glanceDensity") ?? "") ?? .regular
@@ -476,10 +505,14 @@ final class AppSettings: ObservableObject {
         timerLiveActivity = defaults.bool(forKey: "timerLiveActivity")
         timerSounds = defaults.bool(forKey: "timerSounds")
         pomodoroAutoStart = defaults.bool(forKey: "pomodoroAutoStart")
+        breakReminders = defaults.bool(forKey: "breakReminders")
+        selectionPill = defaults.bool(forKey: "selectionPill")
+        lockScreenMusic = defaults.bool(forKey: "lockScreenMusic")
         notesEnabled = defaults.bool(forKey: "notesEnabled")
         downloadsEnabled = defaults.bool(forKey: "downloadsEnabled")
         downloadAlerts = defaults.bool(forKey: "downloadAlerts")
         taildropZone = defaults.bool(forKey: "taildropZone")
+        localSendZone = defaults.bool(forKey: "localSendZone")
         taildropReceive = defaults.bool(forKey: "taildropReceive")
         taildropToShelf = defaults.bool(forKey: "taildropToShelf")
         mixerEnabled = defaults.bool(forKey: "mixerEnabled")
@@ -492,6 +525,7 @@ final class AppSettings: ObservableObject {
         keepAwakeBatteryFloor = defaults.integer(forKey: "keepAwakeBatteryFloor")
         reverseMouseScroll = defaults.bool(forKey: "reverseMouseScroll")
         threeFingerMiddleClick = defaults.bool(forKey: "threeFingerMiddleClick")
+        edgeSliders = defaults.bool(forKey: "edgeSliders")
         cameraMirrorEnabled = defaults.bool(forKey: "cameraMirrorEnabled")
         hotKeysEnabled = defaults.bool(forKey: "hotKeysEnabled")
         hotKeyModifiers = HotKeys.Modifiers(rawValue: defaults.string(forKey: "hotKeyModifiers") ?? "") ?? .controlOption

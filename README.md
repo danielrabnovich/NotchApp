@@ -60,8 +60,8 @@ A model adds written answers, smarter file finding and actions. Pick one in Sett
 ## Liquid Glass
 
 On macOS 26 the open notch is **Dynamic Glass**: black where it meets the notch, melting into glass below,
-moving with the notch as it springs open. Choose how much is glass (**Tinted, Balanced, Airy or Clear**) or keep it
-black throughout. Pages slide on Core Animation with **Smooth, Snappy or Bouncy** motion, and the search bar
+moving with the notch as it springs open. A slider sets how much is glass: it snaps to **Tinted, Balanced, Airy and
+Clear** and stops anywhere between. Or keep it black throughout (Low Power Mode does that for you). Pages slide on Core Animation with **Smooth, Snappy or Bouncy** motion, and the search bar
 wears Apple Intelligence's glow, a white shimmer, or nothing.
 
 ## Home

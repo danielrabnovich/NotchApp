@@ -7,11 +7,7 @@ struct StatsPane: View {
     var body: some View {
         SettingsPage(pane: .stats) {
             Section {
-                Picker("Temperature", selection: $s.useFahrenheit) {
-                    Text("Celsius").tag(false)
-                    Text("Fahrenheit").tag(true)
-                }
-                .pickerStyle(.segmented)
+                ChoiceRow("Temperature", selection: $s.useFahrenheit, options: [false, true], title: { $0 ? "Fahrenheit" : "Celsius" })
             }
             Section {
                 ForEach([LiveItem.cpu, .memory, .gpu, .temperature, .power], id: \.self) { item in
@@ -23,7 +19,7 @@ struct StatsPane: View {
                                 .foregroundStyle(.white)
                                 .frame(width: 22, height: 22)
                                 .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(item.tint.gradient))
-                            RowLabel(title: item.title, subtitle: item.detail)
+                            RowLabel(title: item.title, subtitle: item.detail, shown: true)
                         }
                     }
                     .disabled(live.slot(for: item) == nil && live.isFull(.left) && live.isFull(.right))

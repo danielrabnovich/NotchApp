@@ -26,6 +26,7 @@ struct ShelfView: View {
     @State private var clipQuery = ""
     @State private var clipKind: ClipboardHistory.Clip.Kind?
     @ObservedObject private var drag = DragActivity.shared
+    @ObservedObject private var localSend = LocalSendService.shared
 
     private var showsTaildrop: Bool { settings.taildropZone && TaildropService.cli != nil }
 
@@ -38,6 +39,9 @@ struct ShelfView: View {
             Group {
                 if !taildrop.pending.isEmpty {
                     DevicePicker(viewModel: viewModel)
+                        .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                } else if !localSend.pending.isEmpty {
+                    LocalSendPicker(viewModel: viewModel)
                         .transition(.opacity.combined(with: .scale(scale: 0.97)))
                 } else if let urls = shelf.convertPicker {
                     ConvertPicker(urls: urls)
@@ -92,6 +96,7 @@ struct ShelfView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(Motion.pane.animation, value: taildrop.pending.isEmpty)
+            .animation(Motion.pane.animation, value: localSend.pending.isEmpty)
             .animation(Motion.pane.animation, value: shelf.convertPicker)
 
             // Beside the clipboard they're only drop targets, so they wait for something to be dragged.
@@ -574,8 +579,23 @@ private struct ShelfFileMenu: View {
                 withAnimation(Motion.pane.animation) { ShelfStore.shared.convertPicker = urls }
             }
         }
+        if !many, MediaConverter.kind(of: item.url) == .image {
+            MenuItem("Mark Up…", "pencil.tip.crop.circle") { MarkupWindow.shared.open(item.url) }
+        }
         if targets.allSatisfy({ MediaConverter.kind(of: $0.url) == .image }), targets.count <= 10 {
             MenuItem("Remove Background", "person.crop.rectangle") { Cutout.run(urls) }
+        }
+        if ShelfTools.canCombine(urls) {
+            MenuItem("Combine into PDF", "doc.on.doc.fill") { ShelfTools.combine(urls) }
+        }
+        if !many, ShelfTools.isPDF(item.url), ShelfTools.pageCount(item.url) > 1 {
+            MenuItem("Split into Pages", "square.split.2x1") { ShelfTools.split(item.url) }
+        }
+        if !many, ShelfTools.canTrim(item.url) {
+            MenuItem("Trim…", "timeline.selection") { ShelfTools.trim(item.url) }
+        }
+        if urls.allSatisfy(ShelfTools.canStrip) {
+            MenuItem("Remove Location & Details", "location.slash") { ShelfTools.strip(urls) }
         }
         MenuItem(many ? "Compress \(targets.count) Files" : "Compress", "doc.zipper") { ShelfStore.shared.compress(targets) }
         MenuItem(many ? "Duplicate All" : "Duplicate", "plus.square.on.square") { ShelfStore.shared.duplicate(targets) }
@@ -1670,6 +1690,64 @@ private struct FileFan: View {
                     .background(Capsule().fill(.white.opacity(0.9)))
             }
             .animation(Motion.small.animation, value: spread)
+        }
+    }
+}
+
+/// Pick which LocalSend device gets the files: whoever answered the hello on this network.
+private struct LocalSendPicker: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @ObservedObject private var localSend = LocalSendService.shared
+    private static let tint = Color(red: 0.0, green: 0.66, blue: 0.6)
+
+    var body: some View {
+        let count = localSend.pending.count
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "antenna.radiowaves.left.and.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(Self.tint)
+                Text(count == 1 ? "Send “\(localSend.pending[0].lastPathComponent)” with LocalSend to…" : "Send \(count) files with LocalSend to…")
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button(localSend.scanning ? "Looking…" : "Look Again") { localSend.scan() }
+                    .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+                    .disabled(localSend.scanning)
+                Button("Cancel") { localSend.cancelPending() }
+                    .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.5))
+            }
+            if localSend.devices.isEmpty {
+                VStack(spacing: 4) {
+                    Text(localSend.scanning ? "Looking for LocalSend on this network…" : "No LocalSend devices answered")
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(.white.opacity(0.6))
+                    if !localSend.scanning {
+                        Text("Open LocalSend on the other device, on the same Wi-Fi.")
+                            .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.4))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(localSend.devices) { device in
+                            Button { localSend.send(to: device) } label: {
+                                VStack(spacing: 5) {
+                                    Image(systemName: device.icon).font(.system(size: 22)).frame(height: 26)
+                                    Text(device.alias).font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                                    Text(device.deviceModel ?? device.ip).font(.system(size: 9)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+                                }
+                                .foregroundStyle(.white.opacity(0.9))
+                                .frame(width: 86, height: 84)
+                                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.white.opacity(0.06)))
+                                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Self.tint.opacity(0.5), lineWidth: 1))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .horizontalScrollRegion("localsend.devices", in: viewModel)
+            }
         }
     }
 }

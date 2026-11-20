@@ -84,6 +84,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleURLSchemes</key><array><string>notchapp</string></array>
   </dict></array>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>NotchApp's LocalSend zone finds the phones and computers on your network that run LocalSend, to send them files.</string>
   <key>NSCameraUsageDescription</key><string>NotchApp's camera mirror shows a preview of yourself before a call.</string>
   <key>NSAppleEventsUsageDescription</key><string>NotchApp's Controls switch Dark Mode and empty the Trash, its app actions read the files selected in Finder and copy the song playing in Spotify, replies to a coding agent are typed into its own Terminal or iTerm2 tab, and Recall (when it's on) asks your browser which page is open.</string>
   <key>NSAudioCaptureUsageDescription</key><string>NotchApp's sound mixer adjusts each app's volume by routing its audio through NotchApp, and live captions turn what's playing into text on this Mac.</string>

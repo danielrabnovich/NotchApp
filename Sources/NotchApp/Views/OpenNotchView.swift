@@ -137,8 +137,8 @@ private struct HeaderFlash: View {
             case let .volume(level, muted):
                 let silent = muted || level <= 0.001
                 return (CollapsedNotchView.outputIcon(muted: silent), silent ? nil : Double(level), level, muted)
-            case let .brightness(level):
-                return (level < 0.5 ? "sun.min.fill" : "sun.max.fill", nil, level, false)
+            case let .brightness(level, keyboard):
+                return (SneakPeek.brightnessIcon(level: level, keyboard: keyboard), nil, level, false)
             default:
                 return ("", nil, 0, false)
             }

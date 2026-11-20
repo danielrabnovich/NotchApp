@@ -23,7 +23,7 @@ struct UpdatesPane: View {
                         }
                     } label: {
                         RowLabel(title: updates.updates.isEmpty ? "No updates found" : "\(updates.updates.count) available",
-                                 subtitle: updates.lastChecked.map { "Last checked " + $0.formatted(.relative(presentation: .named)) })
+                                 subtitle: updates.lastChecked.map { "Last checked " + $0.formatted(.relative(presentation: .named)) }, shown: true)
                     }
                     if UpdateChecker.brew == nil {
                         Text("Homebrew isn't installed, so only self-updating apps are checked.")

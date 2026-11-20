@@ -115,12 +115,8 @@ private struct AICommandEditor: View {
                     .multilineTextAlignment(.leading)
                     .textFieldStyle(.roundedBorder)
             }
-            Picker("Result", selection: $command.output) {
-                Text("Replace the selection").tag(AICommand.Output.replace)
-                Text("Show in the notch").tag(AICommand.Output.show)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            CapsuleChoice(selection: $command.output, options: [.replace, .show],
+                          title: { $0 == .replace ? "Replace the selection" : "Show in the notch" })
             VStack(alignment: .leading, spacing: 4) {
                 Text("Instruction").font(.caption).foregroundStyle(.secondary)
                 TextField("", text: $command.prompt, prompt: Text("What to do with the selected text"), axis: .vertical)

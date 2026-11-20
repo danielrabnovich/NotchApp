@@ -76,6 +76,20 @@ struct DropZonesView: View {
                     }
                     .frame(width: 120)
                 }
+                if settings.localSendZone {
+                    DropBin(icon: "antenna.radiowaves.left.and.right", image: nil, title: "LocalSend",
+                            detail: preview?.hasFiles == true ? "Phones and PCs nearby" : "Files only",
+                            detailIcon: nil, tint: Color(red: 0.0, green: 0.66, blue: 0.6),
+                            enabled: preview?.hasFiles == true) {
+                        let urls = NSPasteboard(name: .drag)
+                            .readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+                        guard !urls.isEmpty else { return false }
+                        LocalSendService.shared.offer(urls)
+                        finish(on: .shelf)
+                        return true
+                    }
+                    .frame(width: 120)
+                }
                 if settings.taildropZone && TaildropService.cli != nil {
                     DropBin(icon: "paperplane.fill", image: SystemIcons.tailscale, title: "Taildrop",
                             detail: preview?.hasFiles == true ? "Send to your devices" : "Files only",

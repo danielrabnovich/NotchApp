@@ -97,6 +97,7 @@ final class HotKeys: ObservableObject {
         case chat
         case askArea
         case emoji
+        case terminal
 
         /// Center and the thirds and quarters start off: their keys (Rectangle's) are tabs' with ⌃⌥.
         var onByDefault: Bool {
@@ -170,6 +171,7 @@ final class HotKeys: ObservableObject {
             case .chat: "N"
             case .askArea: "Z"
             case .emoji: "E"
+            case .terminal: "`"
             }
         }
 
@@ -195,6 +197,7 @@ final class HotKeys: ObservableObject {
             case .chat: "New chat"
             case .askArea: "Ask about an area of the screen"
             case .emoji: "Emoji & symbols"
+            case .terminal: "Terminal"
             case .windowLeft: "Window: left half"
             case .windowRight: "Window: right half"
             case .windowMaximize: "Window: maximize"
@@ -260,6 +263,7 @@ final class HotKeys: ObservableObject {
             case .chat: UInt32(kVK_ANSI_N)
             case .askArea: UInt32(kVK_ANSI_Z)
             case .emoji: UInt32(kVK_ANSI_E)
+            case .terminal: UInt32(kVK_ANSI_Grave)
             }
         }
     }
@@ -448,6 +452,9 @@ final class HotKeys: ObservableObject {
             return
         case .chat:
             ChatWindow.shared.toggleNewChat()
+            return
+        case .terminal:
+            TerminalWindow.shared.toggle()
             return
         case .emoji:
             guard vm.tabs.contains(.ask) else { return }

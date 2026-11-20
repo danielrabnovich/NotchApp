@@ -135,6 +135,7 @@ final class ProgressCenter: ObservableObject {
     // MARK: - Exporting apps
 
     private func scanExporters() {
+        guard !Presence.shared.away else { return }
         let running = NSWorkspace.shared.runningApplications.compactMap { app -> (pid_t, String, String?)? in
             guard let id = app.bundleIdentifier, let name = Self.exporters[id] else { return nil }
             return (app.processIdentifier, name, app.bundleURL?.path)

@@ -16,6 +16,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEditMenu()
+        Presence.shared.start()
+        XcodeBuilds.shared.start()
+        Breaks.shared.start()
+        PowerHistory.shared.start()
+        LockScreenPlayer.shared.start()
+        SelectionPill.shared.start()
         MediaController.shared.start()
         AudioOutputManager.shared.start()
         BatteryMonitor.shared.start()

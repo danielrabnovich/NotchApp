@@ -179,8 +179,8 @@ struct CollapsedNotchView: View {
         case let .volume(level, muted):
             let silent = muted || level <= 0.001
             FlashReadout(icon: Self.outputIcon(muted: silent), variable: silent ? nil : Double(level), level: level, muted: muted)
-        case let .brightness(level):
-            FlashReadout(icon: level < 0.5 ? "sun.min.fill" : "sun.max.fill", level: level)
+        case let .brightness(level, keyboard):
+            FlashReadout(icon: SneakPeek.brightnessIcon(level: level, keyboard: keyboard), level: level)
         case .charging:
             HStack(spacing: 4) {
                 Image(systemName: "bolt.fill")
@@ -246,7 +246,7 @@ struct CollapsedNotchView: View {
         switch peek {
         case let .volume(level, muted):
             FlashBar(value: Double(level), color: flashColor, dimmed: muted)
-        case let .brightness(level):
+        case let .brightness(level, _):
             FlashBar(value: Double(level), color: flashColor)
         case let .charging(level):
             HStack(spacing: 5) {

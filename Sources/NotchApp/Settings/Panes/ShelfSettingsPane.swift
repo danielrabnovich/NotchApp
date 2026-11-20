@@ -17,15 +17,12 @@ struct ShelfSettingsPane: View {
                     ToggleRow("Copy what you add", subtitle: "The latest thing added to the shelf is also copied, so you can paste it anywhere.", isOn: $s.copyShelfAdds)
                     ToggleRow("Random file names", subtitle: "Files on the shelf go by a made-up name (amber-harbor-27.png) and leave under it when dragged or copied out. The originals keep theirs.",
                               isOn: $s.shelfRandomNames)
-                    Picker(selection: $s.shelfDragOut) {
-                        ForEach(AppSettings.ShelfDragOut.allCases) { Text($0.label).tag($0) }
-                    } label: {
+                    ChoiceRow(selection: $s.shelfDragOut, options: AppSettings.ShelfDragOut.allCases, title: { $0.label }) {
                         RowLabel(title: "Dragging files out",
                                  subtitle: s.shelfRandomNames ? "Always a copy while files go by made-up names."
                                      : s.shelfDragOut == .copy ? "The original stays where it is. Hold ⌘ while dragging to move it instead."
                                      : "Moves the original on the same disk and copies to another, as Finder does. Hold ⌥ to copy.")
                     }
-                    .pickerStyle(.segmented)
                     .disabled(s.shelfRandomNames)
                 }
             }
@@ -65,6 +62,12 @@ struct ShelfSettingsPane: View {
                     Text("Taildrop")
                 }
                 Section {
+                    ToggleRow("LocalSend zone", subtitle: "Drop files on it to send them to phones and computers on this Wi-Fi that run LocalSend (free, for iPhone, Android, Windows and Linux). The person on the other end accepts them there; nothing goes through the internet.",
+                              isOn: $s.localSendZone)
+                } header: {
+                    Text("LocalSend")
+                }
+                Section {
                     ToggleRow("Clipboard history", subtitle: "Text, links, images and files you copy, next to the shelf. Click one to copy it again.",
                               isOn: $s.clipboardHistory)
                     ToggleRow("Clean copied links", subtitle: "Tracking (utm_…, fbclid, gclid, si…) comes off links as you copy them, and redirect links become where they lead.",
@@ -79,7 +82,7 @@ struct ShelfSettingsPane: View {
                         LabeledContent {
                             Button("Update yt-dlp") { VideoDownloader.shared.upgrade() }
                         } label: {
-                            RowLabel(title: "yt-dlp found", subtitle: (VideoDownloader.binary?.path ?? "") + (VideoDownloader.ffmpeg == nil ? " · install ffmpeg for best quality" : " · with ffmpeg"))
+                            RowLabel(title: "yt-dlp found", subtitle: (VideoDownloader.binary?.path ?? "") + (VideoDownloader.ffmpeg == nil ? " · install ffmpeg for best quality" : " · with ffmpeg"), shown: true)
                         }
                         Picker(selection: $s.videoQuality) {
                             Text("Best available").tag(0)

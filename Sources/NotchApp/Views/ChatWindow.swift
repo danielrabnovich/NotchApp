@@ -122,7 +122,7 @@ private struct ChatView: View {
             if chat.messages.isEmpty { empty } else { messages }
             input
         }
-        .background(TrayGlass(look: DynamicGlass.Look(settings.glassLevel), glass: settings.usesGlass, radius: radius, minShade: 0.93))
+        .background(TrayGlass(look: DynamicGlass.Look(amount: settings.glassAmount), glass: settings.usesGlass, radius: radius, minShade: 0.93))
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .circular))
         .foregroundStyle(.white)
         .environment(\.colorScheme, .dark)

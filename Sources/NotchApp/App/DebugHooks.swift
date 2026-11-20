@@ -572,6 +572,35 @@ enum DebugHooks {
         case "hover": c.viewModel.isHovering = parts.count > 1 ? parts[1] == "1" : true
         case "volume": ActivityCenter.shared.show(.volume(level: Float(parts[safe: 1] ?? "0.6") ?? 0.6, muted: false), for: 5)
         case "brightness": ActivityCenter.shared.show(.brightness(level: Float(parts[safe: 1] ?? "0.4") ?? 0.4), for: 5)
+        case "terminal": TerminalWindow.shared.toggle()
+        case "lockdemo": // lockdemo on|off: the lock-screen player, shown without locking
+            parts[safe: 1] == "off" ? LockScreenPlayer.shared.debugHide() : LockScreenPlayer.shared.debugShow()
+        case "localsend": // localsend: scan, then log who answered
+            LocalSendService.shared.scan()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.6) {
+                log("LOCALSEND " + LocalSendService.shared.devices.map { "\($0.alias) \($0.ip)" }.joined(separator: " | "))
+            }
+        case "powerhour": log("POWERHOUR span=\(PowerHistory.shared.span) " + PowerHistory.shared.top().map { "\($0.name) \(String(format: "%.2f", $0.watts))W" }.joined(separator: " | "))
+        case "kbflash": ActivityCenter.shared.show(.brightness(level: Float(parts[safe: 1] ?? "0.4") ?? 0.4, keyboard: true), for: 5)
+        case "markup": // markup <image path>: the markup window for it
+            if let path = parts[safe: 1] { MarkupWindow.shared.open(URL(fileURLWithPath: path)) }
+        case "markupdemo": // markupdemo <image path>: an arrow, words and a hidden block, saved
+            if let path = parts[safe: 1], let image = NSImage(contentsOfFile: path)?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                let m = MarkupModel(url: URL(fileURLWithPath: path), image: image)
+                m.marks = [.blur(CGRect(x: 0.33, y: 0.33, width: 0.36, height: 0.08)),
+                           .arrow(from: CGPoint(x: 0.85, y: 0.85), to: CGPoint(x: 0.62, y: 0.52)),
+                           .text(at: CGPoint(x: 0.5, y: 0.9), "this address is wrong")]
+                m.save()
+            }
+        case "shelftool": // shelftool combine|split|strip|trim <paths…>
+            let urls = parts.dropFirst(2).map { URL(fileURLWithPath: String($0)) }
+            switch parts[safe: 1] {
+            case "combine": ShelfTools.combine(urls)
+            case "split": if let u = urls.first { ShelfTools.split(u) }
+            case "strip": ShelfTools.strip(urls)
+            case "trim": if let u = urls.first { ShelfTools.trim(u) }
+            default: break
+            }
         case "charging": ActivityCenter.shared.show(.charging(level: BatteryMonitor.shared.level), for: 5)
         case "meetingflash": ActivityCenter.shared.show(.meeting(title: "Design review", minutes: 5, color: .systemOrange), for: 6)
         case "screenshot": ActivityCenter.shared.show(.screenshot(count: 1), for: 5)

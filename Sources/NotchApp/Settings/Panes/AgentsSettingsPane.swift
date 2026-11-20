@@ -19,6 +19,7 @@ struct AgentsSettingsPane: View {
                               isOn: $s.agentsKeepAwake)
                     ToggleRow("Live activity from Claude Code",
                               subtitle: hookError ?? "Adds read-only hooks to Claude Code's settings, so the notch shows what each session is doing right now and how many subagents it has out, and says what it changed when it's done. They never answer anything for you.",
+                              shown: hookError != nil,
                               isOn: Binding(get: { hooks.installed }, set: { on in
                                   do { try hooks.setInstalled(on); hookError = nil } catch { hookError = error.localizedDescription }
                               }))
@@ -35,7 +36,7 @@ struct AgentsSettingsPane: View {
                     .disabled(link != nil)
                 } label: {
                     RowLabel(title: "The notch command",
-                             subtitle: linkError ?? "notch run make shows a ring beside the notch while it runs and a Banner when it ends (click it to go back to the terminal). notch banner, progress, shelf and ask work from any script. \(link.map { "Linked at \($0.path)." } ?? "Adds a link to it on your PATH.")")
+                             subtitle: linkError ?? "notch run make shows a ring beside the notch while it runs and a Banner when it ends (click it to go back to the terminal). notch banner, progress, shelf and ask work from any script. \(link.map { "Linked at \($0.path)." } ?? "Adds a link to it on your PATH.")", shown: linkError != nil)
                 }
                 LabeledContent {
                     Button(copiedMCP ? "Copied" : "Copy Command") {
@@ -84,7 +85,7 @@ struct AgentsSettingsPane: View {
                 ForEach(AgentMonitor.Tool.allCases) { tool in
                     HStack(spacing: 10) {
                         AgentGlyph(tool: tool, size: 22)
-                        RowLabel(title: tool.name, subtitle: source(tool))
+                        RowLabel(title: tool.name, subtitle: source(tool), shown: true)
                         Spacer()
                         Text(agents.installed.contains(tool) ? "Found" : "Not found")
                             .font(.caption).foregroundStyle(agents.installed.contains(tool) ? Color.green : Color.secondary)
@@ -124,7 +125,7 @@ private struct AgentPlanRow: View {
     var body: some View {
         HStack(spacing: 10) {
             AgentGlyph(tool: tool, size: 22)
-            RowLabel(title: tool.name, subtitle: installed ? note : "Not found on this Mac")
+            RowLabel(title: tool.name, subtitle: installed ? note : "Not found on this Mac", shown: true)
             Spacer(minLength: 8)
             Picker("", selection: Binding(
                 get: { s.agentPlans[tool.rawValue] ?? "" },

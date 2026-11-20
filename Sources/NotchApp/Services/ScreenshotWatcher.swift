@@ -148,7 +148,11 @@ final class ScreenshotWatcher {
         }
         guard !picked.isEmpty else { return }
         ShelfStore.shared.add(picked)
-        ActivityCenter.shared.show(.screenshot(count: picked.count), for: 3)
+        // A click on the Banner marks the (newest) one up.
+        let caught = ShelfStore.shared.items.filter(\.isScreenshot).max { $0.added < $1.added }?.url
+        ActivityCenter.shared.show(.screenshot(count: picked.count), for: 3) {
+            if let caught, FileManager.default.fileExists(atPath: caught.path) { MarkupWindow.shared.open(caught) }
+        }
     }
 
     private static func key(_ url: URL) -> String {

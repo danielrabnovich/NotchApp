@@ -48,6 +48,8 @@ struct HomeSettingsPane: View {
                               isOn: $s.homeMusicTakesOver)
                     ToggleRow("Live activity while playing", subtitle: "Artwork and a visualizer beside the closed notch.",
                               isOn: $s.musicLiveActivity)
+                    ToggleRow("On the lock screen", subtitle: "While the Mac is locked, what's playing sits under the clock with its controls, so you can pause or skip without unlocking.",
+                              isOn: $s.lockScreenMusic)
                     ToggleRow("Audio visualizer", subtitle: "Moves with what's actually playing, bass to treble.", isOn: $s.showVisualizer)
                     if s.showVisualizer {
                         PermissionRow(title: "System audio recording",
@@ -65,10 +67,8 @@ struct HomeSettingsPane: View {
                 if s.calendarEnabled {
                     ToggleRow("Meeting alerts", subtitle: "A heads-up from the notch before each meeting.", isOn: $s.meetingAlerts)
                     if s.meetingAlerts {
-                        Stepper(value: $s.meetingAlertMinutes, in: 1...30) {
-                            LabeledContent("Alert before") {
-                                Text("\(s.meetingAlertMinutes) min").monospacedDigit()
-                            }
+                        LabeledContent("Alert before") {
+                            CapsuleStepper(value: $s.meetingAlertMinutes, range: 1...30) { "\($0) min" }
                         }
                     }
                     ToggleRow("Meeting mode", subtitle: "During a call (Zoom, Teams, FaceTime, Meet in a browser…), its time and a mute button beside the notch; after it, jot notes or a follow-up.",
@@ -110,7 +110,7 @@ private struct CardRow: View {
                 .foregroundStyle(.white)
                 .frame(width: 26, height: 26)
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentColor.gradient))
-            RowLabel(title: entry.card.title, subtitle: note ?? entry.card.summary)
+            RowLabel(title: entry.card.title, subtitle: note ?? entry.card.summary, shown: true)
             Spacer(minLength: 8)
             if entry.card == .clock {
                 Picker("City", selection: Binding(get: { WorldClock.city.id }, set: { s.worldClockCity = $0 })) {

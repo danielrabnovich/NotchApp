@@ -8,11 +8,14 @@ let package = Package(
         // Tells the voices on the other side of a call apart (speaker diarization), on this Mac.
         // Apache-2.0. No traits: without its text-normalisation engine, which only text-to-speech uses.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7", traits: []),
+        // The drop-down terminal's emulator: a shell in a real pseudo-terminal, drawn natively. MIT.
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.11.2"),
     ],
     targets: [
         .executableTarget(
             name: "NotchApp",
-            dependencies: ["NotchKit", .product(name: "FluidAudio", package: "FluidAudio")],
+            dependencies: ["NotchKit", .product(name: "FluidAudio", package: "FluidAudio"),
+                           .product(name: "SwiftTerm", package: "SwiftTerm")],
             path: "Sources/NotchApp",
             swiftSettings: [
                 .unsafeFlags(["-Onone"], .when(configuration: .debug)),

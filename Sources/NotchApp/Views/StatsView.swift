@@ -63,7 +63,7 @@ struct StatsView: View {
 enum StatKind: String, CaseIterable, Identifiable {
     case cpu, gpu, memory, power
     var id: String { rawValue }
-    var listsApps: Bool { self == .cpu || self == .memory }
+    var listsApps: Bool { self == .cpu || self == .memory || self == .power }
 }
 
 private enum CardMode {
@@ -246,6 +246,10 @@ private struct PowerCard: View {
     let mode: CardMode
     let onTap: () -> Void
     @EnvironmentObject private var monitor: SystemMonitor
+    /// Where the power goes: by part (CPU, GPU, display…), by app now, or by app over the last
+    /// hour. Remembered.
+    @AppStorage("stats.powerBy") private var by: PowerBy = .parts
+    @ObservedObject private var history = PowerHistory.shared
 
     var body: some View {
         let s = monitor.snapshot
@@ -285,26 +289,37 @@ private struct PowerCard: View {
             // Two columns: where the power goes, then the battery and adapter. (The fans are in
             // the footer.)
             HStack(alignment: .top, spacing: 10) {
-                breakdown(s)
-                ColumnDivider()
                 VStack(alignment: .leading, spacing: 4) {
-                    SectionLabel("Battery")
-                    if let battery = s.batteryPower {
-                        DetailRow(icon: battery >= 0 ? "arrow.down.to.line" : "arrow.up.to.line",
-                                  label: battery >= 0 ? "In" : "Out", value: watts(abs(battery)))
+                    PowerBySwitch(by: $by)
+                    switch by {
+                    case .parts: breakdown(s)
+                    case .now: apps(s)
+                    case .hour: hour
                     }
-                    if let adapter = s.adapterWatts {
-                        DetailRow(icon: "powerplug.fill", label: "Adapter", value: "\(adapter) W")
-                    }
-                    if let health = s.batteryHealth {
-                        DetailRow(icon: "heart.fill", label: "Health", value: percent(health) + "%")
-                    }
-                    if let cycles = s.batteryCycles {
-                        DetailRow(icon: "arrow.triangle.2.circlepath", label: "Cycles", value: "\(cycles)")
-                    }
-                    TemperatureRow(label: "Temp", celsius: s.batteryTemp)
                 }
-                .frame(width: 104)
+                .frame(maxWidth: .infinity)
+                // By app, the list takes the battery's column too: app names need the room.
+                if by == .parts {
+                    ColumnDivider()
+                    VStack(alignment: .leading, spacing: 4) {
+                        SectionLabel("Battery")
+                        if let battery = s.batteryPower {
+                            DetailRow(icon: battery >= 0 ? "arrow.down.to.line" : "arrow.up.to.line",
+                                      label: battery >= 0 ? "In" : "Out", value: watts(abs(battery)))
+                        }
+                        if let adapter = s.adapterWatts {
+                            DetailRow(icon: "powerplug.fill", label: "Adapter", value: "\(adapter) W")
+                        }
+                        if let health = s.batteryHealth {
+                            DetailRow(icon: "heart.fill", label: "Health", value: percent(health) + "%")
+                        }
+                        if let cycles = s.batteryCycles {
+                            DetailRow(icon: "arrow.triangle.2.circlepath", label: "Cycles", value: "\(cycles)")
+                        }
+                        TemperatureRow(label: "Temp", celsius: s.batteryTemp)
+                    }
+                    .frame(width: 104)
+                }
             }
         }
     }
@@ -322,7 +337,6 @@ private struct PowerCard: View {
         let total = max(s.systemPower ?? known, known, 0.1)
         let other = s.systemPower.map { max(0, $0 - known) }
         VStack(alignment: .leading, spacing: 4) {
-            SectionLabel("Components")
             ForEach(parts.filter { $0.watts != nil }, id: \.label) { part in
                 MeterRow(label: part.label, value: (part.watts ?? 0) / total, color: part.color,
                          text: watts(part.watts ?? 0), bar: false)
@@ -335,6 +349,30 @@ private struct PowerCard: View {
         }
         .frame(maxWidth: .infinity)
     }
+
+    /// The apps drawing the most on the processor, helpers counted in. macOS keeps no per-app GPU
+    /// figure, and system processes (the window server among them) can't be read from an app.
+    private func apps(_ s: SystemSnapshot) -> some View {
+        AppList(apps: s.topPower, limit: 5, empty: "Measuring…") { appWatts($0.power) }
+            .help("Each app's power right now, its helpers included: the processor's, plus its share of the GPU's.")
+    }
+
+    /// The last hour, by average watts: which apps warmed the Mac, not who's busy this second.
+    @ViewBuilder private var hour: some View {
+        let top = history.top(minutes: 60, limit: 5)
+        if top.isEmpty {
+            Text(history.span == 0 ? "Starts counting now. Back in a minute." : "Nothing drew much.")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.35))
+        } else {
+            AppList(apps: top.map { AppUsage(pid: $0.pid, name: $0.name, bundlePath: $0.bundlePath, cpu: 0, memory: 0, power: $0.watts) },
+                    limit: 5, empty: "") { appWatts($0.power) }
+                .help("Average power over the last \(history.span) min, processor and GPU, helpers included.")
+        }
+    }
+
+    /// An app idling on the efficiency cores draws hundredths of a watt.
+    private func appWatts(_ w: Double) -> String { w < 1 ? String(format: "%.2f W", w) : watts(w) }
 
     /// Charging, the adapter, or the battery's time left: "+12 W", "94 W", "3h 20m".
     private func source(_ s: SystemSnapshot) -> (icon: String, value: String, help: String)? {
@@ -496,6 +534,36 @@ private extension StatCard where Note == EmptyView {
 private struct ColumnDivider: View {
     var body: some View {
         Rectangle().fill(.white.opacity(0.08)).frame(width: 1)
+    }
+}
+
+/// How the power card splits the total.
+enum PowerBy: String { case parts, now, hour }
+
+/// The power card's ways to split the total, as its column's heading: PARTS · NOW · HOUR, the
+/// one showing brighter. A click on any picks it.
+private struct PowerBySwitch: View {
+    @Binding var by: PowerBy
+
+    var body: some View {
+        // Never wrapped: the Parts column is narrow, and a word broken mid-way reads as a bug.
+        HStack(spacing: 5) {
+            label("Parts", .parts, help: "CPU, GPU, display, memory and the rest")
+            label("Now", .now, help: "Which apps draw the most right now")
+            label("Hour", .hour, help: "Which apps drew the most over the last hour")
+        }
+    }
+
+    private func label(_ text: String, _ value: PowerBy, help: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 8, weight: .bold))
+            .tracking(0.4)
+            .lineLimit(1)
+            .fixedSize()
+            .foregroundStyle(.white.opacity(by == value ? 0.85 : 0.3))
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.easeOut(duration: 0.15)) { by = value } }
+            .help(help)
     }
 }
 

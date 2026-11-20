@@ -18,6 +18,11 @@ struct TimerPane: View {
                               isOn: $s.pomodoroAutoStart)
                 }
             }
+            Section {
+                ToggleRow("Break reminders",
+                          subtitle: "After about an hour with no pause, a Banner says it's time to get up, ideally just as an agent starts working or a build begins, when you'd only be waiting. Not on calls or during a Pomodoro; stepping away for five minutes counts as the break.",
+                          isOn: $s.breakReminders)
+            }
         }
     }
 }
