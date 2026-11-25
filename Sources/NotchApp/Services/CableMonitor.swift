@@ -173,7 +173,11 @@ final class CableMonitor: ObservableObject {
     /// charging cable plugged in every morning stays quiet.
     private func announce(_ id: String) {
         refresh()
-        guard AppSettings.shared.toolsEnabled, let port = ports.first(where: { $0.id == id }) else { return }
+        guard let port = ports.first(where: { $0.id == id }) else { return }
+        guard AppSettings.shared.toolsEnabled else {
+            if port.cable != nil { Tips.shared.note(.cablePlugged) }
+            return
+        }
         let fingerprint = port.cable?.fingerprint ?? (port.talkedPD ? "basic" : nil)
         guard let fingerprint else { return }
         var seen = UserDefaults.standard.stringArray(forKey: Self.seenKey) ?? []

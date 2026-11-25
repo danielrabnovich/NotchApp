@@ -16,10 +16,14 @@ final class Tips {
         case glanceClicked, glanceHeld
         case shelfDrop, trayShaken
         case copied, clipboardOpened
+        /// Moments a feature that's off would have helped: an agent finished work in a folder, a
+        /// USB-C cable went in, a call started.
+        case agentFinished, cablePlugged, callStarted
     }
 
     private enum Tip: String {
         case holdGlance, shakeTray, clipboard
+        case repos, cables, callNotes
         case tabShortcut // one per tab, as "tabShortcut.<tab>"
     }
 
@@ -60,6 +64,16 @@ final class Tips {
             if bump("copy") >= 25, (counts["clipboardOpened"] ?? 0) == 0 { offer(Tip.clipboard.rawValue) }
         case .clipboardOpened:
             bump("clipboardOpened")
+        // Discovery: only while the feature is off, and only once it's come up a few times.
+        case .agentFinished:
+            guard !AppSettings.shared.reposEnabled else { return }
+            if bump("agentFinished") >= 3 { offer(Tip.repos.rawValue) }
+        case .cablePlugged:
+            guard !AppSettings.shared.toolsEnabled else { return }
+            if bump("cablePlugged") >= 2 { offer(Tip.cables.rawValue) }
+        case .callStarted:
+            guard !AppSettings.shared.transcribeCalls else { return }
+            if bump("callStarted") >= 2 { offer(Tip.callNotes.rawValue) }
         }
     }
 
@@ -95,7 +109,12 @@ final class Tips {
         }
         shown.insert(id)
         defaults.set(Date(), forKey: "tips.last")
-        ActivityCenter.shared.show(.notice(title: text.title, detail: text.detail, icon: "lightbulb.fill", tone: .info), for: 7)
+        let notice = SneakPeek.notice(title: text.title, detail: text.detail, icon: "lightbulb.fill", tone: .info)
+        if let action = action(for: id) {
+            ActivityCenter.shared.show(notice, for: 8, onClick: action)
+        } else {
+            ActivityCenter.shared.show(notice, for: 7)
+        }
     }
 
     private func text(for id: String) -> (title: String, detail: String)? {
@@ -110,7 +129,20 @@ final class Tips {
         case .clipboard:
             let key = HotKeys.combo(for: .clipboard).map { " (\($0.display))" } ?? ""
             return ("Tip: what you copy is kept", "Shelf › Clipboard has your recent copies\(key)")
+        case .repos: return ("Tip: work your agents left unpushed", "Local repos puts it on Home · click to turn on")
+        case .cables: return ("Tip: what can that cable do?", "Tools › Cables reads its chip · click to turn on")
+        case .callNotes: return ("Tip: notes from your calls", "Turned into text on this Mac · click to turn on")
         default: return nil
+        }
+    }
+
+    /// Where a tip's click goes: the setting it's about.
+    private func action(for id: String) -> (@MainActor () -> Void)? {
+        switch Tip(rawValue: id) {
+        case .repos: { SettingsWindowController.shared.show(pane: .developer) }
+        case .cables: { SettingsWindowController.shared.show(pane: .addOns) }
+        case .callNotes: { SettingsWindowController.shared.show(pane: .home) }
+        default: nil
         }
     }
 

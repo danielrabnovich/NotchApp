@@ -123,6 +123,7 @@ final class MeetingMonitor: ObservableObject {
         }
         DebugHooks.log("MEETING call started on \(caller.name)")
         if let call { MeetingAssistant.shared.callStarted(call) }
+        Tips.shared.note(.callStarted)
         // A backstop for the one change Core Audio may not announce: the call app letting go of
         // the mic while it keeps playing sound, with the mic still open for someone else (the
         // recording). Only while a call is on.

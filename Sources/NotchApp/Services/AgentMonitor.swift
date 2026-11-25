@@ -128,6 +128,10 @@ final class AgentMonitor: ObservableObject {
             installed = Set(Tool.allCases.filter(Self.isInstalled))
             announceChanges(all)
             holdAwake(working: all.contains { $0.state == .working })
+            // An agent done working in a folder: a moment the Repos card would have helped (see Tips).
+            for session in all where session.state != .working && session.directory != nil {
+                if sessions.contains(where: { $0.id == session.id && $0.state == .working }) { Tips.shared.note(.agentFinished) }
+            }
             if all != sessions { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { sessions = all } }
         }
     }
