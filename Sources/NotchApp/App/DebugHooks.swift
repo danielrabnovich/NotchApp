@@ -637,6 +637,9 @@ enum DebugHooks {
         case "trayclose": ShelfTray.shared.close()
         case "traystate": log(ShelfTray.shared.debugState())
         case "traysnap": ShelfTray.shared.debugSnapshot(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/tray.png"))
+        case "pill": SelectionPill.shared.debugOffer(pid: parts[safe: 1].flatMap { pid_t($0) })
+        case "pillsnap": SelectionPill.shared.debugSnapshot(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/pill.png"))
+        case "pillask": SelectionPill.shared.debugAsk(parts.dropFirst().joined(separator: " "))
         case "homeshot": HomeShots.run(dir: parts[safe: 1] ?? "/tmp/homeshots")
         case "homeedit": parts[safe: 1] == "off" ? HomeEditing.shared.end() : HomeEditing.shared.begin()
         case "snapshot":

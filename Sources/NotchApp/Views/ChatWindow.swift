@@ -99,8 +99,86 @@ private final class ChatPanel: NSPanel {
     }
 }
 
+/// Drags the window from wherever nothing else takes the click. `isMovableByWindowBackground`
+/// alone is unreliable under SwiftUI, which claims many clicks for itself, so the header moves
+/// the window explicitly. Works on the first click, even while another app is in front.
+private struct WindowDragArea: NSViewRepresentable {
+    final class DragView: NSView {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
+    }
+
+    func makeNSView(context: Context) -> DragView { DragView() }
+    func updateNSView(_ nsView: DragView, context: Context) {}
+}
+
 /// iMessage's blue, for what you sent and the send button.
 private let messageBlue = Color(red: 0.04, green: 0.52, blue: 1.0)
+/// The same blue, a touch lighter at the top, as Messages' bubbles catch the light.
+private let messageGradient = LinearGradient(colors: [Color(red: 0.2, green: 0.62, blue: 1.0), messageBlue],
+                                             startPoint: .top, endPoint: .bottom)
+
+/// What it's doing, with a soft highlight sweeping across the words, as Apple Intelligence's do.
+private struct SweepText: View {
+    let text: String
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            // Across and back off the far edge every 1.8 s, the band a third of the width.
+            let x = (t.truncatingRemainder(dividingBy: 1.8) / 1.8) * 1.8 - 0.4
+            Text(text)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.45))
+                .overlay {
+                    Text(text)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.95))
+                        .mask {
+                            LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.5), .init(color: .clear, location: 1)],
+                                           startPoint: UnitPoint(x: x - 0.2, y: 0.5), endPoint: UnitPoint(x: x + 0.2, y: 0.5))
+                        }
+                }
+                .contentTransition(.opacity)
+                .animation(.easeInOut(duration: 0.25), value: text)
+        }
+    }
+}
+
+/// A thin arc chasing round the stop button while a reply comes in.
+private struct StopRing: View {
+    @State private var turn = false
+
+    var body: some View {
+        Circle()
+            .trim(from: 0, to: 0.28)
+            .stroke(.white.opacity(0.85), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            .padding(1)
+            .rotationEffect(.degrees(turn ? 360 : 0))
+            .onAppear { withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) { turn = true } }
+    }
+}
+
+/// A source's capsule, brighter under the pointer.
+private struct ChipButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { Chip(configuration: configuration) }
+
+    private struct Chip: View {
+        let configuration: Configuration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .foregroundStyle(.white.opacity(hovering ? 0.95 : 0.75))
+                .background(Capsule().fill(.white.opacity(configuration.isPressed ? 0.18 : hovering ? 0.13 : 0.07)))
+                .overlay(Capsule().strokeBorder(.white.opacity(hovering ? 0.14 : 0.06), lineWidth: 0.5))
+                .scaleEffect(configuration.isPressed ? 0.96 : 1)
+                .animation(.easeOut(duration: 0.15), value: hovering)
+                .onHover { hovering = $0 }
+        }
+    }
+}
 
 private struct ChatView: View {
     @EnvironmentObject private var chat: ChatStore
@@ -150,6 +228,8 @@ private struct ChatView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(chat.title.isEmpty ? 0.5 : 0.85))
                 .lineLimit(1)
+                .contentTransition(.opacity)
+                .animation(.easeOut(duration: 0.2), value: chat.title)
                 .padding(.horizontal, button * 2 + 8)
                 .allowsHitTesting(false)
         }
@@ -157,6 +237,8 @@ private struct ChatView: View {
         .padding(.horizontal, gutter)
         .padding(.top, gutter)
         .padding(.bottom, 6)
+        // The whole strip moves the window, between and around the buttons, title included.
+        .background(WindowDragArea())
     }
 
     /// Earlier conversations, newest first.
@@ -203,13 +285,23 @@ private struct ChatView: View {
                     ForEach(chat.messages) { message in
                         MessageRow(message: message, isLast: message.id == chat.messages.last?.id)
                             .id(message.id)
+                            .transition(.asymmetric(insertion: .offset(y: 10).combined(with: .opacity), removal: .opacity))
                     }
                     Color.clear.frame(height: 1).id("end")
                 }
                 // Your messages end where the send button does.
                 .padding(.horizontal, gutter + inset)
-                .padding(.top, 6)
-                .padding(.bottom, 12)
+                .padding(.top, 14)
+                .padding(.bottom, 16)
+                .animation(.spring(response: 0.38, dampingFraction: 0.86), value: chat.messages.count)
+            }
+            // Messages melt away under the header and the field rather than being cut off.
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 14)
+                    Color.black
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 16)
+                }
             }
             .onChange(of: chat.messages.count) { _, _ in withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: chat.messages.last?.text) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
@@ -236,32 +328,45 @@ private struct ChatView: View {
                 if chat.isRunning {
                     Button { chat.stop() } label: {
                         Image(systemName: "stop.fill")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(width: button, height: button)
-                            .background(Circle().fill(.white.opacity(0.25)))
+                            .background(Circle().fill(.white.opacity(0.16)))
+                            .overlay(StopRing())
                     }
                     .help("Stop")
+                    .transition(.scale(scale: 0.7).combined(with: .opacity))
                 } else {
                     Button(action: send) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(.white.opacity(canSend ? 1 : 0.45))
                             .frame(width: button, height: button)
-                            .background(Circle().fill(canSend ? messageBlue : .white.opacity(0.12)))
+                            .background {
+                                Circle()
+                                    .fill(canSend ? AnyShapeStyle(messageGradient) : AnyShapeStyle(.white.opacity(0.1)))
+                                    .shadow(color: messageBlue.opacity(canSend ? 0.45 : 0), radius: 6, y: 1)
+                            }
+                            .overlay(Circle().strokeBorder(.white.opacity(canSend ? 0.22 : 0), lineWidth: 0.5))
                     }
                     .disabled(!canSend)
+                    .transition(.scale(scale: 0.7).combined(with: .opacity))
                     .animation(.easeOut(duration: 0.12), value: canSend)
                     .help("Send (↩) · ⌥↩ for a new line")
                 }
             }
             .buttonStyle(.plain)
             .contentShape(Circle())
+            .animation(.spring(response: 0.3, dampingFraction: 0.8), value: chat.isRunning)
         }
         .padding(.leading, 12)
         .padding([.trailing, .vertical], inset)
-        .background(shape.fill(.white.opacity(0.07)))
-        .overlay(shape.strokeBorder(.white.opacity(focused ? 0.18 : 0.1), lineWidth: 1))
+        .background(shape.fill(LinearGradient(colors: [.white.opacity(0.09), .white.opacity(0.05)], startPoint: .top, endPoint: .bottom)))
+        // Lit along the top edge like glass, and a faint blue ring while you're typing.
+        .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(focused ? 0.24 : 0.16), .white.opacity(focused ? 0.1 : 0.05)],
+                                                   startPoint: .top, endPoint: .bottom), lineWidth: 1))
+        .background(shape.stroke(messageBlue.opacity(focused ? 0.35 : 0), lineWidth: 3).blur(radius: 3))
+        .animation(.easeOut(duration: 0.18), value: focused)
         .padding([.horizontal, .bottom], gutter)
         .padding(.top, 6)
     }
@@ -284,6 +389,7 @@ private struct MessageRow: View {
     let message: ChatStore.Message
     let isLast: Bool
     @EnvironmentObject private var chat: ChatStore
+    @State private var copied = false
 
     var body: some View {
         switch message.role {
@@ -296,7 +402,13 @@ private struct MessageRow: View {
                     .textSelection(.enabled)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
-                    .background(RoundedRectangle(cornerRadius: 17, style: .continuous).fill(messageBlue))
+                    .background {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(messageGradient)
+                            .shadow(color: messageBlue.opacity(0.3), radius: 8, y: 2)
+                    }
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(LinearGradient(colors: [.white.opacity(0.28), .clear], startPoint: .top, endPoint: .center), lineWidth: 0.5))
             }
         case .assistant:
             VStack(alignment: .leading, spacing: 8) {
@@ -305,15 +417,18 @@ private struct MessageRow: View {
                 case .running(let stage) where message.text.isEmpty:
                     HStack(spacing: 8) {
                         ThinkingRing(size: 16, speed: 0.9, disc: false)
-                        Text(stage)
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(.white.opacity(0.55))
+                        SweepText(text: stage)
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 2)
                 case .failed(let error) where message.text.isEmpty:
-                    Label(error, systemImage: "exclamationmark.triangle")
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .symbolRenderingMode(.multicolor)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.orange.opacity(0.1)))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.orange.opacity(0.2), lineWidth: 0.5))
                 default:
                     if let job = message.job, ChatResult.shows(job) {
                         ChatResult(job: job, messageID: message.id)
@@ -348,10 +463,21 @@ private struct MessageRow: View {
         case .deploys: ("triangle.fill", "Vercel")
         case .linear: ("circle.lefthalf.filled", "Linear")
         }
-        return Label(text, systemImage: icon)
-            .font(.system(size: 10.5, weight: .semibold))
-            .foregroundStyle(route.tint)
-            .labelStyle(.titleAndIcon)
+        // A quiet chip: the route's colour on the icon, the words softer, so it labels the reply
+        // without shouting over it.
+        return HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(route.tint)
+            Text(text)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.62))
+        }
+        .padding(.leading, 7)
+        .padding(.trailing, 9)
+        .frame(height: 20)
+        .background(Capsule().fill(route.tint.opacity(0.12)))
+        .overlay(Capsule().strokeBorder(route.tint.opacity(0.18), lineWidth: 0.5))
     }
 
     private var sources: some View {
@@ -368,9 +494,8 @@ private struct MessageRow: View {
                         .foregroundStyle(.white.opacity(0.75))
                         .padding(.horizontal, 8)
                         .frame(height: 20)
-                        .background(Capsule().fill(.white.opacity(0.08)))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(ChipButtonStyle())
                     .help(source.title + "\n" + source.url.absoluteString)
                 }
             }
@@ -384,7 +509,14 @@ private struct MessageRow: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(message.text, forType: .string)
                 Haptics.tap()
-            } label: { Image(systemName: "doc.on.doc").font(.system(size: 10)) }
+                copied = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { copied = false }
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 10, weight: copied ? .bold : .regular))
+                    .foregroundStyle(copied ? AnyShapeStyle(Color.green) : AnyShapeStyle(.white.opacity(0.55)))
+                    .contentTransition(.symbolEffect(.replace))
+            }
                 .help("Copy")
             Button { chat.retry() } label: { Image(systemName: "arrow.clockwise").font(.system(size: 10, weight: .semibold)) }
                 .help("Try again")

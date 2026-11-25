@@ -77,6 +77,16 @@ final class ChatStore: ObservableObject {
         keep()
     }
 
+    /// Starts a conversation from a question already answered elsewhere (Ask about this).
+    func start(question: String, title: String, answer: String) {
+        task?.cancel()
+        self.title = title
+        screen = nil
+        conversationID = nil
+        messages = [Message(role: .user, text: question), Message(role: .assistant, text: answer)]
+        keep()
+    }
+
     /// An empty conversation, to ask anything.
     func newChat() {
         stop()
