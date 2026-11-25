@@ -174,7 +174,7 @@ private struct ActionTile: View {
         case .darkMode:
             ControlTile(icon: "circle.lefthalf.filled", title: "Dark Mode", on: controls.darkMode) { controls.toggleDarkMode() }
         case .mic:
-            ControlTile(icon: controls.micMuted ? "mic.slash.fill" : "mic.fill", title: controls.micMuted ? "Mic Off" : "Mic On",
+            ControlTile(icon: controls.micMuted ? "mic.slash.fill" : "mic.fill", title: controls.micMuted ? "Mic Muted" : "Microphone",
                         on: controls.micMuted, onTint: .red) { controls.toggleMic() }
         case .screenshot:
             ControlTile(icon: "camera.viewfinder", title: "Screenshot", on: false) { closeThen { controls.screenshot() } }
@@ -393,7 +393,7 @@ private struct KeepAwakeTile: View {
 
     var body: some View {
         if keepAwake.isActive {
-            ControlTile(icon: "cup.and.saucer.fill", title: keepAwake.remainingText.map { "Awake · \($0)" } ?? "Awake", on: true) {
+            ControlTile(icon: "cup.and.saucer.fill", title: keepAwake.endsAt == nil ? "Awake" : keepAwake.remainingText.map { "Awake · \($0)" } ?? "Awake", on: true) {
                 keepAwake.stop()
             }
             .help("Click to let your Mac sleep again")

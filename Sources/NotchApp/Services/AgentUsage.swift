@@ -662,6 +662,9 @@ func formatTimeLeft(until date: Date, now: Date = Date()) -> String {
 
 /// "$1,234", "$56.78", "$0.42".
 func formatDollars(_ value: Double) -> String {
+    // Nothing spent reads as "$0", not a precise "$0.00"; a sliver as under a cent.
+    if value <= 0 { return "$0" }
+    if value < 0.01 { return "<$0.01" }
     let f = NumberFormatter()
     f.numberStyle = .currency
     f.currencyCode = "USD"

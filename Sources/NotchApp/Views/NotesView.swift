@@ -13,10 +13,15 @@ struct NotesView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 PaneSwitcher(selection: $pane, options: TasksPane.options)
-                Text(wordCount)
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.45))
                 Spacer()
+                // With the buttons it describes, not in the tabs' row where it read as another tab.
+                if !store.text.isEmpty {
+                    Text(wordCount)
+                        .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.35))
+                        .contentTransition(.numericText())
+                        .padding(.trailing, 2)
+                }
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(store.text, forType: .string)

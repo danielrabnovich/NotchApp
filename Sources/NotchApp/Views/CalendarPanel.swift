@@ -61,8 +61,19 @@ struct TodayPanel: View {
         if showsBirthdayLine {
             HStack(spacing: 6) {
                 Image(systemName: "birthday.cake.fill").foregroundStyle(.pink)
-                Text(birthdays.today.map { p in p.turning.map { "\(p.name) turns \($0)" } ?? "\(p.name)'s birthday" }.joined(separator: " · "))
-                    .lineLimit(1)
+                // Everyone if they fit; else the first and how many more, never half a name.
+                let names = birthdays.today.map { p in p.turning.map { "\(p.name) turns \($0)" } ?? "\(p.name)'s birthday" }
+                ViewThatFits(in: .horizontal) {
+                    Text(names.joined(separator: " · ")).fixedSize()
+                    if names.count > 1 {
+                        HStack(spacing: 4) {
+                            Text(names[0]).lineLimit(1)
+                            Text("+\(names.count - 1)").foregroundStyle(.white.opacity(0.5)).fixedSize()
+                        }
+                    }
+                    Text(names.joined(separator: " · ")).lineLimit(1)
+                }
+                .help(names.joined(separator: "\n"))
             }
             .font(.system(size: 11.5, weight: .medium))
             .foregroundStyle(.white.opacity(0.85))
@@ -72,10 +83,10 @@ struct TodayPanel: View {
     private var showsBirthdayLine: Bool { fit.birthdayLine && !birthdays.today.isEmpty }
 
     private func header(now: Date) -> some View {
-        // With room to spare, four days either side of today; narrower days, then no month, when
-        // Today is squeezed between other cards.
+        // Days rolling forward from today (so a Saturday still looks ahead): nine with room to spare,
+        // else seven, narrower, then without the month when Today is squeezed between other cards.
         ViewThatFits(in: .horizontal) {
-            headerLine(now: now, month: true, pitch: 30, around: true)
+            headerLine(now: now, month: true, pitch: 30, span: 9)
             headerLine(now: now, month: true, pitch: 30)
             headerLine(now: now, month: true, pitch: 26)
             headerLine(now: now, month: false, pitch: 26)
@@ -83,7 +94,7 @@ struct TodayPanel: View {
         .frame(height: fit.letters ? nil : fit.headerHeight)
     }
 
-    private func headerLine(now: Date, month: Bool, pitch: CGFloat, around: Bool = false) -> some View {
+    private func headerLine(now: Date, month: Bool, pitch: CGFloat, span: Int = 7) -> some View {
         HStack(alignment: .center, spacing: 12) {
             if month {
                 Text(picked ?? now, format: .dateTime.month(.abbreviated))
@@ -95,7 +106,7 @@ struct TodayPanel: View {
                     .help("Open Calendar")
             }
             WeekStrip(now: now, events: settings.calendarEnabled ? calendar.week : [], pitch: pitch, letters: fit.letters,
-                      around: around, picked: settings.calendarEnabled ? $picked : .constant(nil))
+                      span: span, picked: settings.calendarEnabled ? $picked : .constant(nil))
                 // The days take the room (out to the card's edge, as the month is in from the other).
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -627,25 +638,25 @@ private struct EventRow: View {
     }
 }
 
-/// This calendar week (or, `around`, four days either side of today), a day to a column: today in
-/// red, the weekend brighter, dots in the colors of each day's calendars. Tapping a day picks it;
-/// tapping today goes back.
+/// A run of days leaning ahead of today (a day or two back, the rest to come), a day to a column:
+/// today in red, the weekend brighter, dots in the colors of each day's calendars, a new month's
+/// name over its 1st. Tapping a day picks it; tapping today goes back.
 private struct WeekStrip: View {
     let now: Date
     let events: [EKEvent]
     let pitch: CGFloat
     /// The weekday over each date; without, today is just its red number.
     var letters = true
-    var around = false
+    var span = 7
     @Binding var picked: Date?
+
+    /// How many of the days are behind today: yesterday, and the day before in the longer strip.
+    static func back(span: Int) -> Int { span >= 9 ? 2 : 1 }
 
     var body: some View {
         let cal = Calendar.current
-        let days = around
-            ? (-4...4).compactMap { cal.date(byAdding: .day, value: $0, to: cal.startOfDay(for: now)) }
-            : cal.dateInterval(of: .weekOfYear, for: now).map { week in
-                (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: week.start) }
-            } ?? []
+        let back = Self.back(span: span)
+        let days = (-back..<(span - back)).compactMap { cal.date(byAdding: .day, value: $0, to: cal.startOfDay(for: now)) }
         HStack(spacing: 0) {
             ForEach(days, id: \.self) { day in cell(day, cal: cal) }
         }
@@ -663,11 +674,15 @@ private struct WeekStrip: View {
             guard let calendar = event.calendar, seen.insert(calendar.calendarIdentifier).inserted else { continue }
             colors.append(Color(nsColor: calendar.color))
         }
+        // The 1st of a month that isn't today's: its name over the date, so "Nov" doesn't head December.
+        let newMonth = !isToday && cal.component(.day, from: day) == 1
         return VStack(spacing: 1) {
             if letters {
-                Text(isToday ? day.formatted(.dateTime.weekday(.abbreviated)).uppercased() : day.formatted(.dateTime.weekday(.narrow)))
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(isToday || isPicked ? 0.85 : 0.4))
+                Text(isToday ? day.formatted(.dateTime.weekday(.abbreviated)).uppercased()
+                     : newMonth ? day.formatted(.dateTime.month(.abbreviated)).uppercased()
+                     : day.formatted(.dateTime.weekday(.narrow)))
+                    .font(.system(size: 9, weight: newMonth ? .heavy : .semibold))
+                    .foregroundStyle(newMonth ? Color(nsColor: .systemRed).opacity(0.85) : .white.opacity(isToday || isPicked ? 0.85 : 0.4))
                     .lineLimit(1)
                     .fixedSize()
             }
