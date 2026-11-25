@@ -457,6 +457,8 @@ struct HomeView: View {
             return settings.toolsEnabled ? .medium : nil
         case .repos:
             return settings.reposEnabled ? .medium : nil
+        case .sentry:
+            return settings.sentryEnabled ? .medium : nil
         }
     }
 
@@ -497,6 +499,7 @@ struct HomeView: View {
         case .linear: LinearCard(small: item.size == .small)
         case .cables: CablesCard(small: item.size == .small)
         case .repos: ReposCard(small: item.size == .small)
+        case .sentry: SentryCard(small: item.size == .small)
         }
     }
 

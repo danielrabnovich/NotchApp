@@ -1,12 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// GitHub, Vercel and Linear: each on its own switch, signed in its own way, under one alerts choice.
+/// GitHub, Vercel, Linear and Sentry, and local repos: each on its own switch, signed in its own way, under one alerts choice.
 struct DeveloperSettingsPane: View {
     @EnvironmentObject private var s: AppSettings
     @ObservedObject private var github = GitHubService.shared
     @ObservedObject private var vercel = VercelService.shared
     @ObservedObject private var linear = LinearService.shared
+    @ObservedObject private var sentry = SentryService.shared
 
     var body: some View {
         SettingsPage(pane: .developer) {
@@ -42,6 +43,25 @@ struct DeveloperSettingsPane: View {
                 }
             } header: {
                 Text("Linear")
+            }
+            Section {
+                ToggleRow("Sentry", subtitle: "Unresolved issues from the last day on Home, and a Prompt when a new one appears or one spikes.", isOn: $s.sentryEnabled)
+                if s.sentryEnabled {
+                    StatusRow(title: sentryTitle, detail: sentryDetail, busy: sentry.connection == .connecting) { sentry.connect() }
+                    LabeledContent {
+                        TextField("Organization", text: $s.sentryOrg, prompt: Text("my-company"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 200)
+                    } label: {
+                        RowLabel(title: "Organization", subtitle: "Its slug, from the address: sentry.io/organizations/my-company/.", shown: true)
+                    }
+                    TokenRow(account: "sentry", title: "Auth token", placeholder: "sntryu_…",
+                             detail: "A user auth token with org:read, project:read and event:read (and event:write to resolve from the notch).",
+                             link: URL(string: "https://sentry.io/settings/account/api/auth-tokens/")!) { sentry.connect() }
+                }
+            } header: {
+                Text("Sentry")
             }
             Section {
                 ToggleRow("Local repos", subtitle: "Repos your coding agents worked in lately with changes not committed or commits not pushed, on a Home card. Found from the agents' own history: nothing to set up, nothing leaves this Mac.", isOn: $s.reposEnabled)
@@ -92,6 +112,20 @@ struct DeveloperSettingsPane: View {
     private var vercelDetail: String {
         if case let .failed(m) = vercel.connection { return m }
         return vercel.connection.user != nil ? "Checks every minute, every few seconds while something builds or just after you push." : ""
+    }
+
+    private var sentryTitle: String {
+        switch sentry.connection {
+        case .off: "Off"
+        case .connecting: "Signing in…"
+        case let .connected(org): "Connected to \(org)"
+        case .failed: "Not connected"
+        }
+    }
+
+    private var sentryDetail: String {
+        if case let .failed(m) = sentry.connection { return m }
+        return sentry.connection.org != nil ? "\(sentry.issues.count) unresolved issue\(sentry.issues.count == 1 ? "" : "s") seen in the last day. Checks every two minutes." : ""
     }
 
     private var linearTitle: String {

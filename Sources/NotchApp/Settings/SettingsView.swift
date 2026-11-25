@@ -154,7 +154,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .stats: "CPU, GPU, memory, temperatures and power. Click a card for details."
         case .tools: "Network and speed test, a cleaner, an app uninstaller and Bluetooth batteries."
         case .agents: "Claude Code, Codex, OpenCode and ZCode sessions (working, waiting for you or idle) and today's tokens."
-        case .developer: "GitHub, Vercel and Linear in the notch: rings that follow your CI and deploys after a push, reviews and issues waiting on you, and their actions in Search."
+        case .developer: "GitHub, Vercel, Linear and Sentry in the notch: rings that follow your CI and deploys after a push, reviews, issues and errors waiting on you, and the work in your local repos."
         case .addOns: "Search, Shelf and Tasks are always there. Turn on anything else you want."
         case .controls: "Volume and brightness, the quick actions you pick, Keep Awake and a camera mirror."
         case .mouse: "Scroll direction and middle click."

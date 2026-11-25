@@ -296,3 +296,87 @@ struct ReposCard: View {
         Button("Copy Path") { monitor.copyPath(repo) }
     }
 }
+
+/// Sentry: unresolved issues from the last day, busiest first, each with its events and a sparkline
+/// of the day. Click one for it in Sentry; right-click to resolve.
+struct SentryCard: View {
+    var small = false
+    @ObservedObject private var sentry = SentryService.shared
+
+    var body: some View {
+        HomeTile {
+            switch sentry.connection {
+            case .off, .connecting:
+                HomeNote(symbol: "ladybug", text: sentry.connection == .off ? "Sentry is off" : "Signing in…")
+            case .failed:
+                Button { SettingsWindowController.shared.show(pane: .developer) } label: {
+                    HomeNote(symbol: "key", text: "Set up Sentry")
+                }
+                .buttonStyle(.plain)
+            case .connected:
+                if sentry.issues.isEmpty {
+                    HomeNote(symbol: "checkmark.seal", text: "No unresolved issues today")
+                } else if small {
+                    let top = sentry.issues[0]
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(sentry.issues.count)").font(HomeType.figure).foregroundStyle(.white.opacity(0.92))
+                        Text(sentry.issues.count == 1 ? "issue today" : "issues today").font(HomeType.label).foregroundStyle(HomeType.secondary)
+                        Text(top.title).font(HomeType.detail).foregroundStyle(top.isError ? Color(red: 1, green: 0.45, blue: 0.4) : .orange)
+                    }
+                    .lineLimit(1)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture { if let u = top.url { NSWorkspace.shared.open(u) } }
+                } else {
+                    ViewThatFits(in: .vertical) {
+                        ForEach((1...max(1, min(4, sentry.issues.count))).reversed(), id: \.self) { n in
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(sentry.issues.prefix(n)) { row($0) }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: .infinity, alignment: .top)
+                }
+            }
+        }
+    }
+
+    private func row(_ issue: SentryService.Issue) -> some View {
+        Button { if let u = issue.url { NSWorkspace.shared.open(u) } } label: {
+            HStack(spacing: 6) {
+                Circle().fill(issue.isError ? Color(red: 1, green: 0.4, blue: 0.36) : .orange).frame(width: 6, height: 6)
+                Text(issue.title).font(HomeType.row).foregroundStyle(.white.opacity(0.85)).truncationMode(.tail)
+                Spacer(minLength: 2)
+                Sparkline(values: issue.hourly).frame(width: 26, height: 10)
+                Text(issue.events >= 1000 ? "\(issue.events / 1000)k" : "\(issue.events)")
+                    .font(HomeType.detail).foregroundStyle(HomeType.secondary)
+            }
+            .lineLimit(1)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(issue.shortID) · \(issue.project)\(issue.culprit.map { " · \($0)" } ?? "")\n\(issue.events) events, \(issue.users) users in 24 h")
+        .contextMenu {
+            Button("Open in Sentry") { if let u = issue.url { NSWorkspace.shared.open(u) } }
+            Button("Resolve") { sentry.resolve(issue) }
+        }
+    }
+}
+
+/// A day of hourly counts as a small line, scaled to its own peak.
+private struct Sparkline: View {
+    let values: [Int]
+
+    var body: some View {
+        Canvas { context, size in
+            guard values.count > 1, let peak = values.max(), peak > 0 else { return }
+            var path = Path()
+            for (i, v) in values.enumerated() {
+                let p = CGPoint(x: size.width * CGFloat(i) / CGFloat(values.count - 1),
+                                y: size.height * (1 - CGFloat(v) / CGFloat(peak)))
+                if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+            }
+            context.stroke(path, with: .color(.white.opacity(0.45)), lineWidth: 1)
+        }
+    }
+}
