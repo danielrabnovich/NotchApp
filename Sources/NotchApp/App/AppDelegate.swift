@@ -48,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ClipboardHistory.shared.start()
         NotificationMirror.shared.apply()
         DeviceBatteries.shared.start()
+        CableMonitor.shared.start()
         PrivacyMonitor.shared.start()
         AgentMonitor.shared.start()
         GitHubService.shared.start()

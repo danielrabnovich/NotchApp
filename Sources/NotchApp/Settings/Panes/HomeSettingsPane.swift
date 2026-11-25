@@ -6,14 +6,16 @@ struct HomeSettingsPane: View {
     @EnvironmentObject private var s: AppSettings
     @EnvironmentObject private var calendar: CalendarManager
     @ObservedObject private var mixer = AudioMixer.shared
+    /// Cards on Home that don't fit right now (as the preview lays it out).
+    @State private var waiting: [HomeCard] = []
 
     var body: some View {
         SettingsPage(pane: .home) {
             Section {
-                HomePreview()
+                HomePreview(waiting: $waiting)
                     .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
                 ForEach(s.homeCards, id: \.card) { entry in
-                    CardRow(entry: entry)
+                    CardRow(entry: entry, waiting: waiting.contains(entry.card))
                 }
                 .onMove { from, to in withAnimation(.snappy) { s.homeCards.move(fromOffsets: from, toOffset: to) } }
                 let missing = HomeCard.allCases.filter { card in !s.homeCards.contains { $0.card == card } }
@@ -38,13 +40,13 @@ struct HomeSettingsPane: View {
             } header: {
                 Text("Cards")
             } footer: {
-                FooterText("Left to right, in this order; drag to rearrange. Cards size themselves to fit: when there isn't room, the extras shrink, then wait for space (music playing big, a call bar).")
+                FooterText("Left to right, in this order; drag to rearrange. Cards size themselves to fit: when there isn't room, the extras shrink, then cards left to Auto wait for space (music playing big, a call bar). Give a card a size to keep it: the player shrinks for it instead. A card marked No room comes back once there's space.")
             }
             Section {
                 ToggleRow("Music player", subtitle: "Apple Music, Spotify, Podcasts and browsers. Click the artwork to jump to the app.",
                           isOn: Binding(get: { s.musicEnabled }, set: { s.musicEnabled = $0; s.musicLiveActivity = $0 }))
                 if s.musicEnabled {
-                    ToggleRow("Bigger while playing", subtitle: "The player takes half of Home while music plays; otherwise it stays a small card.",
+                    ToggleRow("Bigger while playing", subtitle: "The player takes half of Home while music plays, making room from cards left to Auto; cards you've sized stay. Otherwise it stays a small card.",
                               isOn: $s.homeMusicTakesOver)
                     ToggleRow("Live activity while playing", subtitle: "Artwork and a visualizer beside the closed notch.",
                               isOn: $s.musicLiveActivity)
@@ -98,6 +100,8 @@ struct HomeSettingsPane: View {
 /// A card on Home: what it is, its size, and a button to take it off.
 private struct CardRow: View {
     let entry: HomeEntry
+    /// On Home but not showing right now: there isn't room.
+    var waiting = false
     @EnvironmentObject private var s: AppSettings
 
     var body: some View {
@@ -112,6 +116,16 @@ private struct CardRow: View {
                 .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.accentColor.gradient))
             RowLabel(title: entry.card.title, subtitle: note ?? entry.card.summary, shown: true)
             Spacer(minLength: 8)
+            if waiting {
+                Text("No room")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(.orange.opacity(0.16)))
+                    .help("Not on Home right now: the cards before it take the room. It comes back once there's space. Give it a size to keep it on Home, or take another card off.")
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
             if entry.card == .clock {
                 Picker("City", selection: Binding(get: { WorldClock.city.id }, set: { s.worldClockCity = $0 })) {
                     ForEach(WorldClock.cities) { city in
@@ -162,7 +176,12 @@ private struct CardRow: View {
 
     /// Why it might not show, when it's something the user can fix.
     private var note: String? {
-        entry.card.isOn(s) ? nil : "Off: \(entry.card.featureHint.prefix(1).lowercased() + entry.card.featureHint.dropFirst()) to show it."
+        if waiting, entry.card.isOn(s) {
+            return entry.size == nil
+                ? "No room on Home right now: give it a size to keep it."
+                : "No room on Home even with the others shrunk: take a card off, or size one smaller."
+        }
+        return entry.card.isOn(s) ? nil : "Off: \(entry.card.featureHint.prefix(1).lowercased() + entry.card.featureHint.dropFirst()) to show it."
     }
 
     private var index: Int { s.homeCards.firstIndex(of: entry) ?? 0 }
@@ -184,14 +203,18 @@ private struct CardRow: View {
 /// Home as it is right now, drawn like the open notch and scaled to fit the page. Changes to the
 /// cards show here as they're made.
 private struct HomePreview: View {
-    /// The open notch's Home: 680 points wide, less its insets.
-    private let size = CGSize(width: 644, height: 144)
+    @Binding var waiting: [HomeCard]
     private let inset: CGFloat = 18
+    /// The open notch's Home on this Mac (680 points wide on most), less its insets.
+    private var size: CGSize {
+        CGSize(width: (NotchPresenter.shared.primary?.maxOpenSize.width ?? 680) - 2 * inset, height: 144)
+    }
 
     var body: some View {
+        let size = size
         GeometryReader { geo in
             let scale = min(1, geo.size.width / (size.width + 2 * inset))
-            HomeView()
+            HomeView(preview: { cards in withAnimation(.snappy) { waiting = cards } })
                 .frame(width: size.width, height: size.height)
                 .foregroundStyle(.white)
                 .padding(inset)

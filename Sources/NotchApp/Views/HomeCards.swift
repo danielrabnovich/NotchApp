@@ -114,11 +114,15 @@ struct StatsCard: View {
                         .font(HomeType.value)
                     }
                     if let celsius = s.cpuTemp {
-                        // Only worth a color once it's running hot.
-                        Text(settings.formatTemperature(celsius))
-                            .font(HomeType.detail)
-                            .foregroundStyle(celsius >= 80 ? StatsPalette.temperature(celsius) : HomeType.secondary)
-                            .rollingNumber(settings.formatTemperature(celsius))
+                        // A thermometer filling and warming with the chip; the number joins in once it's hot.
+                        HStack(spacing: 2) {
+                            Thermometer(celsius: celsius, size: 10)
+                            Text(settings.formatTemperature(celsius))
+                                .foregroundStyle(celsius >= 80 ? StatsPalette.temperature(celsius) : HomeType.secondary)
+                                .rollingNumber(settings.formatTemperature(celsius))
+                        }
+                        .font(HomeType.detail)
+                        .help("CPU temperature")
                     }
                 }
                 .lineLimit(1)
@@ -168,6 +172,39 @@ struct StatsCard: View {
                 .lineLimit(1)
             }
         }
+    }
+}
+
+/// A thermometer for a chip's temperature: SF's, emptier when cool and fuller as it heats, the
+/// mercury's color sliding from blue through green and amber to red. A soft glow once it's hot.
+struct Thermometer: View {
+    let celsius: Double
+    var size: CGFloat = 10
+
+    var body: some View {
+        let color = Self.color(celsius)
+        Image(systemName: celsius < 50 ? "thermometer.low" : celsius < 75 ? "thermometer.medium" : "thermometer.high")
+            // The mercury in the temperature's color, the glass a quiet white.
+            .symbolRenderingMode(.palette)
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(color, .white.opacity(0.5))
+            .shadow(color: color.opacity(celsius >= 80 ? 0.6 : 0), radius: 3)
+            .animation(.easeInOut(duration: 0.6), value: Int(celsius))
+            .accessibilityLabel("Temperature")
+    }
+
+    /// Cool blue to green to amber to red, mixed between the stops.
+    static func color(_ celsius: Double) -> Color {
+        let stops: [(Double, (Double, Double, Double))] = [
+            (35, (0.38, 0.72, 1.00)), (55, (0.40, 0.88, 0.55)), (72, (1.00, 0.80, 0.30)), (88, (1.00, 0.38, 0.35)),
+        ]
+        guard celsius > stops[0].0 else { let c = stops[0].1; return Color(red: c.0, green: c.1, blue: c.2) }
+        for (a, b) in zip(stops, stops.dropFirst()) where celsius <= b.0 {
+            let t = (celsius - a.0) / (b.0 - a.0)
+            return Color(red: a.1.0 + (b.1.0 - a.1.0) * t, green: a.1.1 + (b.1.1 - a.1.1) * t, blue: a.1.2 + (b.1.2 - a.1.2) * t)
+        }
+        let c = stops.last!.1
+        return Color(red: c.0, green: c.1, blue: c.2)
     }
 }
 
@@ -379,10 +416,15 @@ struct AgentsCard: View {
                             .font(HomeType.row.weight(.medium))
                             .foregroundStyle(.white.opacity(session.state == .waiting ? 1 : 0.8))
                             .layoutPriority(1)
+                        // Only with room to say something: "Re…" is worse than nothing.
                         if !small, let activity = hooks.live(for: session)?.activity {
-                            Text(activity)
-                                .font(HomeType.detail)
-                                .foregroundStyle(HomeType.secondary)
+                            ViewThatFits(in: .horizontal) {
+                                Text(activity).fixedSize()
+                                Text(activity).frame(minWidth: 70, alignment: .leading)
+                                Color.clear.frame(width: 0, height: 0)
+                            }
+                            .font(HomeType.detail)
+                            .foregroundStyle(HomeType.secondary)
                         }
                         Spacer(minLength: 0)
                     }
@@ -655,7 +697,7 @@ struct ClipboardCard: View {
                         .foregroundStyle(Optional(clip.kind).tint ?? .white.opacity(0.5))
                         .frame(width: 18, height: 18)
                 }
-                Text(clip.title.replacingOccurrences(of: "\n", with: " "))
+                Text(Self.shortTitle(clip.title.replacingOccurrences(of: "\n", with: " ")))
                     .font(HomeType.row)
                     .foregroundStyle(.white.opacity(0.85))
                     .lineLimit(lines)
@@ -666,6 +708,18 @@ struct ClipboardCard: View {
         }
         .buttonStyle(.plain)
         .help("Copy again")
+    }
+
+    /// A stamped file name says only its app and time: "CleanShot 2026-11-21 at 08.12.33@2x.png"
+    /// becomes "CleanShot · 08:12", which fits where the stamp ran out of room before the time.
+    static func shortTitle(_ title: String) -> String {
+        let pattern = #"^(.*?)\s*\d{4}-\d{2}-\d{2}\s+at\s+(\d{1,2})[.:](\d{2})(?:[.:]\d{2})?.*$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let m = regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)),
+              let app = Range(m.range(at: 1), in: title), let h = Range(m.range(at: 2), in: title),
+              let min = Range(m.range(at: 3), in: title) else { return title }
+        let name = title[app].trimmingCharacters(in: .whitespaces)
+        return (name.isEmpty ? "" : name + " · ") + "\(title[h]):\(title[min])"
     }
 
     private func icon(_ kind: ClipboardHistory.Clip.Kind) -> String {
@@ -895,7 +949,7 @@ struct CountdownCard: View {
                     }
                 } else {
                     Button { SettingsWindowController.shared.show(pane: .home) } label: {
-                        HomeNote(symbol: "hourglass", text: "Pick a date in Settings")
+                        HomeNote(symbol: "hourglass", text: "Set a date to count down to")
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .contentShape(Rectangle())
                     }
@@ -913,5 +967,88 @@ struct CountdownCard: View {
         }
         .foregroundStyle(HomeType.secondary)
         .lineLimit(1)
+    }
+}
+
+/// The cable in a USB-C port: what its chip says it's rated for, big, and what it's really doing
+/// under that, orange when the link came up short. A click opens the full cable test in Tools.
+struct CablesCard: View {
+    var small = false
+    @ObservedObject private var cables = CableMonitor.shared
+
+    private let warn = Color(red: 1, green: 0.62, blue: 0.3)
+
+    /// The port worth showing: one whose link came up short, else the newest with a cable read.
+    private var port: CableMonitor.Port? {
+        cables.ports.first { $0.slowLink } ?? cables.ports.last { $0.cable != nil || $0.talkedPD } ?? cables.ports.last
+    }
+
+    var body: some View {
+        HomeTile {
+            if let port {
+                ViewThatFits(in: .vertical) {
+                    if !small {
+                        VStack(alignment: .leading, spacing: 0) {
+                            status(port)
+                            Spacer(minLength: 4)
+                            Text(port.cable.map { "\($0.watts) W" } ?? (port.talkedPD ? "60 W" : "–"))
+                                .font(HomeType.figure)
+                                .foregroundStyle(.white)
+                            Text(port.cable?.speedLabel ?? (port.talkedPD ? "Basic cable" : "Reading…"))
+                                .font(HomeType.value)
+                                .foregroundStyle(.white.opacity(0.85))
+                            Spacer(minLength: 4)
+                            now(port)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        status(port)
+                        Text(port.cable?.headline ?? (port.talkedPD ? "Basic · 60 W" : "Reading…"))
+                            .font(HomeType.value)
+                        now(port)
+                    }
+                    .frame(maxHeight: .infinity)
+                }
+                .lineLimit(1)
+                .contentShape(Rectangle())
+                .onTapGesture { CommandCenter.shared.show(.tools, pane: ToolsPane.cables.rawValue) }
+                .help(CableMonitor.verdict(port))
+            } else {
+                HomeNote(symbol: "cable.connector", text: small ? "No cable" : "Plug in a USB-C cable")
+            }
+        }
+    }
+
+    private func status(_ port: CableMonitor.Port) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "cable.connector")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.7))
+            Text(port.partner?.name ?? port.name)
+                .font(HomeType.label)
+                .foregroundStyle(HomeType.secondary)
+            Spacer(minLength: 0)
+            if port.slowLink {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(warn)
+            }
+        }
+    }
+
+    /// What's happening now: the link, else the power coming in.
+    @ViewBuilder private func now(_ port: CableMonitor.Port) -> some View {
+        if let link = port.link {
+            Text("Now \(link.label)")
+                .font(HomeType.detail)
+                .foregroundStyle(port.slowLink ? warn : HomeType.secondary)
+        } else if let power = port.power {
+            HStack(spacing: 2) {
+                Image(systemName: "bolt.fill").font(.system(size: 8))
+                Text("Charging \(power.label)")
+            }
+            .font(HomeType.detail)
+            .foregroundStyle(HomeType.secondary)
+        }
     }
 }

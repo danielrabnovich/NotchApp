@@ -668,6 +668,7 @@ enum CommandParser {
             (["tools", "network", "wifi info", "ip", "my ip", "ip address"], "Network", .show(.tools, pane: ToolsPane.network.rawValue), "network"),
             (["agents", "claude", "claude code", "codex", "opencode", "zcode", "tokens", "usage"], "Agents", .show(.agents), "sparkles.rectangle.stack.fill"),
             (["devices", "bluetooth", "airpods", "batteries"], "Devices", .show(.tools, pane: ToolsPane.devices.rawValue), "airpods"),
+            (["cable", "cables", "usb", "usb-c", "cable test", "charger"], "Cables", .show(.tools, pane: ToolsPane.cables.rawValue), "cable.connector"),
             (["clipboard", "clipboard history", "clips"], "Clipboard", .show(.shelf, pane: ShelfPane.clipboard.rawValue), "doc.on.clipboard"),
             (["home", "music", "calendar"], "Home", .show(.home), "house.fill"),
             (["settings", "preferences"], "Settings", .settings, "gearshape.fill"),

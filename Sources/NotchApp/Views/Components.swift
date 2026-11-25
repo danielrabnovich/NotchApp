@@ -388,6 +388,29 @@ extension View {
             }
         }
     }
+
+    /// The same for a row in a vertical list: it fades over the last stretch above the bottom edge
+    /// (and below the top, once scrolled), so the row cut off by the notch's edge reads as "more below".
+    func verticalScrollEdgeFade(_ fade: CGFloat = 22) -> some View {
+        mask {
+            GeometryReader { g in
+                let frame = g.frame(in: .scrollView(axis: .vertical))
+                let height = g.bounds(of: .scrollView(axis: .vertical))?.height ?? .infinity
+                let h = max(g.size.height, 1)
+                let bottom = (height - frame.minY) / h
+                let top = -frame.minY / h
+                let f = fade / h
+                LinearGradient(stops: [
+                    .init(color: frame.minY < 0 ? .clear : .black, location: 0),
+                    .init(color: frame.minY < 0 ? .clear : .black, location: min(1, max(0, top))),
+                    .init(color: .black, location: min(1, max(0, top + (frame.minY < 0 ? f : 0)))),
+                    .init(color: .black, location: min(1, max(0, bottom - (frame.maxY > height ? f : 0)))),
+                    .init(color: frame.maxY > height ? .clear : .black, location: min(1, max(0, bottom))),
+                    .init(color: frame.maxY > height ? .clear : .black, location: 1),
+                ], startPoint: .top, endPoint: .bottom)
+            }
+        }
+    }
 }
 
 /// A right-click menu item with its symbol (macOS shows them beside each command).

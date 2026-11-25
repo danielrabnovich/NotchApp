@@ -27,10 +27,10 @@ final class Cleaner: ObservableObject {
 
         var detail: String {
             switch self {
-            case .appCaches: "Rebuilt by apps as needed. Apps that are open are skipped."
+            case .appCaches: "Rebuilt as needed; open apps are skipped."
             case .logs: "Diagnostic logs apps leave behind."
-            case .xcode: "DerivedData, device support files and simulator caches."
-            case .devCaches: "Homebrew, npm, pip, Yarn, Cargo, Gradle and others."
+            case .xcode: "DerivedData, device support, simulator caches."
+            case .devCaches: "Homebrew, npm, pip, Yarn, Cargo, Gradle…"
             case .installers: ".dmg, .pkg and .xip files in Downloads."
             case .oldDownloads: "In Downloads for over a month."
             case .largeFiles: "Over 500 MB and not opened in three months."

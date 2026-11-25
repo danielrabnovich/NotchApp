@@ -2,7 +2,7 @@ import SwiftUI
 
 /// What Home can show: cards in a row across it.
 enum HomeCard: String, Codable, CaseIterable {
-    case music, today, weather, stats, batteries, clock, agents, shelf, timer, clipboard, unread, scratchpad, network, countdown, github, vercel, linear
+    case music, today, weather, stats, batteries, clock, agents, shelf, timer, clipboard, unread, scratchpad, network, countdown, github, vercel, linear, cables
 
     /// A tile of its own at this size (narrow, and half height when small), rather than a column of
     /// the page.
@@ -10,7 +10,7 @@ enum HomeCard: String, Codable, CaseIterable {
         switch self {
         case .today: false
         case .music, .weather: size == .small
-        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear: true
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: true
         }
     }
 
@@ -39,7 +39,8 @@ struct HomeEntry: Codable, Equatable {
 /// Lays Home's cards out in one row of columns, in their order: each at the size it wants, two
 /// half-height tiles side by side stacked in one column. When they don't all fit, the extras
 /// (weather, stats, clock…) shrink, then music (unless it's playing big) shrinks to a tile, then
-/// the extras wait for room, least important first; last, music gives up its half.
+/// extras left to Auto wait for room, least important first; then music shrinks, even from playing
+/// big, before cards sized by hand wait; last, music goes.
 /// The day itself always stays. Sizes set by hand don't shrink.
 enum HomeTiler {
     /// Between two columns of the page: 18 + a rule + 18.
@@ -98,13 +99,17 @@ enum HomeTiler {
             for card in order where !fits() { items.removeAll { $0.entry.card == card } }
         }
         let extra = { (card: HomeCard) in card != .music && card != .today }
+        let byHand = { (card: HomeCard) in items.first { $0.entry.card == card }?.entry.size != nil }
         shrink(extra)
         // Music that isn't playing big becomes a tile before anything has to wait for room.
         if let i = items.firstIndex(where: { $0.entry.card == .music }), items[i].entry.size == nil, items[i].size != .large {
             while !fits(), let size = smaller(.music, than: items[i].size) { items[i].size = size }
         }
-        remove(extra)
+        // Then cards left to Auto wait (playing big, music takes their room); music shrinks, even
+        // from playing big, before a card sized by hand has to wait.
+        remove { extra($0) && !byHand($0) }
         shrink { $0 == .music }
+        remove(extra)
         remove { $0 == .music }
         // What shrank to make room for something that went anyway grows back, most important first.
         for card in items.map(\.entry.card).sorted(by: { importance($0) > importance($1) }) {
@@ -150,7 +155,7 @@ enum HomeTiler {
         case .music: alone ? nil : size == .large ? (width - gap) / 2 : size == .medium ? 170 : 112
         case .today: nil
         case .weather: size == .small ? 112 : 128
-        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear: 112
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: 112
         }
     }
 
@@ -163,7 +168,7 @@ enum HomeTiler {
         case .today: 3
         case .music: 2
         case .weather: 1
-        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear: 0
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: 0
         }
     }
 
@@ -172,7 +177,7 @@ enum HomeTiler {
         switch card {
         case .today: nil
         case .music: size == .large ? .medium : size == .medium ? .small : nil
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear: size == .medium ? .small : nil
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: size == .medium ? .small : nil
         }
     }
 
@@ -180,7 +185,7 @@ enum HomeTiler {
         switch card {
         case .today: nil
         case .music: size == .small ? .medium : size == .medium ? .large : nil
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear: size == .small ? .medium : nil
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: size == .small ? .medium : nil
         }
     }
 }
@@ -230,6 +235,7 @@ extension HomeCard {
         case .github: "GitHub"
         case .vercel: "Vercel"
         case .linear: "Linear"
+        case .cables: "Cables"
         }
     }
 
@@ -252,6 +258,7 @@ extension HomeCard {
         case .github: "arrow.triangle.pull"
         case .vercel: "triangle.fill"
         case .linear: "circle.lefthalf.filled"
+        case .cables: "cable.connector"
         }
     }
 
@@ -274,6 +281,7 @@ extension HomeCard {
         case .vercel: "Your projects' latest deployments, and the build ring for a push."
         case .linear: "Your open Linear issues, the ones in progress first."
         case .github: "The Actions ring for what you just pushed, reviews waiting on you and your pull requests' checks."
+        case .cables: "What the USB-C cable you plugged in is rated for, and how fast it really connected."
         }
     }
 
@@ -282,7 +290,7 @@ extension HomeCard {
         switch self {
         case .today: []
         case .music: [.small, .medium, .large]
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear: [.small, .medium]
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: [.small, .medium]
         }
     }
 
@@ -312,6 +320,7 @@ extension HomeCard {
         case .vercel: s.vercelEnabled
         case .linear: s.linearEnabled
         case .weather, .batteries, .clock, .unread, .scratchpad, .network, .countdown: true
+        case .cables: s.toolsEnabled
         }
     }
 
@@ -324,6 +333,7 @@ extension HomeCard {
         case .github: "Turn on GitHub in Add-ons"
         case .vercel: "Turn on Vercel in Add-ons"
         case .linear: "Turn on Linear in Add-ons"
+        case .cables: "Turn on Tools"
         default: "Turn on \(title) in Add-ons"
         }
     }

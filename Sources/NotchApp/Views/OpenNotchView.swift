@@ -281,6 +281,9 @@ struct HomeView: View {
     @EnvironmentObject private var battery: BatteryMonitor
     /// Debug (`homeshot`): music's size and a call, instead of what's going on.
     var shot: HomeShot?
+    /// Settings' preview: music grows and shrinks with playback as it happens (nobody's reading it
+    /// to be reshuffled), and the cards waiting for room go here rather than to the notch's edit bar.
+    var preview: (([HomeCard]) -> Void)?
 
     private var showsToday: Bool { settings.calendarEnabled || settings.tasksEnabled }
 
@@ -319,7 +322,7 @@ struct HomeView: View {
                 }
             }
             .onChange(of: waiting, initial: true) { _, waiting in
-                if shot == nil { editing.waiting = waiting }
+                if let preview { preview(waiting) } else if shot == nil { editing.waiting = waiting }
             }
         }
         .contextMenu {
@@ -329,7 +332,8 @@ struct HomeView: View {
         }
         .onAppear { musicLarge = shot.map { $0.music == .large } ?? media.isPlaying }
         .onChange(of: media.isPlaying) { _, playing in
-            if playing, !musicLarge, shot == nil { withAnimation(Motion.pane.animation) { musicLarge = true } }
+            guard shot == nil, playing != musicLarge, playing || preview != nil else { return }
+            withAnimation(Motion.pane.animation) { musicLarge = playing }
         }
     }
 
@@ -449,6 +453,8 @@ struct HomeView: View {
             return settings.linearEnabled ? .medium : nil
         case .unread, .scratchpad, .network, .countdown:
             return .medium
+        case .cables:
+            return settings.toolsEnabled ? .medium : nil
         }
     }
 
@@ -487,6 +493,7 @@ struct HomeView: View {
         case .github: GitHubCard(small: item.size == .small)
         case .vercel: VercelCard(small: item.size == .small)
         case .linear: LinearCard(small: item.size == .small)
+        case .cables: CablesCard(small: item.size == .small)
         }
     }
 

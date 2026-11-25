@@ -456,6 +456,7 @@ extension View {
             .environmentObject(Cleaner.shared)
             .environmentObject(AppUninstaller.shared)
             .environmentObject(DeviceBatteries.shared)
+            .environmentObject(CableMonitor.shared)
             .environmentObject(PrivacyMonitor.shared)
             .environmentObject(ClipboardHistory.shared)
             .environmentObject(SystemTweaks.shared)
