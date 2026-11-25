@@ -455,6 +455,8 @@ struct HomeView: View {
             return .medium
         case .cables:
             return settings.toolsEnabled ? .medium : nil
+        case .repos:
+            return settings.reposEnabled ? .medium : nil
         }
     }
 
@@ -494,6 +496,7 @@ struct HomeView: View {
         case .vercel: VercelCard(small: item.size == .small)
         case .linear: LinearCard(small: item.size == .small)
         case .cables: CablesCard(small: item.size == .small)
+        case .repos: ReposCard(small: item.size == .small)
         }
     }
 

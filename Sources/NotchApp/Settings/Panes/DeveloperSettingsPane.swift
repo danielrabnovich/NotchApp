@@ -44,6 +44,11 @@ struct DeveloperSettingsPane: View {
                 Text("Linear")
             }
             Section {
+                ToggleRow("Local repos", subtitle: "Repos your coding agents worked in lately with changes not committed or commits not pushed, on a Home card. Found from the agents' own history: nothing to set up, nothing leaves this Mac.", isOn: $s.reposEnabled)
+            } header: {
+                Text("On this Mac")
+            }
+            Section {
                 ChoiceRow("Alerts", selection: $s.githubAlerts, options: AppSettings.GitHubAlerts.allCases, title: { $0.label })
             } footer: {
                 FooterText("“Things that need me”: review requests and issues assigned to you (as Prompts), mentions and security alerts. “Everything” adds comments and other changes. What you push always says how its checks and deploys went, unless alerts are off.")

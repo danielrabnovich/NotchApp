@@ -261,6 +261,11 @@ final class AppSettings: ObservableObject {
     @Published var vercelEnabled: Bool { didSet { defaults.set(vercelEnabled, forKey: "vercelEnabled") } }
     /// Linear: your issues, the one you're on, assignments and mentions.
     @Published var linearEnabled: Bool { didSet { defaults.set(linearEnabled, forKey: "linearEnabled") } }
+    /// Local git repos agents work in: changes and commits not pushed (Home card).
+    @Published var reposEnabled: Bool { didSet { defaults.set(reposEnabled, forKey: "reposEnabled") } }
+    @Published var sentryEnabled: Bool { didSet { defaults.set(sentryEnabled, forKey: "sentryEnabled") } }
+    /// The Sentry organization's slug, from its URL (sentry.io/organizations/<slug>/).
+    @Published var sentryOrg: String { didSet { defaults.set(sentryOrg, forKey: "sentryOrg") } }
 
     /// Which GitHub notifications drop down from the notch.
     enum GitHubAlerts: String, CaseIterable, Identifiable {
@@ -426,6 +431,9 @@ final class AppSettings: ObservableObject {
             "githubEnabled": false,
             "vercelEnabled": false,
             "linearEnabled": false,
+            "reposEnabled": false,
+            "sentryEnabled": false,
+            "sentryOrg": "",
             "useFahrenheit": Locale.current.measurementSystem == .us,
             "assistantEnabled": true,
             "ollamaURL": "http://localhost:11434",
@@ -553,6 +561,9 @@ final class AppSettings: ObservableObject {
         githubEnabled = defaults.bool(forKey: "githubEnabled")
         vercelEnabled = defaults.bool(forKey: "vercelEnabled")
         linearEnabled = defaults.bool(forKey: "linearEnabled")
+        reposEnabled = defaults.bool(forKey: "reposEnabled")
+        sentryEnabled = defaults.bool(forKey: "sentryEnabled")
+        sentryOrg = defaults.string(forKey: "sentryOrg") ?? ""
         githubAlerts = GitHubAlerts(rawValue: defaults.string(forKey: "githubAlerts") ?? "") ?? .needsMe
         agentPlans = defaults.dictionary(forKey: "agentPlans") as? [String: String] ?? [:]
         useFahrenheit = defaults.bool(forKey: "useFahrenheit")

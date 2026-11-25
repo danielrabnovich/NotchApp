@@ -219,3 +219,80 @@ struct LinearCard: View {
         }
     }
 }
+
+/// Local repos agents work in: the ones holding work that's only on this Mac (changes not
+/// committed, commits not pushed, a branch never pushed) first. Click one for it in Finder; right-click
+/// for Terminal or its path.
+struct ReposCard: View {
+    var small = false
+    @ObservedObject private var monitor = RepoMonitor.shared
+
+    var body: some View {
+        HomeTile {
+            Group {
+                if monitor.repos.isEmpty {
+                    HomeNote(symbol: "point.3.connected.trianglepath.dotted",
+                             text: monitor.loading ? "Looking…" : "No repos from your agents lately")
+                } else if small {
+                    let repo = monitor.needingAttention.first ?? monitor.repos[0]
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(repo.name).font(HomeType.row.weight(.medium)).foregroundStyle(.white.opacity(0.9))
+                        Text(repo.summary).font(HomeType.detail).foregroundStyle(repo.unshared ? .orange : HomeType.secondary)
+                        if monitor.needingAttention.count > 1 {
+                            Text("+\(monitor.needingAttention.count - 1) more").font(HomeType.detail).foregroundStyle(HomeType.secondary)
+                        }
+                    }
+                    .lineLimit(1)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .onTapGesture { monitor.reveal(repo) }
+                    .contextMenu { menu(repo) }
+                } else {
+                    ViewThatFits(in: .vertical) {
+                        ForEach((1...max(1, min(4, monitor.repos.count))).reversed(), id: \.self) { n in
+                            VStack(alignment: .leading, spacing: 5) {
+                                ForEach(monitor.repos.prefix(n)) { row($0) }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: .infinity, alignment: .top)
+                }
+            }
+        }
+        .onAppear { monitor.viewerAppeared() }
+        .onDisappear { monitor.viewerDisappeared() }
+    }
+
+    private func row(_ repo: RepoMonitor.Repo) -> some View {
+        Button { monitor.reveal(repo) } label: {
+            HStack(spacing: 5) {
+                Text(repo.name).font(HomeType.row).foregroundStyle(.white.opacity(repo.unshared ? 0.88 : 0.55))
+                    .truncationMode(.middle)
+                Spacer(minLength: 2)
+                if repo.changed > 0 {
+                    Text("●\(repo.changed)").foregroundStyle(.orange)
+                }
+                if repo.ahead > 0 {
+                    Text("↑\(repo.ahead)").foregroundStyle(Color(red: 0.35, green: 0.65, blue: 1))
+                } else if repo.upstream == nil, repo.branch != nil {
+                    Image(systemName: "icloud.slash").foregroundStyle(Color(red: 0.35, green: 0.65, blue: 1))
+                }
+                if repo.clean {
+                    Image(systemName: "checkmark").foregroundStyle(HomeType.secondary)
+                }
+            }
+            .font(HomeType.detail)
+            .lineLimit(1)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(repo.branch ?? "detached") · \(repo.summary)\n\(repo.path)")
+        .contextMenu { menu(repo) }
+    }
+
+    @ViewBuilder private func menu(_ repo: RepoMonitor.Repo) -> some View {
+        Button("Show in Finder") { monitor.reveal(repo) }
+        Button("Open in Terminal") { monitor.openInTerminal(repo) }
+        Button("Copy Path") { monitor.copyPath(repo) }
+    }
+}

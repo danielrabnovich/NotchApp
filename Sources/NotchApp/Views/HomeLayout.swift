@@ -2,7 +2,7 @@ import SwiftUI
 
 /// What Home can show: cards in a row across it.
 enum HomeCard: String, Codable, CaseIterable {
-    case music, today, weather, stats, batteries, clock, agents, shelf, timer, clipboard, unread, scratchpad, network, countdown, github, vercel, linear, cables
+    case music, today, weather, stats, batteries, clock, agents, shelf, timer, clipboard, unread, scratchpad, network, countdown, github, vercel, linear, cables, repos
 
     /// A tile of its own at this size (narrow, and half height when small), rather than a column of
     /// the page.
@@ -10,7 +10,7 @@ enum HomeCard: String, Codable, CaseIterable {
         switch self {
         case .today: false
         case .music, .weather: size == .small
-        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: true
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables, .repos: true
         }
     }
 
@@ -155,7 +155,7 @@ enum HomeTiler {
         case .music: alone ? nil : size == .large ? (width - gap) / 2 : size == .medium ? 170 : 112
         case .today: nil
         case .weather: size == .small ? 112 : 128
-        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: 112
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables, .repos: 112
         }
     }
 
@@ -168,7 +168,7 @@ enum HomeTiler {
         case .today: 3
         case .music: 2
         case .weather: 1
-        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: 0
+        case .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables, .repos: 0
         }
     }
 
@@ -177,7 +177,7 @@ enum HomeTiler {
         switch card {
         case .today: nil
         case .music: size == .large ? .medium : size == .medium ? .small : nil
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: size == .medium ? .small : nil
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables, .repos: size == .medium ? .small : nil
         }
     }
 
@@ -185,7 +185,7 @@ enum HomeTiler {
         switch card {
         case .today: nil
         case .music: size == .small ? .medium : size == .medium ? .large : nil
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: size == .small ? .medium : nil
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables, .repos: size == .small ? .medium : nil
         }
     }
 }
@@ -236,6 +236,7 @@ extension HomeCard {
         case .vercel: "Vercel"
         case .linear: "Linear"
         case .cables: "Cables"
+        case .repos: "Repos"
         }
     }
 
@@ -259,6 +260,7 @@ extension HomeCard {
         case .vercel: "triangle.fill"
         case .linear: "circle.lefthalf.filled"
         case .cables: "cable.connector"
+        case .repos: "point.3.connected.trianglepath.dotted"
         }
     }
 
@@ -282,6 +284,7 @@ extension HomeCard {
         case .linear: "Your open Linear issues, the ones in progress first."
         case .github: "The Actions ring for what you just pushed, reviews waiting on you and your pull requests' checks."
         case .cables: "What the USB-C cable you plugged in is rated for, and how fast it really connected."
+        case .repos: "Repos your agents work in with changes not committed or commits not pushed."
         }
     }
 
@@ -290,7 +293,7 @@ extension HomeCard {
         switch self {
         case .today: []
         case .music: [.small, .medium, .large]
-        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables: [.small, .medium]
+        case .weather, .stats, .batteries, .clock, .agents, .shelf, .timer, .clipboard, .unread, .scratchpad, .network, .countdown, .github, .vercel, .linear, .cables, .repos: [.small, .medium]
         }
     }
 
@@ -321,6 +324,7 @@ extension HomeCard {
         case .linear: s.linearEnabled
         case .weather, .batteries, .clock, .unread, .scratchpad, .network, .countdown: true
         case .cables: s.toolsEnabled
+        case .repos: s.reposEnabled
         }
     }
 
@@ -334,6 +338,7 @@ extension HomeCard {
         case .vercel: "Turn on Vercel in Add-ons"
         case .linear: "Turn on Linear in Add-ons"
         case .cables: "Turn on Tools"
+        case .repos: "Turn on Local repos in Developer"
         default: "Turn on \(title) in Add-ons"
         }
     }

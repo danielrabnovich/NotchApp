@@ -641,6 +641,11 @@ enum DebugHooks {
         case "pillsnap": SelectionPill.shared.debugSnapshot(to: URL(fileURLWithPath: parts[safe: 1] ?? "/tmp/pill.png"))
         case "pillask": SelectionPill.shared.debugAsk(parts.dropFirst().joined(separator: " "))
         case "homeshot": HomeShots.run(dir: parts[safe: 1] ?? "/tmp/homeshots")
+        case "repostate":
+            RepoMonitor.shared.refresh()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                log("REPOS " + RepoMonitor.shared.repos.map { "\($0.name) [\($0.branch ?? "-")→\($0.upstream ?? "none")] \($0.summary)\($0.worktree ? " (worktree)" : "")" }.joined(separator: " | "))
+            }
         case "homeedit": parts[safe: 1] == "off" ? HomeEditing.shared.end() : HomeEditing.shared.begin()
         case "snapshot":
             let path = parts[safe: 1] ?? "/tmp/notch.png"
