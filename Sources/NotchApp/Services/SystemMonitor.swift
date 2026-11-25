@@ -156,7 +156,16 @@ final class SystemMonitor: ObservableObject {
         timer = t
     }
 
+    /// Debug (`homeshot`): a fixed reading in place of the live ones, so shots repeat exactly.
+    private var previewing = false
+
+    func preview(_ s: SystemSnapshot?) {
+        previewing = s != nil
+        if let s { snapshot = s }
+    }
+
     private func apply(_ s: SystemSnapshot) {
+        guard !previewing else { return }
         snapshot = s
         push(&cpuHistory, s.cpuTotal)
         push(&cpuSystemHistory, s.cpuSystem)

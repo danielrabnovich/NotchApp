@@ -36,6 +36,25 @@ enum HomeShots {
 
     private static var window: NSWindow?
 
+    /// Stats as one fixed reading: live ones (and the apps busiest right now) differ every run.
+    private static var stats: SystemSnapshot {
+        var s = SystemSnapshot()
+        s.cpuUser = 0.12
+        s.cpuSystem = 0.06
+        s.gpu = 0.04
+        s.cpuTemp = 46
+        s.systemPower = 6.4
+        s.memory.total = 32 << 30
+        s.memory.app = 14 << 30
+        s.memory.wired = 4 << 30
+        s.memory.compressed = 2 << 30
+        s.topCPU = [AppUsage(pid: 1, name: "Safari", bundlePath: "/Applications/Safari.app", cpu: 0.21, memory: 2 << 30),
+                    AppUsage(pid: 2, name: "Music", bundlePath: "/System/Applications/Music.app", cpu: 0.04, memory: 1 << 30)]
+        s.topMemory = s.topCPU
+        s.topPower = s.topCPU
+        return s
+    }
+
     static func run(dir: String) {
         let out = URL(fileURLWithPath: dir, isDirectory: true)
         try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
@@ -57,6 +76,7 @@ enum HomeShots {
                 Birthdays.shared.refreshIfStale(force: true)
                 TodayWeather.shared.refreshIfStale(force: true)
                 CalendarManager.shared.preview(events: nil)
+                SystemMonitor.shared.preview(nil)
                 window?.orderOut(nil)
                 window = nil
                 writeSheet(images, to: out.appendingPathComponent("sheet.png"))
@@ -67,6 +87,7 @@ enum HomeShots {
             Birthdays.shared.preview(shot.fixture.birthdays)
             TodayWeather.shared.preview(.some(shot.fixture.weather ? weather(now, dry: shot.fixture.dry) : nil))
             CalendarManager.shared.preview(events: shot.fixture.events(CalendarManager.shared.store, now))
+            SystemMonitor.shared.preview(stats)
             let call = shot.fixture.call
                 ? MeetingMonitor.Call(app: "Zoom", bundleID: "us.zoom.xos", started: now.addingTimeInterval(-300), event: "Writers Meeting")
                 : nil

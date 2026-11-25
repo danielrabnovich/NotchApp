@@ -14,6 +14,19 @@ BUILD=$(( $(git tag -l 'v*' | wc -l) + 2 ))
 if git rev-parse "v$VERSION" >/dev/null 2>&1; then echo "✗ v$VERSION already exists"; exit 1; fi
 if [ -n "$(git status --porcelain)" ]; then echo "✗ Commit or stash your changes first"; exit 1; fi
 
+# Home's snapshots against the baseline, when there is one and a debug-enabled NotchApp runs
+# (normally this build, swapped in). SKIP_SHOTS=1 skips it.
+if [ "${SKIP_SHOTS:-}" != "1" ] && [ -d .build/homeshots/baseline ]; then
+  if scripts/homeshots.sh check; then
+    echo "✓ Home snapshots match the baseline"
+  else
+    read -r -p "Home snapshots changed (see .build/homeshots/diffs). Release anyway? [y/N] " answer
+    [ "$answer" = "y" ] || exit 1
+  fi
+elif [ "${SKIP_SHOTS:-}" != "1" ]; then
+  echo "! No Home snapshot baseline: scripts/homeshots.sh baseline on a good build to start checking"
+fi
+
 VERSION="$VERSION" BUILD="$BUILD" ./build.sh
 ZIP="build/NotchApp-$VERSION.zip"
 rm -f "$ZIP"
