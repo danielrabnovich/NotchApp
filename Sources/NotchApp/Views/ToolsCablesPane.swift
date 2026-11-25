@@ -43,6 +43,7 @@ struct CablesPane: View {
 }
 
 private struct CablePortView: View {
+    @EnvironmentObject private var cables: CableMonitor
     let port: CableMonitor.Port
     let showsName: Bool
 
@@ -121,6 +122,9 @@ private struct CablePortView: View {
                 }
                 if let power = port.power {
                     InfoRow(label: "Power in", value: power.label, help: power.detail)
+                    if let now = cables.draw.last {
+                        DrawGraph(samples: cables.draw, ceiling: Double(power.watts), now: now)
+                    }
                 }
             }
         }
@@ -138,5 +142,45 @@ private struct CablePortView: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+
+/// What the charger has really delivered over the last few minutes, under its negotiated ceiling.
+private struct DrawGraph: View {
+    let samples: [Double]
+    let ceiling: Double
+    let now: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("Drawing \(String(format: now < 10 ? "%.1f" : "%.0f", now)) W of \(Int(ceiling)) W")
+                .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.6))
+            Canvas { context, size in
+                let top = max(ceiling, samples.max() ?? 0, 1)
+                // The ceiling, faint, across the top.
+                context.stroke(Path { $0.move(to: .zero); $0.addLine(to: CGPoint(x: size.width, y: 0)) },
+                               with: .color(.white.opacity(0.12)), style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                guard samples.count > 1 else { return }
+                // Five minutes across, newest at the right edge, so a short history fills from the right.
+                let step = size.width / 149
+                let start = size.width - step * CGFloat(samples.count - 1)
+                var line = Path()
+                for (i, w) in samples.enumerated() {
+                    let p = CGPoint(x: start + step * CGFloat(i), y: size.height * (1 - CGFloat(w / top)))
+                    if i == 0 { line.move(to: p) } else { line.addLine(to: p) }
+                }
+                var fill = line
+                fill.addLine(to: CGPoint(x: size.width, y: size.height))
+                fill.addLine(to: CGPoint(x: start, y: size.height))
+                fill.closeSubpath()
+                let green = Color(red: 0.3, green: 0.85, blue: 0.45)
+                context.fill(fill, with: .color(green.opacity(0.18)))
+                context.stroke(line, with: .color(green), lineWidth: 1.2)
+            }
+            .frame(height: 22)
+        }
+        .help("What the charger is delivering right now, from the battery controller, over the last five minutes. The dashed line is what it agreed to supply.")
     }
 }

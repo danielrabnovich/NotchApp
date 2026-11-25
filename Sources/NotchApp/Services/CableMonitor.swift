@@ -121,6 +121,9 @@ final class CableMonitor: ObservableObject {
 
     /// The USB-C ports with something plugged in, in port order.
     @Published private(set) var ports: [Port] = []
+    /// What the charger is really delivering, in watts, every couple of seconds over the last five
+    /// minutes while one is connected (the negotiated figure is only its ceiling).
+    @Published private(set) var draw: [Double] = []
 
     private var entries: [(number: Int, id: String, entry: io_registry_entry_t)] = []
     private var plugEvents: [String: Int] = [:]
@@ -158,6 +161,26 @@ final class CableMonitor: ObservableObject {
             }
         }
         if plugged || !ports.isEmpty { refresh() }
+        recordDraw()
+    }
+
+    private func recordDraw() {
+        guard ports.contains(where: { $0.power != nil }), let watts = Self.systemPowerIn() else {
+            if !draw.isEmpty { draw = [] }
+            return
+        }
+        draw.append(watts)
+        if draw.count > 150 { draw.removeFirst(draw.count - 150) }
+    }
+
+    /// The power coming in from the charger right now, from the battery controller's telemetry.
+    nonisolated static func systemPowerIn() -> Double? {
+        let battery = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))
+        guard battery != 0 else { return nil }
+        defer { IOObjectRelease(battery) }
+        guard let telemetry = IORegistryEntryCreateCFProperty(battery, "PowerTelemetryData" as CFString, kCFAllocatorDefault, 0)?
+            .takeRetainedValue() as? [String: Any], let milliwatts = telemetry["SystemPowerIn"] as? Int, milliwatts > 0 else { return nil }
+        return Double(milliwatts) / 1000
     }
 
     func refresh() {
