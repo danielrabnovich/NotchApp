@@ -34,7 +34,19 @@ final class BatteryMonitor: ObservableObject {
         if let source { CFRunLoopAddSource(CFRunLoopGetMain(), source, .defaultMode) }
     }
 
+    /// Debug (`homeshot`): a fixed charge in place of the real one, so shots repeat exactly.
+    private var previewing = false
+
+    func preview(level: Int?, charging: Bool = false) {
+        previewing = level != nil
+        guard let level else { return update(initial: true) }
+        self.level = level
+        isCharging = charging
+        isPluggedIn = charging
+    }
+
     private func update(initial: Bool) {
+        guard !previewing else { return }
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { return }
         let wasPlugged = isPluggedIn

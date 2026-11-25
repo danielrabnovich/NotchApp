@@ -77,6 +77,7 @@ enum HomeShots {
                 TodayWeather.shared.refreshIfStale(force: true)
                 CalendarManager.shared.preview(events: nil)
                 SystemMonitor.shared.preview(nil)
+                BatteryMonitor.shared.preview(level: nil)
                 window?.orderOut(nil)
                 window = nil
                 writeSheet(images, to: out.appendingPathComponent("sheet.png"))
@@ -88,6 +89,7 @@ enum HomeShots {
             TodayWeather.shared.preview(.some(shot.fixture.weather ? weather(now, dry: shot.fixture.dry) : nil))
             CalendarManager.shared.preview(events: shot.fixture.events(CalendarManager.shared.store, now))
             SystemMonitor.shared.preview(stats)
+            BatteryMonitor.shared.preview(level: 82, charging: true)
             let call = shot.fixture.call
                 ? MeetingMonitor.Call(app: "Zoom", bundleID: "us.zoom.xos", started: now.addingTimeInterval(-300), event: "Writers Meeting")
                 : nil
