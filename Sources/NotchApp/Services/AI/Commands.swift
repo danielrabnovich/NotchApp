@@ -919,6 +919,11 @@ final class CommandCenter: ObservableObject {
                 if !ok { ActivityCenter.shared.show(.notice(title: "Couldn't empty the Trash", detail: "Allow NotchApp to control Finder", icon: "trash.slash", tone: .warning), for: 4) }
             }
             return Confirmation(text: "Emptied the Trash", icon: "trash.fill")
+        case .stopPort(let port, _, let name) where DockerMonitor.isDockerProcess(name):
+            // Docker listens for its containers: stop the one on that port, never Docker itself.
+            DockerMonitor.shared.stopContainer(publishing: port)
+            PortLookup.shared.invalidate()
+            return Confirmation(text: "Stopping the container on port \(port)", icon: "shippingbox")
         case .stopPort(let port, let pid, let name):
             PortScanner.shared.stop(PortScanner.Listener(port: port, pid: pid, command: name, address: "*"))
             PortLookup.shared.invalidate()

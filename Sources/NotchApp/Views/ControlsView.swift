@@ -268,6 +268,7 @@ private struct ActionTile: View {
 private struct PortsList: View {
     let onBack: () -> Void
     @EnvironmentObject private var ports: PortScanner
+    @ObservedObject private var docker = DockerMonitor.shared
     @State private var filter = ""
 
     var body: some View {
@@ -292,37 +293,141 @@ private struct PortsList: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 1) {
                         ForEach(ports.listeners) { PortRow(listener: $0) }
+                        // Every running container, published ports or not, to stop or restart.
+                        if !docker.containers.isEmpty {
+                            HStack(spacing: 6) {
+                                Image(systemName: "shippingbox.fill").font(.system(size: 10))
+                                Text("Docker · \(docker.containers.count) running")
+                            }
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.45))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 6)
+                            .padding(.top, 10)
+                            .padding(.bottom, 2)
+                            ForEach(docker.containers) { ContainerRow(container: $0) }
+                        }
                     }
                 }
             }
         }
-        .onAppear { ports.refresh() }
+        .onAppear {
+            ports.refresh()
+            docker.refresh()
+        }
+    }
+}
+
+/// A running container: its name, image and how long it's been up, with Restart and Stop.
+private struct ContainerRow: View {
+    let container: DockerMonitor.Container
+    @ObservedObject private var docker = DockerMonitor.shared
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(container.published.first.map { ":" + String($0.host) } ?? "")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .frame(width: 62, alignment: .leading)
+            Image(systemName: "shippingbox")
+                .font(.system(size: 12))
+                .foregroundStyle(container.healthy == false ? .orange : Color(red: 0.13, green: 0.59, blue: 0.95))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(container.project.map { "\($0) › \(container.shortName)" } ?? container.name)
+                    .font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                Text("\(container.image) · \(container.status)")
+                    .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if docker.busy.contains(container.id) {
+                ProgressView().controlSize(.mini).tint(.white)
+            } else if hovering {
+                ContainerButtons(container: container)
+            }
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 30)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(hovering ? 0.06 : 0)))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+    }
+}
+
+/// Restart, and Stop after a confirming second click: the container, never Docker.
+private struct ContainerButtons: View {
+    let container: DockerMonitor.Container
+    @State private var confirming = false
+
+    var body: some View {
+        Button("Restart") { DockerMonitor.shared.restart(container) }
+            .buttonStyle(NotchPillButtonStyle(height: 20))
+        Button(confirming ? "Confirm" : "Stop") {
+            if confirming { confirming = false; DockerMonitor.shared.stop(container) } else {
+                confirming = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { confirming = false }
+            }
+        }
+        .buttonStyle(NotchPillButtonStyle(primary: confirming, height: 20))
+        .help("docker stop \(container.name)")
     }
 }
 
 private struct PortRow: View {
     let listener: PortScanner.Listener
     @EnvironmentObject private var ports: PortScanner
+    @ObservedObject private var docker = DockerMonitor.shared
     @State private var hovering = false
     @State private var confirming = false
+
+    /// The container behind a port Docker listens on: named for it, and stopped on its own, as
+    /// stopping the listener would quit Docker and every container with it.
+    private var container: DockerMonitor.Container? {
+        DockerMonitor.isDockerProcess(listener.command) ? docker.container(publishing: listener.port) : nil
+    }
+
+    private var reach: String {
+        listener.isLocalOnly ? "this Mac only" : listener.address == "*" ? "all interfaces" : listener.address
+    }
 
     var body: some View {
         HStack(spacing: 10) {
             Text(":" + String(listener.port))
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .frame(width: 62, alignment: .leading)
-            AppIcon(bundlePath: listener.app?.bundleURL?.path, size: 16)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(listener.displayName).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
-                Text("PID " + String(listener.pid) + " · \(listener.isSystem ? "macOS · " : "")\(listener.isLocalOnly ? "this Mac only" : listener.address == "*" ? "all interfaces" : listener.address)")
-                    .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
+            if let container {
+                Image(systemName: "shippingbox.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color(red: 0.13, green: 0.59, blue: 0.95))
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(container.project.map { "\($0) › \(container.shortName)" } ?? container.name)
+                        .font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                    Text("\(container.image) · Docker · \(reach)")
+                        .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
+                }
+            } else {
+                AppIcon(bundlePath: listener.app?.bundleURL?.path, size: 16)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(listener.displayName).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+                    Text("PID " + String(listener.pid) + " · \(listener.isSystem ? "macOS · " : "")\(reach)")
+                        .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
+                }
             }
             Spacer(minLength: 8)
-            if hovering || confirming {
+            if let container, docker.busy.contains(container.id) {
+                ProgressView().controlSize(.mini).tint(.white)
+            } else if let container, hovering {
                 Button("Open") { ports.open(listener) }
                     .buttonStyle(NotchPillButtonStyle(height: 20))
                     .help("Open http://localhost:\(listener.port)")
-                if !listener.isSystem {
+                ContainerButtons(container: container)
+            } else if hovering || confirming {
+                Button("Open") { ports.open(listener) }
+                    .buttonStyle(NotchPillButtonStyle(height: 20))
+                    .help("Open http://localhost:\(listener.port)")
+                // Docker's own listener with no container found: never offer to kill Docker.
+                if !listener.isSystem, !DockerMonitor.isDockerProcess(listener.command) {
                 Button(confirming ? "Confirm" : "Stop") {
                     if confirming { confirming = false; ports.stop(listener) } else {
                         confirming = true
