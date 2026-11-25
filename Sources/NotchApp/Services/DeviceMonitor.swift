@@ -205,7 +205,9 @@ final class PrivacyMonitor: ObservableObject {
     }
 
     private func poll() {
-        let apps = Self.appsUsingMic()
+        // Asking every audio process whether it records is dozens of calls to coreaudiod; first ask
+        // the input devices (a handful) whether anything is recording at all.
+        let apps = Self.anyInputRunning() ? Self.appsUsingMic() : []
         let mic = !apps.isEmpty
         let camera = Self.anyCameraRunning()
         if mic && !micInUse, Self.alerts {
@@ -222,6 +224,24 @@ final class PrivacyMonitor: ObservableObject {
                 micApps = apps
             }
         }
+    }
+
+    /// Whether any device with inputs is recording for some process.
+    static func anyInputRunning() -> Bool {
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var addr = AudioOutputManager.address(kAudioHardwarePropertyDevices)
+        var size: UInt32 = 0
+        // Unknown: fall back to asking the processes.
+        guard AudioObjectGetPropertyDataSize(system, &addr, 0, nil, &size) == noErr else { return true }
+        var devices = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &devices) == noErr else { return true }
+        var streams = AudioOutputManager.address(kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeInput)
+        for device in devices {
+            var bytes: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(device, &streams, 0, nil, &bytes) == noErr, bytes > 0 else { continue }
+            if (AudioOutputManager.property(device, kAudioDevicePropertyDeviceIsRunningSomewhere) as UInt32?) == 1 { return true }
+        }
+        return false
     }
 
     /// Processes with audio input running, grouped by the app responsible for them.

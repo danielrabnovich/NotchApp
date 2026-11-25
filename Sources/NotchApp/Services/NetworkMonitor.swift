@@ -53,6 +53,9 @@ final class NetworkMonitor: ObservableObject {
     private var timer: Timer?
     private var viewers = 0
     private var liveDemand = false
+    /// Only the connection (kind, Wi-Fi bars) is wanted, as the Duo Glance shows: no throughput.
+    private var infoDemand = false
+    private var infoTimer: Timer?
     private var speedTestDemand = false
     private var last: (time: TimeInterval, inBytes: UInt64, outBytes: UInt64)?
     private var publicFetched: Date?
@@ -80,6 +83,14 @@ final class NetworkMonitor: ObservableObject {
         reschedule()
     }
 
+    /// The connection alone, refreshed every few seconds, without sampling throughput every second
+    /// (which republishes the rates and redraws everything watching this monitor).
+    func setInfoDemand(_ wanted: Bool) {
+        guard wanted != infoDemand else { return }
+        infoDemand = wanted
+        reschedule()
+    }
+
     func setSpeedTestDemand(_ wanted: Bool) {
         speedTestDemand = wanted
         reschedule()
@@ -98,6 +109,18 @@ final class NetworkMonitor: ObservableObject {
         } else if !isWanted, let t = timer {
             t.invalidate()
             timer = nil
+        }
+        // The full timer refreshes the info itself; otherwise a slow one for the connection alone.
+        let infoOnly = infoDemand && timer == nil
+        if infoOnly, infoTimer == nil {
+            refreshInfo()
+            let t = Timer(timeInterval: 5, repeats: true) { _ in MainActor.assumeIsolated { NetworkMonitor.shared.refreshInfo() } }
+            t.tolerance = 1
+            RunLoop.main.add(t, forMode: .common)
+            infoTimer = t
+        } else if !infoOnly, let t = infoTimer {
+            t.invalidate()
+            infoTimer = nil
         }
     }
 

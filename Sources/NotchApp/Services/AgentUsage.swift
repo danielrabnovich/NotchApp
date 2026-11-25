@@ -302,9 +302,8 @@ final class AgentUsageStore: ObservableObject {
         var firstDay: Date?
     }
 
-    @Published private(set) var archive = Archive() {
-        didSet { claudeBlockStart = Self.blockStart(archive.claude) }
-    }
+    /// Set with `claudeBlockStart`, which the scan works out off the main thread.
+    @Published private(set) var archive = Archive()
     private var claudeBlockStart: Date?
     @Published private(set) var scanning = false
     @Published private(set) var lastScan: Date?
@@ -331,8 +330,10 @@ final class AgentUsageStore: ObservableObject {
         let current = archive
         Task.detached(priority: .utility) {
             let updated = Self.scan(current)
+            let start = Self.blockStart(updated.claude)
             await MainActor.run {
                 let store = AgentUsageStore.shared
+                store.claudeBlockStart = start
                 store.archive = updated
                 store.scanning = false
                 store.lastScan = Date()
@@ -351,6 +352,7 @@ final class AgentUsageStore: ObservableObject {
 
     func clearHistory() {
         archive = Archive()
+        claudeBlockStart = nil
         save()
         refresh()
     }
@@ -393,9 +395,11 @@ final class AgentUsageStore: ObservableObject {
         let usageMarker = Data("\"usage\"".utf8)
         for folder in (try? fm.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? [] {
             // Sub-agent transcripts live in nested folders; walk them too.
-            guard let walker = fm.enumerator(at: folder, includingPropertiesForKeys: nil) else { continue }
+            guard let walker = fm.enumerator(at: folder, includingPropertiesForKeys: [.fileSizeKey]) else { continue }
             for case let url as URL in walker where url.pathExtension == "jsonl" {
                 var state = a.claudeFiles[url.path] ?? FileState(offset: 0, recentIDs: [])
+                // Unchanged since the last scan (the size came with the listing): don't open it.
+                if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, UInt64(size) == state.offset { continue }
                 guard let handle = try? FileHandle(forReadingFrom: url) else { continue }
                 defer { try? handle.close() }
                 let size = (try? handle.seekToEnd()) ?? 0

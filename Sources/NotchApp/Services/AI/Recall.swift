@@ -58,6 +58,9 @@ final class Recall: ObservableObject {
     /// in a terminal's title) still gets captured after a few seconds.
     private var pendingSince: Date?
     private var lastCapture = Date.distantPast
+    /// When the moments and bytes were last counted after a capture: two scans of the whole table,
+    /// shown only in Settings (which counts afresh when it opens), so at most once a minute.
+    private var lastStats = Date.distantPast
     private var busy = false
     private var locked = false
     private var displayAsleep = false
@@ -314,7 +317,10 @@ final class Recall: ObservableObject {
                     if recall.lastFrames.count > 64 {
                         recall.lastFrames = recall.lastFrames.filter { Date().timeIntervalSince($0.value.time) < 3600 }
                     }
-                    Task.detached(priority: .background) { await recall.refreshStats() }
+                    if Date().timeIntervalSince(recall.lastStats) > 60 {
+                        recall.lastStats = Date()
+                        Task.detached(priority: .background) { await recall.refreshStats() }
+                    }
                 case .same(let key):
                     DebugHooks.log("Recall: same as before (\(reason)) \(key)")
                 case .skipped(let why):

@@ -141,10 +141,15 @@ final class SystemMonitor: ObservableObject {
         // Nothing showing stats: a slow trickle that just keeps the graphs' history going.
         let interval: Double = viewers > 0 ? 1 : liveDemand ? 2 : 10
         let details = viewers > 0 && detailViewers > 0
+        // Only a Glance watching (the rings: CPU, GPU, memory): the sensors (SMC temperatures, fans,
+        // power, the battery) every fifth tick, as when nothing shows stats; they barely move in 2 s.
+        let fullEvery = viewers > 0 ? 1 : 5
+        var tick = 0
         let t = DispatchSource.makeTimerSource(queue: queue)
-        t.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(100))
+        t.schedule(deadline: .now(), repeating: interval, leeway: .milliseconds(viewers > 0 ? 100 : 500))
         t.setEventHandler { [sampler] in
-            let s = sampler.sample(details: details)
+            defer { tick += 1 }
+            let s = sampler.sample(details: details, sensors: tick % fullEvery == 0)
             DispatchQueue.main.async { MainActor.assumeIsolated { SystemMonitor.shared.apply(s) } }
         }
         t.resume()
@@ -182,8 +187,11 @@ private final class Sampler: @unchecked Sendable {
 
     private let gpuShare = GPUShare()
 
-    func sample(details: Bool) -> SystemSnapshot {
-        var s = SystemSnapshot()
+    /// The last full reading, whose sensor values a light one carries over.
+    private var last = SystemSnapshot()
+
+    func sample(details: Bool, sensors: Bool = true) -> SystemSnapshot {
+        var s = sensors ? SystemSnapshot() : last
 
         let cores = cpu.sample()
         s.cores = cores.map { $0.user + $0.system }
@@ -199,6 +207,18 @@ private final class Sampler: @unchecked Sendable {
             s.gpuMemory = gpu.memory
         }
         s.memory = MemoryReader.sample()
+
+        // A light reading stops here: the load and memory are fresh, and the two sensors the rings'
+        // readout shows (the CPU's temperature, the power drawn); the rest as last read.
+        guard sensors else {
+            if let smc {
+                let cpuTemps = valid(keys.cpu.compactMap { smc.value($0) })
+                if let t = average(cpuTemps) { s.cpuTemp = t; s.cpuTempMax = cpuTemps.max() }
+                if let power = smc.value("PSTR") { s.systemPower = power }
+            }
+            s.topCPU = []; s.topMemory = []; s.topPower = []
+            return s
+        }
 
         if let power = energy?.sample() {
             s.cpuPower = power.cpu
@@ -245,6 +265,7 @@ private final class Sampler: @unchecked Sendable {
         }
         // The battery controller's figure only refreshes every half minute or so; use it if the SMC has none.
         if s.systemPower == nil { s.systemPower = battery?.systemLoad }
+        last = s
         return s
     }
 

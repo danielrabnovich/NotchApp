@@ -139,9 +139,12 @@ final class TaildropService: ObservableObject {
         guard on, Self.cli != nil else { return }
         // A short-lived `file get` every few seconds rather than one long-running `--loop`
         // process, so nothing is left running if NotchApp is force-quit.
-        let t = Timer(timeInterval: 3, repeats: true) { _ in
+        // Every 5 s, give or take one so macOS can fold it into other wake-ups: each is a process
+        // launch, and a file waiting a moment longer in Tailscale's inbox costs nothing.
+        let t = Timer(timeInterval: 5, repeats: true) { _ in
             MainActor.assumeIsolated { TaildropService.shared.collect() }
         }
+        t.tolerance = 1
         RunLoop.main.add(t, forMode: .common)
         receiveTimer = t
         collect()

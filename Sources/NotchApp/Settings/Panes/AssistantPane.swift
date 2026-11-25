@@ -225,6 +225,8 @@ struct AssistantPane: View {
             }
         }
         .task { assistant.refreshStatus() }
+        // Recall counts what it holds lazily (at most once a minute while capturing): fresh here.
+        .task { await Recall.shared.refreshStats() }
         .onChange(of: s.ollamaURL) { _, _ in assistant.refreshStatus() }
         .onChange(of: s.aiProvider) { _, _ in assistant.refreshStatus() }
         .onChange(of: assistant.justPulled) { _, done in

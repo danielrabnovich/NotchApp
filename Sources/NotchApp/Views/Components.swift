@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct AlbumArtView: View {
@@ -34,18 +35,17 @@ struct AudioVisualizer: View {
     @ObservedObject private var spectrum = AudioSpectrum.shared
 
     var body: some View {
-        VisualizerBars(color: NSColor(color), isPlaying: isPlaying, barCount: barCount,
-                       levels: spectrum.isLive ? bandLevels : nil)
+        // Only whether it's live comes through SwiftUI; the levels go straight to the layers.
+        VisualizerBars(color: NSColor(color), isPlaying: isPlaying, barCount: barCount, live: spectrum.isLive)
             .onAppear { AudioSpectrum.shared.viewerAppeared() }
             .onDisappear { AudioSpectrum.shared.viewerDisappeared() }
     }
 
     /// The live levels spread across the bars, bass to treble.
-    private var bandLevels: [CGFloat] {
-        let bands = spectrum.levels
+    static func barLevels(_ bands: [CGFloat], count: Int) -> [CGFloat] {
         guard !bands.isEmpty else { return [] }
-        return (0..<barCount).map { bar in
-            let band = min(bands.count - 1, Int((Double(bar) + 0.5) * Double(bands.count) / Double(barCount)))
+        return (0..<count).map { bar in
+            let band = min(bands.count - 1, Int((Double(bar) + 0.5) * Double(bands.count) / Double(count)))
             return 0.15 + 0.85 * bands[band]
         }
     }
@@ -59,17 +59,34 @@ private struct VisualizerBars: NSViewRepresentable {
     let color: NSColor
     let isPlaying: Bool
     let barCount: Int
-    let levels: [CGFloat]?
+    let live: Bool
 
     func makeNSView(context: Context) -> BarsView { BarsView() }
 
     func updateNSView(_ view: BarsView, context: Context) {
-        view.update(color: color, playing: isPlaying, count: barCount, levels: levels)
+        view.update(color: color, playing: isPlaying, count: barCount, levels: live ? AudioSpectrum.shared.levels : nil)
     }
 
     final class BarsView: NSView {
         private var bars: [CALayer] = []
         private var mode: String = ""
+        private var frames: AnyCancellable?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            // Live levels, 30 a second, set on the layers without a SwiftUI update.
+            frames = window == nil ? nil : AudioSpectrum.shared.frames.sink { [weak self] bands in
+                MainActor.assumeIsolated { self?.show(bands) }
+            }
+        }
+
+        private func show(_ bands: [CGFloat]) {
+            guard mode == "live" else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for (bar, level) in zip(bars, AudioVisualizer.barLevels(bands, count: bars.count)) { bar.transform = scale(level) }
+            CATransaction.commit()
+        }
 
         override init(frame: NSRect) {
             super.init(frame: frame)
@@ -105,7 +122,7 @@ private struct VisualizerBars: NSViewRepresentable {
                 if next == "bounce" { startBounce() }
             }
             if next == "live", let levels {
-                for (bar, level) in zip(bars, levels) { bar.transform = scale(level) }
+                for (bar, level) in zip(bars, AudioVisualizer.barLevels(levels, count: count)) { bar.transform = scale(level) }
             }
             CATransaction.commit()
         }

@@ -136,10 +136,7 @@ final class ProgressCenter: ObservableObject {
 
     private func scanExporters() {
         guard !Presence.shared.away else { return }
-        let running = NSWorkspace.shared.runningApplications.compactMap { app -> (pid_t, String, String?)? in
-            guard let id = app.bundleIdentifier, let name = Self.exporters[id] else { return nil }
-            return (app.processIdentifier, name, app.bundleURL?.path)
-        }
+        let running = runningExporters()
         guard !running.isEmpty, AXIsProcessTrusted() else {
             if !exporting.isEmpty { exporting = []; rebuild() }
             return
@@ -155,6 +152,29 @@ final class ProgressCenter: ObservableObject {
                 if center.exporting != found { center.exporting = found; center.rebuild() }
             }
         }
+    }
+
+    /// The exporting apps that are open. Listing every running app each scan was most of the scan's
+    /// cost, so the list is kept and only made again when an app launches or quits.
+    private var exporterApps: [(pid_t, String, String?)]?
+    private var launchWatch: [NSObjectProtocol] = []
+
+    private func runningExporters() -> [(pid_t, String, String?)] {
+        if launchWatch.isEmpty {
+            let center = NSWorkspace.shared.notificationCenter
+            launchWatch = [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification].map {
+                center.addObserver(forName: $0, object: nil, queue: .main) { _ in
+                    MainActor.assumeIsolated { ProgressCenter.shared.exporterApps = nil }
+                }
+            }
+        }
+        if let exporterApps { return exporterApps }
+        let found = NSWorkspace.shared.runningApplications.compactMap { app -> (pid_t, String, String?)? in
+            guard let id = app.bundleIdentifier, let name = Self.exporters[id] else { return nil }
+            return (app.processIdentifier, name, app.bundleURL?.path)
+        }
+        exporterApps = found
+        return found
     }
 
     /// A determinate progress bar part-way along, in any of the app's windows (bounded walk).

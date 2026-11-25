@@ -614,7 +614,8 @@ final class LiveActivities: ObservableObject {
             }
         }
         SystemMonitor.shared.setLiveDemand(wantsStats || previewing)
-        NetworkMonitor.shared.setLiveDemand(slot(for: .network) != nil || slot(for: .duo) != nil || previewing)
+        NetworkMonitor.shared.setLiveDemand(slot(for: .network) != nil || previewing)
+        NetworkMonitor.shared.setInfoDemand(slot(for: .duo) != nil)
         PrivacyMonitor.shared.setLiveDemand(wantsPrivacy || previewing)
         AgentMonitor.shared.setLiveDemand(slot(for: .agents) != nil || previewing)
         UnreadBadges.shared.setDemand(slot(for: .unread) != nil || previewing)

@@ -14,8 +14,12 @@ final class AudioSpectrum: ObservableObject {
     static let shared = AudioSpectrum()
     static let bandCount = 6
 
-    /// 0…1 per band, bass first. Smoothed: quick to rise, slower to fall.
-    @Published private(set) var levels: [CGFloat] = Array(repeating: 0, count: bandCount)
+    /// 0…1 per band, bass first. Smoothed: quick to rise, slower to fall. Not published: 30 changes
+    /// a second through SwiftUI re-rendered the whole closed notch each time. The bars' layers take
+    /// `frames` directly instead.
+    private(set) var levels: [CGFloat] = Array(repeating: 0, count: bandCount)
+    /// Each new set of levels, for views that draw them outside SwiftUI.
+    let frames = PassthroughSubject<[CGFloat], Never>()
     /// Real audio is coming in (if not, visualizers animate on their own).
     @Published private(set) var isLive = false
 
@@ -79,6 +83,7 @@ final class AudioSpectrum: ObservableObject {
         poll = nil
         if isLive { isLive = false }
         levels = Array(repeating: 0, count: Self.bandCount)
+        frames.send(levels)
     }
 
     private func pull() {
@@ -89,7 +94,11 @@ final class AudioSpectrum: ObservableObject {
             // Rise fast so beats land; fall slower so bars don't flicker.
             next[i] = target > next[i] ? next[i] + (target - next[i]) * 0.6 : next[i] + (target - next[i]) * 0.18
         }
-        levels = next
+        // Silence settles to the same values: nothing new to draw.
+        if next != levels {
+            levels = next
+            frames.send(next)
+        }
         let live = analyzer.secondsSinceAudio < 1.5
         if live != isLive { isLive = live }
     }
