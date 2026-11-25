@@ -30,6 +30,8 @@ let package = Package(
         // Logic with no UI or system state (matching names, cleaning links): kept apart so it's tested.
         .target(name: "NotchKit", swiftSettings: [.swiftLanguageMode(.v6)]),
         .testTarget(name: "NotchKitTests", dependencies: ["NotchKit"], swiftSettings: [.swiftLanguageMode(.v6)]),
+        // The app's own logic that sits beside its UI (Home's tiler, the cable decoder…), tested in place.
+        .testTarget(name: "NotchAppTests", dependencies: ["NotchApp"]),
     ],
     swiftLanguageModes: [.v5]
 )

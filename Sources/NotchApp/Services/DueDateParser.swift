@@ -10,6 +10,14 @@ enum DueDateParser {
               var date = match.date,
               let range = Range(match.range, in: text) else { return (text, nil) }
 
+        // "due Friday" / "by tomorrow" come back as a span from now until then: the deadline is
+        // its end, not its start (which is earlier today, so it was dropped as past).
+        let deadlineWords = ["due", "by", "until", "till", "before"]
+        if match.duration > 0, let first = text[range].split(separator: " ").first,
+           deadlineWords.contains(first.lowercased()) {
+            date = date.addingTimeInterval(match.duration)
+        }
+
         // "by Friday" has no time: treat it as end of the working day instead of noon.
         if !mentionsTime(String(text[range])) {
             date = Calendar.current.date(bySettingHour: 17, minute: 0, second: 0, of: date) ?? date

@@ -297,7 +297,7 @@ final class CableMonitor: ObservableObject {
 
     /// Decodes the cable's identity: ID header, cert stat, product, then the cable VDO
     /// (USB PD 3.x, §6.4.4.3.1.6–7).
-    nonisolated private static func cable(_ meta: [String: Any], _ vdos: [UInt32]) -> Cable? {
+    nonisolated static func cable(_ meta: [String: Any], _ vdos: [UInt32]) -> Cable? {
         guard vdos.count >= 4 else { return nil }
         let header = vdos[0], vdo = vdos[3]
         let type = Int((header >> 27) & 0x7) // 3 passive, 4 active
@@ -352,7 +352,7 @@ final class CableMonitor: ObservableObject {
     }
 
     /// The VDOs, each four little-endian bytes.
-    nonisolated private static func vdos(_ meta: [String: Any]) -> [UInt32]? {
+    nonisolated static func vdos(_ meta: [String: Any]) -> [UInt32]? {
         guard let list = meta["VDOs"] as? [Data], !list.isEmpty else { return nil }
         return list.map { data in
             data.count >= 4 ? data.prefix(4).enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) } : 0
