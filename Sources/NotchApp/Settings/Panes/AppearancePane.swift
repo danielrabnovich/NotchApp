@@ -51,6 +51,11 @@ struct AppearancePane: View {
                              : s.animationStyle == .bouncy ? "A playful spring as the notch opens and pages slide."
                              : "Gentle springs as the notch opens and pages slide. Reduce Motion in System Settings turns slides into fades.")
                 }
+                ChoiceRow(selection: $s.animationSpeed, options: AppSettings.AnimationSpeed.allCases, title: { $0.label }) {
+                    RowLabel(title: "Open and close", subtitle: s.animationSpeed == .quick ? "In and out fast, for a quick emoji or calculation."
+                             : s.animationSpeed == .relaxed ? "Takes its time opening and closing."
+                             : "How fast the notch opens and closes.")
+                }
                 ToggleRow("Shadow when open", subtitle: "A soft shadow under the open notch.", isOn: $s.showShadow)
                 ToggleRow("Haptic feedback", subtitle: "A light tap on the trackpad as the notch opens, tabs change and things snap into place.", isOn: $s.haptics)
             }

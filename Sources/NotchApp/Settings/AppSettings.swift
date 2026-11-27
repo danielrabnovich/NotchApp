@@ -59,6 +59,22 @@ final class AppSettings: ObservableObject {
         var label: String { rawValue.capitalized }
     }
 
+    /// How quickly the notch opens and closes, on top of the Animation style: Quick is for
+    /// popping in for one thing (an emoji, a calculation) and getting out of the way.
+    enum AnimationSpeed: String, CaseIterable, Identifiable {
+        case relaxed, normal, quick
+        var id: String { rawValue }
+        var label: String { rawValue.capitalized }
+        /// Multiplies the open and close springs' durations.
+        var scale: Double {
+            switch self {
+            case .relaxed: 1.3
+            case .normal: 1
+            case .quick: 0.6
+            }
+        }
+    }
+
     /// The open notch: black throughout, or black at the notch melting into glass below it.
     enum NotchMaterial: String, CaseIterable, Identifiable {
         case black, glass
@@ -103,6 +119,7 @@ final class AppSettings: ObservableObject {
     @Published var accentMode: AccentMode { didSet { defaults.set(accentMode.rawValue, forKey: "accentMode") } }
     @Published var customAccentHex: String { didSet { defaults.set(customAccentHex, forKey: "customAccentHex") } }
     @Published var animationStyle: AnimationStyle { didSet { defaults.set(animationStyle.rawValue, forKey: "animationStyle") } }
+    @Published var animationSpeed: AnimationSpeed { didSet { defaults.set(animationSpeed.rawValue, forKey: "animationSpeed") } }
     @Published var showShadow: Bool { didSet { defaults.set(showShadow, forKey: "showShadow") } }
     @Published var notchMaterial: NotchMaterial { didSet { defaults.set(notchMaterial.rawValue, forKey: "notchMaterial") } }
     /// Where the glass slider sits, from 0 (Tinted) to 3 (Clear): the four levels are its stops,
@@ -356,6 +373,7 @@ final class AppSettings: ObservableObject {
             "accentMode": AccentMode.albumArt.rawValue,
             "customAccentHex": "#0A84FF",
             "animationStyle": AnimationStyle.smooth.rawValue,
+            "animationSpeed": AnimationSpeed.normal.rawValue,
             "showShadow": true,
             "openTo": "ask",
             "notchMaterial": NotchMaterial.glass.rawValue,
@@ -477,6 +495,7 @@ final class AppSettings: ObservableObject {
         accentMode = AccentMode(rawValue: defaults.string(forKey: "accentMode") ?? "") ?? .albumArt
         customAccentHex = defaults.string(forKey: "customAccentHex") ?? "#0A84FF"
         animationStyle = AnimationStyle(rawValue: defaults.string(forKey: "animationStyle") ?? "") ?? .smooth
+        animationSpeed = AnimationSpeed(rawValue: defaults.string(forKey: "animationSpeed") ?? "") ?? .normal
         showShadow = defaults.bool(forKey: "showShadow")
         openTo = defaults.string(forKey: "openTo") ?? "ask"
         notchMaterial = NotchMaterial(rawValue: defaults.string(forKey: "notchMaterial") ?? "") ?? .glass

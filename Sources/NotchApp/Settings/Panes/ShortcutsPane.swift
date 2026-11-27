@@ -346,6 +346,7 @@ private struct KeyRecorder: View {
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .monospacedDigit()
                 .lineLimit(1)
+                .textSelection(.disabled)
                 .padding(.horizontal, 22)
                 .frame(width: 124, height: 22)
                 .background(

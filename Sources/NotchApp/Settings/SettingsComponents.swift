@@ -459,12 +459,15 @@ struct InfoButton: View {
     @State private var hovering = false
 
     var body: some View {
-        Image(systemName: "info.circle.fill")
-            .font(.system(size: 12))
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(hovering || showing ? .primary : .secondary)
-            .contentShape(Circle())
-            .onTapGesture { showing.toggle() }
+        // A button: Form rows don't pass tap gestures their clicks.
+        Button { showing.toggle() } label: {
+            Image(systemName: "info.circle.fill")
+                .font(.system(size: 12))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(hovering || showing ? .primary : .secondary)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
             .onHover { on in
                 hovering = on
                 if on {

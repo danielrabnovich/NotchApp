@@ -3,8 +3,8 @@ import QuartzCore
 import SwiftUI
 
 /// The app's springs, in one place, following the Animation choice in Settings (Smooth, Snappy,
-/// Bouncy) and the system's Reduce Motion. Each is a duration and a bounce, so SwiftUI and Core
-/// Animation (the pager, the tab pill) move with exactly the same curve.
+/// Bouncy), the open-and-close speed, and the system's Reduce Motion. Each is a duration and a
+/// bounce, so SwiftUI and Core Animation (the pager, the tab pill) move with exactly the same curve.
 @MainActor
 struct Motion {
     /// How long it takes to look settled, and how far past the target it goes (0 none, 1 a lot).
@@ -28,22 +28,34 @@ struct Motion {
     /// The system's Reduce Motion: pages and panes fade instead of sliding, and nothing bounces.
     static var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
-    /// The notch opening.
+    /// The notch opening, at the chosen speed.
     static var open: Motion {
-        if reduced { return Motion(duration: 0.3, bounce: 0) }
-        switch style {
-        case .smooth: return Motion(duration: 0.42, bounce: 0.18)
-        case .snappy: return Motion(duration: 0.32, bounce: 0.12)
-        case .bouncy: return Motion(duration: 0.44, bounce: 0.32)
+        let m: Motion
+        if reduced {
+            m = Motion(duration: 0.3, bounce: 0)
+        } else {
+            switch style {
+            case .smooth: m = Motion(duration: 0.42, bounce: 0.18)
+            case .snappy: m = Motion(duration: 0.32, bounce: 0.12)
+            case .bouncy: m = Motion(duration: 0.44, bounce: 0.32)
+            }
         }
+        return m.atSpeed
     }
 
     /// The notch closing: never bouncy, a closing notch that overshoots reads as a glitch.
     static var close: Motion {
         switch style {
-        case .snappy: Motion(duration: 0.3, bounce: 0)
-        default: Motion(duration: 0.38, bounce: 0.05)
+        case .snappy: Motion(duration: 0.3, bounce: 0).atSpeed
+        default: Motion(duration: 0.38, bounce: 0.05).atSpeed
         }
+    }
+
+    /// Faster or slower by the open-and-close speed. Quick also loses most of the bounce: a spring that
+    /// overshoots in a fraction of the time reads as a jolt.
+    private var atSpeed: Motion {
+        let speed = AppSettings.shared.animationSpeed
+        return Motion(duration: duration * speed.scale, bounce: speed == .quick ? min(bounce, 0.08) : bounce)
     }
 
     /// Pages sliding (a swipe let go, or a tab clicked) and the pill over the tab buttons.

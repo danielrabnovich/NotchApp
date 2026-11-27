@@ -49,6 +49,11 @@ final class EmojiPicker: ObservableObject {
     /// Opens Search with the picker in it.
     func open() {
         requested = true
+        // At the picker's height from the start: set once Search showed the ":", the notch opened
+        // at Search's height and then grew on a second, slower spring.
+        if NotchPresenter.shared.primary?.tabs.contains(.ask) == true {
+            AssistantStore.shared.pickingEmoji = true
+        }
         NotchPresenter.shared.primary?.open(tab: .ask, reason: .keyboard)
     }
 
@@ -82,6 +87,7 @@ final class EmojiPicker: ObservableObject {
         let text = emoji.toned(tone)
         noteUsed(emoji)
         TextInsertion.insert(text)
+        done()
     }
 
     func copy(_ emoji: Emoji) {
@@ -90,7 +96,15 @@ final class EmojiPicker: ObservableObject {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         NotchPresenter.shared.primary?.close()
+        done()
         ActivityCenter.shared.show(.notice(title: "Copied \(text)", detail: emoji.name.capitalizedFirst, icon: "doc.on.doc"), for: 2)
+    }
+
+    /// The picker is finished with: the notch drops its taller picker size now. Search empties its
+    /// bar afterwards, but the closing notch stops rendering it before that change is seen, which
+    /// left the flag on and the next Search open at the picker's height with nothing in it.
+    private func done() {
+        AssistantStore.shared.pickingEmoji = false
     }
 
     // MARK: - Sections

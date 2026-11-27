@@ -78,26 +78,32 @@ struct CapsuleChoice<Value: Hashable>: View {
         HStack(spacing: 0) {
             ForEach(options, id: \.self) { option in
                 let chosen = option == selection
-                Text(title(option))
-                    .font(.system(size: 12, weight: chosen ? .semibold : .regular))
-                    .foregroundStyle(chosen ? Color.primary : Color.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.horizontal, 12)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: NotchControl.height - 4)
-                    .background {
-                        if chosen {
-                            Capsule().fill(scheme == .dark ? Color.white.opacity(0.24) : .white)
-                                .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.12), radius: 1.5, y: 1)
-                                .matchedGeometryEffect(id: "pill", in: pill)
+                // A button, not a tap gesture: Form rows don't pass tap gestures their clicks, and
+                // text in a row's value is selectable (it took the click, and showed a selection).
+                Button {
+                    withAnimation(NotchControl.spring) { selection = option }
+                } label: {
+                    Text(title(option))
+                        .font(.system(size: 12, weight: chosen ? .semibold : .regular))
+                        .foregroundStyle(chosen ? Color.primary : Color.secondary)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: NotchControl.height - 4)
+                        .background {
+                            if chosen {
+                                Capsule().fill(scheme == .dark ? Color.white.opacity(0.24) : .white)
+                                    .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.12), radius: 1.5, y: 1)
+                                    .matchedGeometryEffect(id: "pill", in: pill)
+                            }
                         }
-                    }
-                    .contentShape(Capsule())
-                    .onTapGesture { withAnimation(NotchControl.spring) { selection = option } }
-                    .accessibilityElement()
-                    .accessibilityLabel(title(option))
-                    .accessibilityAddTraits(chosen ? [.isButton, .isSelected] : .isButton)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .textSelection(.disabled)
+                .accessibilityLabel(title(option))
+                .accessibilityAddTraits(chosen ? .isSelected : [])
             }
         }
         .padding(2)
@@ -203,6 +209,7 @@ struct CapsuleStepper: View {
                 .font(.system(size: 12, weight: .semibold).monospacedDigit())
                 .foregroundStyle(.primary)
                 .frame(minWidth: 56)
+                .textSelection(.disabled)
             stepButton("plus", enabled: value < range.upperBound) { value += 1 }
         }
         .padding(2)
@@ -251,6 +258,8 @@ struct CapsuleButtonStyle: ButtonStyle {
                 .opacity(enabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
                 .onHover { hovering = $0 }
                 .fixedSize()
+                // In a Form row's value, text is selectable and would take the click.
+                .textSelection(.disabled)
         }
     }
 }
